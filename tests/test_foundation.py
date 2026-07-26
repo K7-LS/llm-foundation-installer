@@ -27,10 +27,14 @@ def _package(
     path: Path,
     *,
     version: str = "1.0.0",
+    foundation_engine_version: str = "0.1.0",
     wrong_hash: bool = False,
     traversal: bool = False,
     protected: bool = False,
     reverse_policy: bool = False,
+    omit_replace_row: bool = False,
+    empty_exact_directory: bool = False,
+    nested_managed_root: bool = False,
 ) -> Path:
     entries = {
         ".codex/AGENTS.md": b"# candidate\n",
@@ -58,6 +62,10 @@ def _package(
         replace_files.sort()
     rows = []
     for name, payload in sorted(entries.items()):
+        if omit_replace_row and name == ".codex/AGENTS.md":
+            continue
+        if empty_exact_directory and name.startswith(".codex/agents/"):
+            continue
         digest = "0" * 64 if wrong_hash and name == ".codex/AGENTS.md" else _sha256(payload)
         rows.append(
             {
@@ -74,11 +82,12 @@ def _package(
             "id": "codex-cli",
             "supported_version": SUPPORTED_CLIENT,
         },
-        "foundation_engine_version": "0.1.0",
+        "foundation_engine_version": foundation_engine_version,
         "managed_surface": {
             "exact_directories": [
                 ".agents/skills",
                 ".codex/agents",
+                *([".codex/agents/nested"] if nested_managed_root else []),
                 ".codex/base/cold",
                 ".codex/base/foundation",
                 ".codex/base/runtime",
@@ -413,6 +422,191 @@ def test_doctor_detects_active_drift(engine_root, tmp_path, executable):
     )
     assert doctor.returncode == 30
     assert _json(doctor)["code"] == "ACTIVE_DRIFT"
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize("command", ["doctor", "inventory", "rollback"])
+def test_package_less_commands_reject_target_path_traversal_before_state_access(
+    engine_root, tmp_path, executable, command
+):
+    home = tmp_path / f"target-{command}-{Path(executable).stem}"
+    home.mkdir()
+    outside = tmp_path / "escaped-state"
+
+    result = _run(
+        executable,
+        engine_root,
+        command,
+        home,
+        target="../../escaped-state",
+    )
+
+    assert result.returncode in {2, 40}
+    assert _json(result)["code"] in {"INVALID_ARGUMENT", "UNSAFE_PATH"}
+    assert not outside.exists()
+    assert not (home / ".llm-foundation").exists()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize(
+    ("variant", "expected_message"),
+    [
+        ("engine", "engine"),
+        ("missing_replace", "replace"),
+        ("empty_exact", "exact"),
+        ("nested_root", "overlap"),
+    ],
+)
+def test_incompatible_engine_and_incomplete_managed_surface_fail_before_mutation(
+    engine_root, tmp_path, executable, variant, expected_message
+):
+    home = tmp_path / f"coverage-{variant}-{Path(executable).stem}"
+    home.mkdir()
+    marker = home / "marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    package = _package(
+        tmp_path / f"coverage-{variant}-{Path(executable).stem}.zip",
+        foundation_engine_version="9.0.0" if variant == "engine" else "0.1.0",
+        omit_replace_row=variant == "missing_replace",
+        empty_exact_directory=variant == "empty_exact",
+        nested_managed_root=variant == "nested_root",
+    )
+
+    result = _run(executable, engine_root, "install", home, package=package)
+
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INVALID_PACKAGE"
+    assert expected_message in str(_json(result)["message"]).lower()
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    assert not (home / ".llm-foundation").exists()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize("tamper", ["metadata", "missing_backup"])
+def test_rollback_preflights_hash_bound_snapshot_before_destination_mutation(
+    engine_root, tmp_path, executable, tamper
+):
+    home = tmp_path / f"snapshot-{tamper}-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(tmp_path / f"snapshot-{tamper}-{Path(executable).stem}.zip")
+    installed = _run(executable, engine_root, "install", home, package=package)
+    assert installed.returncode == 0, installed.stderr
+
+    active_path = home / ".llm-foundation" / "state" / "codex" / "active.json"
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    snapshot_path = Path(active["snapshot_path"])
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    if tamper == "metadata":
+        snapshot["target"] = "other"
+        snapshot_path.write_text(
+            json.dumps(snapshot, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        backup_row = snapshot["backup_files"][0]
+        (snapshot_path.parent / backup_row["backup_path"]).unlink()
+
+    candidate_before = (home / ".codex" / "AGENTS.md").read_bytes()
+    rollback = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+
+    assert rollback.returncode == 30
+    assert _json(rollback)["code"] == "INVALID_PACKAGE"
+    assert (home / ".codex" / "AGENTS.md").read_bytes() == candidate_before
+    assert active_path.is_file()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_interrupted_rollback_is_journaled_and_idempotently_recoverable(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"rollback-crash-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(tmp_path / f"rollback-crash-{Path(executable).stem}.zip")
+    installed = _run(executable, engine_root, "install", home, package=package)
+    assert installed.returncode == 0, installed.stderr
+
+    crashed = _run(
+        executable,
+        engine_root,
+        "rollback",
+        home,
+        target="codex",
+        extra_env={"FOUNDATION_ROLLBACK_CRASH_AFTER": "1"},
+    )
+    assert crashed.returncode == 98
+    journal = (
+        home / ".llm-foundation" / "state" / "codex" / "rollback.json"
+    )
+    assert journal.is_file()
+
+    recovered = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    assert (home / ".codex" / "AGENTS.md").read_text() == "# previous\n"
+    assert not journal.exists()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_concurrent_destructive_operation_is_locked(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"lock-{Path(executable).stem}"
+    home.mkdir()
+    package = _package(tmp_path / f"lock-{Path(executable).stem}.zip")
+    arguments = [
+        executable,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(engine_root / "src" / "foundation.ps1"),
+        "install",
+        "-Home",
+        str(home),
+        "-Package",
+        str(package),
+        "-ClientId",
+        "codex-cli",
+        "-ClientVersion",
+        SUPPORTED_CLIENT,
+        "-Json",
+    ]
+    environment = os.environ.copy()
+    environment["FOUNDATION_ACCEPTANCE_MODE"] = "1"
+    environment["FOUNDATION_HOLD_LOCK_MS"] = "2500"
+    first = subprocess.Popen(
+        arguments,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    lock_path = home / ".llm-foundation" / "locks" / "codex.lock"
+    for _ in range(100):
+        if lock_path.exists():
+            break
+        import time
+
+        time.sleep(0.025)
+    assert lock_path.exists()
+
+    second = _run(
+        executable, engine_root, "install", home, package=package
+    )
+    assert second.returncode == 20
+    assert _json(second)["code"] == "LOCKED"
+    stdout, stderr = first.communicate(timeout=15)
+    assert first.returncode == 0, stderr or stdout
+    after_owner_exit = _run(
+        executable, engine_root, "install", home, package=package
+    )
+    assert after_owner_exit.returncode == 0, after_owner_exit.stderr
 
 
 def test_engine_bundle_is_deterministic_across_ps7_and_ps51(

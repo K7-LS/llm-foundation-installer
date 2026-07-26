@@ -26,7 +26,10 @@ session upload. A target package declares:
 The target-native wrapper obtains trustworthy client-version evidence and
 passes `-ClientId` and `-ClientVersion` to the engine. The engine rejects a
 mismatch, downgrade, corrupt ZIP, extra file, path traversal, protected-path
-overlap, or reparse point before target-home mutation.
+overlap, incompatible engine, incomplete managed surface, or reparse point
+before target-home mutation. Destructive operations use an OS-exclusive
+per-target lock. Rollback preflights a hash-bound snapshot and every backup
+object, stages the restore, and keeps a recovery journal until completion.
 
 ## Development
 
@@ -35,6 +38,9 @@ py -3.12 -m pytest -q
 py -3.12 .\tools\run-acceptance.py
 pwsh -NoProfile -File .\tools\build-engine.ps1 -OutputRoot .\dist\engine
 ```
+
+Acceptance refuses a dirty Git worktree and writes commit/tree-bound evidence
+to `dist/foundation-acceptance.json`.
 
 `FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a Codex canary,
 employee rollout, or full-program release.

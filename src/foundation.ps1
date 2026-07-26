@@ -14,18 +14,22 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$script:EngineVersion = '0.1.0'
+$script:ProtocolVersion = 1
 $script:ExitCode = @{
     INVALID_ARGUMENT = 2
     UNSUPPORTED_CLIENT = 10
     DOWNGRADE_BLOCKED = 10
     NOT_INSTALLED = 20
     RECOVERY_REQUIRED = 20
+    LOCKED = 20
     INVALID_PACKAGE = 30
     INSTALL_FAILED = 30
     ACTIVE_DRIFT = 30
     UNSAFE_PATH = 40
 }
 $script:MutationCount = 0
+$script:RollbackMutationCount = 0
 
 function Throw-Foundation {
     param(
@@ -179,6 +183,26 @@ function Test-PortablePath {
         }
     }
     return $true
+}
+
+function Assert-TargetName {
+    param([Parameter(Mandatory = $true)][string]$TargetName)
+    if ($TargetName -notmatch '^[a-z][a-z0-9-]{1,31}$') {
+        Throw-Foundation 'INVALID_ARGUMENT' 'Target name is invalid'
+    }
+}
+
+function Test-PathWithin {
+    param(
+        [Parameter(Mandatory = $true)][string]$Candidate,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+    $Absolute = [IO.Path]::GetFullPath($Candidate)
+    $Boundary = [IO.Path]::GetFullPath($Root)
+    return $Absolute.StartsWith(
+        $Boundary + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase
+    )
 }
 
 function Test-ProtectedPath {
@@ -399,6 +423,14 @@ function Assert-Manifest {
             '^[0-9]+\.[0-9]+\.[0-9]+$') {
         Throw-Foundation 'INVALID_PACKAGE' 'Package manifest constants differ'
     }
+    if ([string]$Manifest.foundation_engine_version -cne
+        $script:EngineVersion) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            "Package requires Foundation engine " +
+            "$($Manifest.foundation_engine_version); running engine is " +
+            $script:EngineVersion
+        )
+    }
     Assert-ExactProperties $Manifest.client @(
         'id',
         'supported_version'
@@ -426,6 +458,33 @@ function Assert-Manifest {
         @($Manifest.managed_surface.replace_files).Count -eq 0 -or
         @($Manifest.managed_surface.preserved_paths).Count -eq 0) {
         Throw-Foundation 'INVALID_PACKAGE' 'Managed surface is empty'
+    }
+    $ManagedRoots = @(
+        @($Manifest.managed_surface.exact_directories) +
+        @($Manifest.managed_surface.replace_files)
+    )
+    for ($LeftIndex = 0; $LeftIndex -lt $ManagedRoots.Count; $LeftIndex++) {
+        for (
+            $RightIndex = $LeftIndex + 1;
+            $RightIndex -lt $ManagedRoots.Count;
+            $RightIndex++
+        ) {
+            $Left = [string]$ManagedRoots[$LeftIndex]
+            $Right = [string]$ManagedRoots[$RightIndex]
+            if ($Left -ceq $Right -or
+                $Left.StartsWith(
+                    $Right + '/',
+                    [StringComparison]::Ordinal
+                ) -or
+                $Right.StartsWith(
+                    $Left + '/',
+                    [StringComparison]::Ordinal
+                )) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Managed roots overlap: $Left and $Right"
+                )
+            }
+        }
     }
     foreach ($Root in @(
         @($Manifest.managed_surface.exact_directories) +
@@ -510,6 +569,30 @@ function Assert-Manifest {
             Throw-Foundation 'INVALID_PACKAGE' "ZIP entry hash differs: $Path"
         }
         $Previous = $Path
+    }
+    foreach ($Replace in @($Manifest.managed_surface.replace_files)) {
+        if (-not $FilePaths.Contains([string]$Replace)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Replace file has no payload row: $Replace"
+            )
+        }
+    }
+    foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
+        $Covered = $false
+        foreach ($Path in $FilePaths) {
+            if (([string]$Path).StartsWith(
+                [string]$Root + '/',
+                [StringComparison]::Ordinal
+            )) {
+                $Covered = $true
+                break
+            }
+        }
+        if (-not $Covered) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Exact directory has no payload rows: $Root"
+            )
+        }
     }
     $ManifestPath = 'package-manifest.json'
     $Expected = New-Object 'Collections.Generic.HashSet[string]' (
@@ -639,17 +722,127 @@ function Get-FoundationPaths {
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)][string]$TargetName
     )
-    $StateRoot = Join-Path $HomeRoot (
-        '.llm-foundation\state\' + $TargetName
+    Assert-TargetName $TargetName
+    $Root = [IO.Path]::GetFullPath($HomeRoot)
+    $FoundationRoot = [IO.Path]::GetFullPath(
+        (Join-Path $Root '.llm-foundation')
     )
-    $BackupRoot = Join-Path $HomeRoot (
-        '.llm-foundation\backups\' + $TargetName
+    $StateRoot = [IO.Path]::GetFullPath(
+        (Join-Path (Join-Path $FoundationRoot 'state') $TargetName)
     )
+    $BackupRoot = [IO.Path]::GetFullPath(
+        (Join-Path (Join-Path $FoundationRoot 'backups') $TargetName)
+    )
+    $LocksRoot = [IO.Path]::GetFullPath(
+        (Join-Path $FoundationRoot 'locks')
+    )
+    foreach ($Path in @($StateRoot, $BackupRoot, $LocksRoot)) {
+        if (-not (Test-PathWithin $Path $FoundationRoot)) {
+            Throw-Foundation 'UNSAFE_PATH' 'Foundation state escaped its root'
+        }
+        Assert-SafeAncestors $Path $Root
+    }
     return [pscustomobject]@{
+        target = $TargetName
+        foundation_root = $FoundationRoot
         state_root = $StateRoot
         active = Join-Path $StateRoot 'active.json'
         pending = Join-Path $StateRoot 'pending.json'
+        rollback_journal = Join-Path $StateRoot 'rollback.json'
         backup_root = $BackupRoot
+        locks_root = $LocksRoot
+        lock = Join-Path $LocksRoot ($TargetName + '.lock')
+    }
+}
+
+function Assert-ActiveState {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][string]$ExpectedTarget
+    )
+    Assert-ExactProperties $State @(
+        'schema_version',
+        'target',
+        'release_version',
+        'client',
+        'foundation_engine_version',
+        'package_sha256',
+        'managed_surface',
+        'installed_files',
+        'quarantined_unknown',
+        'snapshot_path',
+        'snapshot_sha256'
+    ) 'active state'
+    if ($State.schema_version -ne 1 -or
+        [string]$State.target -cne $ExpectedTarget -or
+        $State.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        $State.foundation_engine_version -notmatch
+            '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        $State.package_sha256 -notmatch '^[0-9a-f]{64}$' -or
+        $State.snapshot_sha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Active state is invalid'
+    }
+}
+
+function Assert-PendingState {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][string]$ExpectedTarget
+    )
+    Assert-ExactProperties $State @(
+        'schema_version',
+        'target',
+        'snapshot_path',
+        'snapshot_sha256',
+        'release_version',
+        'managed_surface'
+    ) 'pending state'
+    if ($State.schema_version -ne 1 -or
+        [string]$State.target -cne $ExpectedTarget -or
+        $State.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        $State.snapshot_sha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Pending state is invalid'
+    }
+}
+
+function Enter-TargetLock {
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    New-SafeDirectory $Paths.foundation_root $HomeRoot
+    New-SafeDirectory $Paths.locks_root $HomeRoot
+    try {
+        $Handle = [IO.File]::Open(
+            $Paths.lock,
+            [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::None
+        )
+    } catch {
+        Throw-Foundation 'LOCKED' (
+            'Another destructive Foundation operation is active'
+        )
+    }
+    try {
+        $Handle.SetLength(0)
+        $Payload = (New-Object Text.UTF8Encoding($false)).GetBytes(
+            ("pid={0};utc={1}`n" -f
+                $PID,
+                [DateTime]::UtcNow.ToString('o'))
+        )
+        $Handle.Write($Payload, 0, $Payload.Length)
+        $Handle.Flush($true)
+        if ($env:FOUNDATION_ACCEPTANCE_MODE -ceq '1' -and
+            $env:FOUNDATION_HOLD_LOCK_MS -match '^[0-9]+$') {
+            Start-Sleep -Milliseconds ([int]$env:FOUNDATION_HOLD_LOCK_MS)
+        }
+        return $Handle
+    } catch {
+        $Handle.Dispose()
+        throw
     }
 }
 
@@ -662,12 +855,15 @@ function Read-ActiveState {
         if ($AllowMissing) { return $null }
         Throw-Foundation 'NOT_INSTALLED' 'No active installation exists'
     }
-    return Read-JsonFile $Paths.active
+    $State = Read-JsonFile $Paths.active
+    Assert-ActiveState $State ([string]$Paths.target)
+    return $State
 }
 
 function Assert-NoRecoveryPending {
     param([Parameter(Mandatory = $true)]$Paths)
-    if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
+    if ((Test-Path -LiteralPath $Paths.pending -PathType Leaf) -or
+        (Test-Path -LiteralPath $Paths.rollback_journal -PathType Leaf)) {
         Throw-Foundation 'RECOVERY_REQUIRED' (
             'Interrupted transaction requires rollback'
         )
@@ -745,10 +941,20 @@ function New-FoundationPlan {
     foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
         $Destination = Resolve-HomePath ([string]$Root) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Exact directory conflicts with a file: $Root"
+            )
+        }
     }
     foreach ($Path in @($Manifest.managed_surface.replace_files)) {
         $Destination = Resolve-HomePath ([string]$Path) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
+        if (Test-Path -LiteralPath $Destination -PathType Container) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Replace file conflicts with a directory: $Path"
+            )
+        }
     }
     $Rows = @()
     foreach ($Row in @($Manifest.files)) {
@@ -937,6 +1143,57 @@ function Expand-ValidatedPackage {
     return $Root
 }
 
+function Get-ManagedSurfaceDigest {
+    param([Parameter(Mandatory = $true)]$Surface)
+    Assert-ExactProperties $Surface @(
+        'exact_directories',
+        'replace_files',
+        'preserved_paths'
+    ) 'managed surface'
+    $Lines = @()
+    foreach ($Section in @(
+        'exact_directories',
+        'replace_files',
+        'preserved_paths'
+    )) {
+        $Lines += $Section
+        foreach ($Value in @($Surface.$Section)) {
+            $Lines += [string]$Value
+        }
+    }
+    $Bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
+        (($Lines -join "`n") + "`n")
+    )
+    return Get-BytesSha256 $Bytes
+}
+
+function Get-SafeTreeFiles {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    Assert-SafeDirectory $Root
+    $Files = @()
+    $Queue = New-Object 'Collections.Generic.Queue[string]'
+    $Queue.Enqueue([IO.Path]::GetFullPath($Root))
+    while ($Queue.Count -gt 0) {
+        $Directory = $Queue.Dequeue()
+        Assert-SafeDirectory $Directory
+        foreach ($Child in @(
+            Get-ChildItem -LiteralPath $Directory -Force
+        )) {
+            if ($Child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                Throw-Foundation 'UNSAFE_PATH' (
+                    "Tree contains reparse point: $($Child.FullName)"
+                )
+            }
+            if ($Child.PSIsContainer) {
+                $Queue.Enqueue($Child.FullName)
+            } else {
+                $Files += $Child
+            }
+        }
+    }
+    return @($Files | Sort-Object FullName)
+}
+
 function New-Snapshot {
     param(
         [Parameter(Mandatory = $true)]$Validated,
@@ -980,17 +1237,28 @@ function New-Snapshot {
             $Existed += [string]$Relative
         }
     }
-    $PriorActive = $null
-    if (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
-        $PriorActive = Read-JsonFile $Paths.active
+    $BackupFiles = @()
+    $ManagedAbsolute = [IO.Path]::GetFullPath($ManagedRoot)
+    foreach ($File in @(Get-SafeTreeFiles $ManagedRoot)) {
+        $Relative = $File.FullName.Substring(
+            $ManagedAbsolute.Length
+        ).TrimStart('\').Replace('\', '/')
+        $BackupFiles += [pscustomobject][ordered]@{
+            path = $Relative
+            backup_path = 'managed/' + $Relative
+            sha256 = Get-FileSha256 $File.FullName
+            bytes = [int64]$File.Length
+        }
     }
+    $PriorActive = Read-ActiveState $Paths -AllowMissing
     $Snapshot = [pscustomobject][ordered]@{
-        schema_version = 1
+        schema_version = 2
         snapshot_id = $SnapshotId
         target = [string]$Validated.manifest.target
         release_version = [string]$Validated.manifest.version
         managed_surface = $Validated.manifest.managed_surface
         existed = @($Existed | Sort-Object)
+        backup_files = @($BackupFiles | Sort-Object path)
         prior_active = $PriorActive
         quarantined_unknown = @($Plan.quarantined_unknown)
     }
@@ -1000,54 +1268,281 @@ function New-Snapshot {
         root = $SnapshotRoot
         metadata = $Snapshot
         metadata_path = $SnapshotPath
+        metadata_sha256 = Get-FileSha256 $SnapshotPath
     }
 }
 
-function Restore-Snapshot {
+function Get-ValidatedSnapshot {
     param(
-        [Parameter(Mandatory = $true)][string]$SnapshotPath,
+        [Parameter(Mandatory = $true)]$Expected,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)]$Paths
     )
+    if ([string]$Expected.target -cne [string]$Paths.target -or
+        $Expected.snapshot_sha256 -notmatch '^[0-9a-f]{64}$') {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot binding is invalid'
+    }
+    $BackupRoot = [IO.Path]::GetFullPath($Paths.backup_root)
+    $SnapshotPath = [IO.Path]::GetFullPath([string]$Expected.snapshot_path)
+    if (-not (Test-PathWithin $SnapshotPath $BackupRoot) -or
+        -not (Test-Path -LiteralPath $SnapshotPath -PathType Leaf)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot path is invalid'
+    }
+    Assert-SafeAncestors $SnapshotPath $HomeRoot
+    if ((Get-FileSha256 $SnapshotPath) -cne
+        [string]$Expected.snapshot_sha256) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot metadata hash differs'
+    }
     $Snapshot = Read-JsonFile $SnapshotPath
-    $SnapshotRoot = Split-Path -Parent $SnapshotPath
-    $ManagedRoot = Join-Path $SnapshotRoot 'managed'
-    $Existed = New-Object 'Collections.Generic.HashSet[string]' (
+    Assert-ExactProperties $Snapshot @(
+        'schema_version',
+        'snapshot_id',
+        'target',
+        'release_version',
+        'managed_surface',
+        'existed',
+        'backup_files',
+        'prior_active',
+        'quarantined_unknown'
+    ) 'snapshot'
+    if ($Snapshot.schema_version -ne 2 -or
+        $Snapshot.snapshot_id -notmatch
+            '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$' -or
+        [string]$Snapshot.target -cne [string]$Paths.target -or
+        $Snapshot.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        (Get-ManagedSurfaceDigest $Snapshot.managed_surface) -cne
+            (Get-ManagedSurfaceDigest $Expected.managed_surface)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot metadata is invalid'
+    }
+    $ExpectedRoot = [IO.Path]::GetFullPath(
+        (Join-Path $BackupRoot ([string]$Snapshot.snapshot_id))
+    )
+    $SnapshotRoot = [IO.Path]::GetFullPath(
+        (Split-Path -Parent $SnapshotPath)
+    )
+    if ($SnapshotRoot -cne $ExpectedRoot -or
+        [IO.Path]::GetFileName($SnapshotPath) -cne 'snapshot.json') {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot identity differs'
+    }
+    Assert-StringArray @($Snapshot.existed) 'snapshot existed paths'
+    $ManagedValues = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase
     )
+    foreach ($Value in @(
+        @($Snapshot.managed_surface.exact_directories) +
+        @($Snapshot.managed_surface.replace_files)
+    )) {
+        $null = $ManagedValues.Add([string]$Value)
+    }
     foreach ($Value in @($Snapshot.existed)) {
-        $null = $Existed.Add([string]$Value)
+        if (-not $ManagedValues.Contains([string]$Value)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Snapshot existed path is unmanaged: $Value"
+            )
+        }
+    }
+    if ($null -ne $Snapshot.prior_active) {
+        Assert-ActiveState $Snapshot.prior_active ([string]$Paths.target)
+    }
+    $ManagedRoot = Join-Path $SnapshotRoot 'managed'
+    if (-not (Test-Path -LiteralPath $ManagedRoot -PathType Container)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Snapshot managed backup is missing'
+    }
+    $Rows = @($Snapshot.backup_files)
+    $RowsByPath = @{}
+    $Previous = $null
+    foreach ($Row in $Rows) {
+        Assert-ExactProperties $Row @(
+            'path',
+            'backup_path',
+            'sha256',
+            'bytes'
+        ) 'snapshot backup row'
+        $Path = [string]$Row.path
+        if (-not (Test-PortablePath $Path) -or
+            [string]$Row.backup_path -cne ('managed/' + $Path) -or
+            $Row.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            ($Row.bytes -isnot [int] -and $Row.bytes -isnot [long]) -or
+            [int64]$Row.bytes -lt 0 -or
+            $RowsByPath.ContainsKey($Path) -or
+            ($null -ne $Previous -and
+                [StringComparer]::Ordinal.Compare($Previous, $Path) -ge 0)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Snapshot backup row is invalid'
+        }
+        $Covered = $false
+        foreach ($Root in @($Snapshot.existed)) {
+            if ($Path -ceq [string]$Root -or
+                $Path.StartsWith(
+                    [string]$Root + '/',
+                    [StringComparison]::Ordinal
+                )) {
+                $Covered = $true
+                break
+            }
+        }
+        if (-not $Covered) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Snapshot backup row is not declared existed: $Path"
+            )
+        }
+        $Source = Join-Path $SnapshotRoot (
+            ([string]$Row.backup_path).Replace('/', '\')
+        )
+        if (-not (Test-Path -LiteralPath $Source -PathType Leaf) -or
+            (Get-Item -LiteralPath $Source -Force).Length -ne
+                [int64]$Row.bytes -or
+            (Get-FileSha256 $Source) -cne [string]$Row.sha256) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Snapshot backup object differs: $Path"
+            )
+        }
+        $RowsByPath[$Path] = $Row
+        $Previous = $Path
+    }
+    $ActualFiles = @(Get-SafeTreeFiles $ManagedRoot)
+    if ($ActualFiles.Count -ne $Rows.Count) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Snapshot contains missing or extra backup objects'
+        )
+    }
+    $ManagedAbsolute = [IO.Path]::GetFullPath($ManagedRoot)
+    foreach ($File in $ActualFiles) {
+        $Relative = $File.FullName.Substring(
+            $ManagedAbsolute.Length
+        ).TrimStart('\').Replace('\', '/')
+        if (-not $RowsByPath.ContainsKey($Relative)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Unexpected snapshot backup object: $Relative"
+            )
+        }
     }
     foreach ($Root in @($Snapshot.managed_surface.exact_directories)) {
         $Destination = Resolve-HomePath ([string]$Root) $HomeRoot
-        Remove-TreeSafe $Destination $HomeRoot
-        if ($Existed.Contains([string]$Root)) {
+        Assert-SafeAncestors $Destination $HomeRoot
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Rollback exact directory conflicts with a file: $Root"
+            )
+        }
+        if (@($Snapshot.existed) -ccontains [string]$Root) {
             $Source = Join-Path $ManagedRoot (
                 ([string]$Root).Replace('/', '\')
             )
-            Copy-TreeSafe $Source $Destination
+            if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Snapshot directory backup is missing: $Root"
+                )
+            }
         }
     }
     foreach ($Relative in @($Snapshot.managed_surface.replace_files)) {
         $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
-        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-            Remove-Item -LiteralPath $Destination -Force
+        if (Test-Path -LiteralPath $Destination -PathType Container) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Rollback replace file conflicts with a directory: $Relative"
+            )
         }
-        if ($Existed.Contains([string]$Relative)) {
+        if (@($Snapshot.existed) -ccontains [string]$Relative) {
             $Source = Join-Path $ManagedRoot (
                 ([string]$Relative).Replace('/', '\')
             )
-            Copy-Atomic $Source $Destination $HomeRoot
+            if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Snapshot file backup is missing: $Relative"
+                )
+            }
         }
     }
-    if ($null -ne $Snapshot.prior_active) {
-        Write-JsonFile $Snapshot.prior_active $Paths.active
-    } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
-        Remove-Item -LiteralPath $Paths.active -Force
+    $StagingRoot = Join-Path ([IO.Path]::GetTempPath()) (
+        'foundation-restore-' + [Guid]::NewGuid().ToString('N')
+    )
+    [IO.Directory]::CreateDirectory($StagingRoot) | Out-Null
+    $StagingManaged = Join-Path $StagingRoot 'managed'
+    Copy-TreeSafe $ManagedRoot $StagingManaged
+    return [pscustomobject]@{
+        snapshot = $Snapshot
+        snapshot_path = $SnapshotPath
+        snapshot_sha256 = [string]$Expected.snapshot_sha256
+        staging_root = $StagingRoot
+        managed_root = $StagingManaged
     }
-    if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
-        Remove-Item -LiteralPath $Paths.pending -Force
+}
+
+function Invoke-RollbackCheckpoint {
+    $script:RollbackMutationCount++
+    if ($env:FOUNDATION_ACCEPTANCE_MODE -cne '1') { return }
+    if ($env:FOUNDATION_ROLLBACK_CRASH_AFTER -match '^[0-9]+$' -and
+        $script:RollbackMutationCount -eq
+            [int]$env:FOUNDATION_ROLLBACK_CRASH_AFTER) {
+        [Environment]::Exit(98)
+    }
+}
+
+function Restore-Snapshot {
+    param(
+        [Parameter(Mandatory = $true)]$Expected,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [Parameter(Mandatory = $true)]$Paths
+    )
+    $Prepared = Get-ValidatedSnapshot $Expected $HomeRoot $Paths
+    try {
+        $Snapshot = $Prepared.snapshot
+        $ManagedRoot = $Prepared.managed_root
+        $Existed = New-Object 'Collections.Generic.HashSet[string]' (
+            [StringComparer]::OrdinalIgnoreCase
+        )
+        foreach ($Value in @($Snapshot.existed)) {
+            $null = $Existed.Add([string]$Value)
+        }
+        $Journal = [pscustomobject][ordered]@{
+            schema_version = 1
+            target = [string]$Paths.target
+            snapshot_path = [string]$Prepared.snapshot_path
+            snapshot_sha256 = [string]$Prepared.snapshot_sha256
+        }
+        Write-JsonFile $Journal $Paths.rollback_journal
+        foreach ($Root in @($Snapshot.managed_surface.exact_directories)) {
+            $Destination = Resolve-HomePath ([string]$Root) $HomeRoot
+            Remove-TreeSafe $Destination $HomeRoot
+            if ($Existed.Contains([string]$Root)) {
+                $Source = Join-Path $ManagedRoot (
+                    ([string]$Root).Replace('/', '\')
+                )
+                Copy-TreeSafe $Source $Destination
+            }
+            Invoke-RollbackCheckpoint
+        }
+        foreach ($Relative in @($Snapshot.managed_surface.replace_files)) {
+            $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
+            Assert-SafeAncestors $Destination $HomeRoot
+            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                Remove-Item -LiteralPath $Destination -Force
+            }
+            if ($Existed.Contains([string]$Relative)) {
+                $Source = Join-Path $ManagedRoot (
+                    ([string]$Relative).Replace('/', '\')
+                )
+                Copy-Atomic $Source $Destination $HomeRoot
+            }
+            Invoke-RollbackCheckpoint
+        }
+        if ($null -ne $Snapshot.prior_active) {
+            Write-JsonFile $Snapshot.prior_active $Paths.active
+        } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
+            Remove-Item -LiteralPath $Paths.active -Force
+        }
+        if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
+            Remove-Item -LiteralPath $Paths.pending -Force
+        }
+        if (Test-Path -LiteralPath $Paths.rollback_journal -PathType Leaf) {
+            Remove-Item -LiteralPath $Paths.rollback_journal -Force
+        }
+    } finally {
+        if ($null -ne $Prepared -and
+            (Test-Path -LiteralPath $Prepared.staging_root -PathType Container)) {
+            Remove-Item -LiteralPath $Prepared.staging_root -Recurse -Force
+        }
     }
 }
 
@@ -1155,6 +1650,7 @@ function Invoke-Install {
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Validated.manifest.target)
     $Staging = $null
     $Snapshot = $null
+    $Pending = $null
     try {
         $Staging = Expand-ValidatedPackage $Validated
         $Snapshot = New-Snapshot $Validated $HomeRoot $Paths $Plan
@@ -1162,7 +1658,9 @@ function Invoke-Install {
             schema_version = 1
             target = [string]$Validated.manifest.target
             snapshot_path = [string]$Snapshot.metadata_path
+            snapshot_sha256 = [string]$Snapshot.metadata_sha256
             release_version = [string]$Validated.manifest.version
+            managed_surface = $Validated.manifest.managed_surface
         }
         Write-JsonFile $Pending $Paths.pending
         foreach ($Root in @(
@@ -1201,6 +1699,7 @@ function Invoke-Install {
             installed_files = $Installed
             quarantined_unknown = @($Plan.quarantined_unknown)
             snapshot_path = [string]$Snapshot.metadata_path
+            snapshot_sha256 = [string]$Snapshot.metadata_sha256
         }
         $null = Test-InstalledState $State $HomeRoot $ActualClientId `
             $ActualClientVersion
@@ -1214,10 +1713,10 @@ function Invoke-Install {
             quarantined_unknown = @($State.quarantined_unknown)
         }
     } catch {
-        if ($null -ne $Snapshot -and
-            (Test-Path -LiteralPath $Snapshot.metadata_path -PathType Leaf)) {
+        if ($null -ne $Pending -and
+            (Test-Path -LiteralPath $Paths.pending -PathType Leaf)) {
             try {
-                Restore-Snapshot $Snapshot.metadata_path $HomeRoot $Paths
+                Restore-Snapshot $Pending $HomeRoot $Paths
             } catch {
                 Throw-Foundation 'RECOVERY_REQUIRED' (
                     'Install failed and automatic rollback also failed'
@@ -1241,7 +1740,8 @@ function Invoke-Doctor {
         [Parameter(Mandatory = $true)][string]$ActualClientVersion
     )
     $Paths = Get-FoundationPaths $HomeRoot $TargetName
-    if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
+    if ((Test-Path -LiteralPath $Paths.pending -PathType Leaf) -or
+        (Test-Path -LiteralPath $Paths.rollback_journal -PathType Leaf)) {
         Throw-Foundation 'RECOVERY_REQUIRED' (
             'Interrupted transaction requires rollback'
         )
@@ -1276,35 +1776,26 @@ function Invoke-Rollback {
         [Parameter(Mandatory = $true)][string]$TargetName
     )
     $Paths = Get-FoundationPaths $HomeRoot $TargetName
-    $SnapshotPath = $null
+    $Expected = $null
     if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
-        $Pending = Read-JsonFile $Paths.pending
-        $SnapshotPath = [string]$Pending.snapshot_path
+        $Expected = Read-JsonFile $Paths.pending
+        Assert-PendingState $Expected $TargetName
     } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
-        $State = Read-JsonFile $Paths.active
-        $SnapshotPath = [string]$State.snapshot_path
+        $Expected = Read-ActiveState $Paths
     }
-    if ([string]::IsNullOrWhiteSpace($SnapshotPath) -or
-        -not (Test-Path -LiteralPath $SnapshotPath -PathType Leaf)) {
+    if ($null -eq $Expected) {
         Throw-Foundation 'NOT_INSTALLED' 'No rollback snapshot exists'
     }
-    $BackupRoot = [IO.Path]::GetFullPath($Paths.backup_root)
-    $Resolved = [IO.Path]::GetFullPath($SnapshotPath)
-    if (-not $Resolved.StartsWith(
-        $BackupRoot + [IO.Path]::DirectorySeparatorChar,
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        Throw-Foundation 'UNSAFE_PATH' 'Rollback snapshot escaped backup root'
-    }
-    Restore-Snapshot $Resolved $HomeRoot $Paths
+    Restore-Snapshot $Expected $HomeRoot $Paths
     return [pscustomobject][ordered]@{
         status = 'ROLLED_BACK'
         target = $TargetName
-        snapshot_path = $Resolved
+        snapshot_path = [string]$Expected.snapshot_path
     }
 }
 
 $Validated = $null
+$OperationLock = $null
 try {
     $TargetHome = [IO.Path]::GetFullPath($TargetHome)
     Assert-SafeDirectory $TargetHome
@@ -1324,6 +1815,9 @@ try {
         }
         $Target = [string]$Validated.manifest.target
     }
+    if (-not [string]::IsNullOrWhiteSpace($Target)) {
+        Assert-TargetName $Target
+    }
     if ($Command -eq 'doctor' -and
         [string]::IsNullOrWhiteSpace($Target)) {
         Throw-Foundation 'INVALID_ARGUMENT' (
@@ -1337,6 +1831,10 @@ try {
         Throw-Foundation 'UNSUPPORTED_CLIENT' (
             'ClientId and ClientVersion are required'
         )
+    }
+    if ($Command -in @('install', 'rollback')) {
+        $OperationPaths = Get-FoundationPaths $TargetHome $Target
+        $OperationLock = Enter-TargetLock $OperationPaths $TargetHome
     }
     $Result = switch ($Command) {
         'plan' {
@@ -1377,6 +1875,9 @@ try {
     })
     exit $Exit
 } finally {
+    if ($null -ne $OperationLock) {
+        $OperationLock.Dispose()
+    }
     if ($null -ne $Validated) {
         Close-ValidatedPackage $Validated
     }

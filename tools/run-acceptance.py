@@ -23,6 +23,64 @@ def _tree(root: Path) -> dict[str, str]:
     }
 
 
+def _git_identity(root: Path) -> dict[str, str]:
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
+    if status.strip():
+        raise RuntimeError(
+            "acceptance requires a clean Git worktree; commit or remove all changes"
+        )
+    values = {}
+    for key, revision in (("commit", "HEAD"), ("tree", "HEAD^{tree}")):
+        values[key] = subprocess.run(
+            ["git", "rev-parse", revision],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+    values["repository"] = (
+        "https://github.com/daniileliseev1337/llm-foundation-installer"
+    )
+    return values
+
+
+def _source_hashes(root: Path) -> dict[str, str]:
+    result = {}
+    for relative in ("VERSION", "src", "tests", "tools"):
+        path = root / relative
+        if path.is_file():
+            result[relative] = _sha256(path)
+            continue
+        digest = hashlib.sha256()
+        for file_path, file_hash in _tree(path).items():
+            digest.update(file_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(file_hash.encode("ascii"))
+            digest.update(b"\n")
+        result[relative] = digest.hexdigest()
+    return result
+
+
+def _portable_command(command: list[str], root: Path) -> list[str]:
+    root_text = str(root)
+    portable = []
+    for value in command:
+        normalized = value.replace(root_text, ".").replace("\\", "/")
+        candidate = Path(value)
+        if candidate.is_absolute() and not normalized.startswith("./"):
+            normalized = candidate.name
+        portable.append(normalized)
+    return portable
+
+
 def _run(command: list[str], cwd: Path) -> dict[str, object]:
     result = subprocess.run(
         command,
@@ -33,7 +91,7 @@ def _run(command: list[str], cwd: Path) -> dict[str, object]:
         encoding="utf-8",
     )
     return {
-        "command": command,
+        "command": _portable_command(command, cwd),
         "returncode": result.returncode,
         "stdout": result.stdout,
         "stderr": result.stderr,
@@ -73,11 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--evidence",
         type=Path,
-        default=Path("reports/foundation-acceptance.json"),
+        default=Path("dist/foundation-acceptance.json"),
     )
     args = parser.parse_args(argv)
 
     root = Path(__file__).resolve().parents[1]
+    source = _git_identity(root)
+    source["hashes"] = _source_hashes(root)
     work = root / ".work" / "acceptance"
     if work.exists():
         shutil.rmtree(work)
@@ -164,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         .isoformat()
         .replace("+00:00", "Z"),
         "engine_version": version,
+        "source": source,
         "FOUNDATION_SYNTHETIC": "PASS" if passed else "NOT_PASS",
         "powershell_syntax": syntax,
         "engine_builds": builds,
@@ -180,6 +241,9 @@ def main(argv: list[str] | None = None) -> int:
             "offline engine with no network implementation",
             "plan/install/doctor/inventory/rollback",
             "corrupt ZIP, traversal, reparse, interruption and downgrade",
+            "target traversal, managed-surface closure and engine compatibility",
+            "hash-bound snapshot preflight and rollback crash recovery",
+            "exclusive destructive-operation lock with stale-file recovery",
             "protected data preservation and exact rollback",
         ],
         "limitations": [
