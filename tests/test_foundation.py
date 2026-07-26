@@ -513,6 +513,30 @@ def test_preserved_paths_cannot_be_bypassed_by_windows_case_folding(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+def test_rollback_accepts_same_windows_home_with_different_casing(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"case-home-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(tmp_path / f"case-home-{Path(executable).stem}.zip")
+    installed = _run(executable, engine_root, "install", home, package=package)
+    assert installed.returncode == 0, installed.stderr
+
+    same_home_different_case = home.parent / home.name.upper()
+    rollback = _run(
+        executable,
+        engine_root,
+        "rollback",
+        same_home_different_case,
+        target="codex",
+    )
+
+    assert rollback.returncode == 0, rollback.stderr
+    assert (home / ".codex" / "AGENTS.md").read_text() == "# previous\n"
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 @pytest.mark.parametrize("tamper", ["metadata", "missing_backup"])
 def test_rollback_preflights_hash_bound_snapshot_before_destination_mutation(
     engine_root, tmp_path, executable, tamper

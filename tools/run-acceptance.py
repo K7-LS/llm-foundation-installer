@@ -53,14 +53,35 @@ def _git_identity(root: Path) -> dict[str, str]:
 
 
 def _source_hashes(root: Path) -> dict[str, str]:
+    tracked_result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    tracked = [
+        value.decode("utf-8")
+        for value in tracked_result.stdout.split(b"\0")
+        if value
+    ]
     result = {}
     for relative in ("VERSION", "src", "tests", "tools"):
-        path = root / relative
-        if path.is_file():
-            result[relative] = _sha256(path)
-            continue
+        selected = [
+            value
+            for value in tracked
+            if value == relative or value.startswith(relative + "/")
+        ]
+        if not selected:
+            raise RuntimeError(f"tracked source component is empty: {relative}")
         digest = hashlib.sha256()
-        for file_path, file_hash in _tree(path).items():
+        for file_path in selected:
+            blob = subprocess.run(
+                ["git", "show", f"HEAD:{file_path}"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            ).stdout
+            file_hash = hashlib.sha256(blob).hexdigest()
             digest.update(file_path.encode("utf-8"))
             digest.update(b"\0")
             digest.update(file_hash.encode("ascii"))

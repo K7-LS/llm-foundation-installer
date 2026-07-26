@@ -1443,8 +1443,14 @@ function Get-ValidatedSnapshot {
     $SnapshotRoot = [IO.Path]::GetFullPath(
         (Split-Path -Parent $SnapshotPath)
     )
-    if ($SnapshotRoot -cne $ExpectedRoot -or
-        [IO.Path]::GetFileName($SnapshotPath) -cne 'snapshot.json') {
+    if (-not $SnapshotRoot.Equals(
+            $ExpectedRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        -not [IO.Path]::GetFileName($SnapshotPath).Equals(
+            'snapshot.json',
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot identity differs'
     }
     Assert-StringArray @($Snapshot.existed) 'snapshot existed paths'
