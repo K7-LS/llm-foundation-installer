@@ -243,7 +243,10 @@ def main(argv: list[str] | None = None) -> int:
             "corrupt ZIP, traversal, reparse, interruption and downgrade",
             "target traversal, managed-surface closure and engine compatibility",
             "hash-bound snapshot preflight and rollback crash recovery",
+            "late rollback crash recovery driven by the original journal",
+            "Windows case-folded preserved-path enforcement",
             "exclusive destructive-operation lock with stale-file recovery",
+            "final lock-entry reparse rejection",
             "protected data preservation and exact rollback",
         ],
         "limitations": [

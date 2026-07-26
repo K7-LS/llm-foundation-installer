@@ -187,7 +187,7 @@ function Test-PortablePath {
 
 function Assert-TargetName {
     param([Parameter(Mandatory = $true)][string]$TargetName)
-    if ($TargetName -notmatch '^[a-z][a-z0-9-]{1,31}$') {
+    if ($TargetName -cnotmatch '^[a-z][a-z0-9-]{1,31}$') {
         Throw-Foundation 'INVALID_ARGUMENT' 'Target name is invalid'
     }
 }
@@ -234,14 +234,17 @@ function Test-DeclaredPreservedPath {
     )
     foreach ($Protected in @($PreservedPaths)) {
         $ProtectedValue = [string]$Protected
-        if ($Value -ceq $ProtectedValue -or
+        if ($Value.Equals(
+                $ProtectedValue,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -or
             $Value.StartsWith(
                 $ProtectedValue + '/',
-                [StringComparison]::Ordinal
+                [StringComparison]::OrdinalIgnoreCase
             ) -or
             $ProtectedValue.StartsWith(
                 $Value + '/',
-                [StringComparison]::Ordinal
+                [StringComparison]::OrdinalIgnoreCase
             )) {
             return $true
         }
@@ -417,7 +420,7 @@ function Assert-Manifest {
         'files'
     ) 'package manifest'
     if ($Manifest.schema_version -ne 1 -or
-        $Manifest.target -notmatch '^[a-z][a-z0-9-]{1,31}$' -or
+        $Manifest.target -cnotmatch '^[a-z][a-z0-9-]{1,31}$' -or
         $Manifest.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
         $Manifest.foundation_engine_version -notmatch
             '^[0-9]+\.[0-9]+\.[0-9]+$') {
@@ -471,14 +474,17 @@ function Assert-Manifest {
         ) {
             $Left = [string]$ManagedRoots[$LeftIndex]
             $Right = [string]$ManagedRoots[$RightIndex]
-            if ($Left -ceq $Right -or
+            if ($Left.Equals(
+                    $Right,
+                    [StringComparison]::OrdinalIgnoreCase
+                ) -or
                 $Left.StartsWith(
                     $Right + '/',
-                    [StringComparison]::Ordinal
+                    [StringComparison]::OrdinalIgnoreCase
                 ) -or
                 $Right.StartsWith(
                     $Left + '/',
-                    [StringComparison]::Ordinal
+                    [StringComparison]::OrdinalIgnoreCase
                 )) {
                 Throw-Foundation 'INVALID_PACKAGE' (
                     "Managed roots overlap: $Left and $Right"
@@ -537,12 +543,12 @@ function Assert-Manifest {
         }
         $Managed = @(
             $Manifest.managed_surface.replace_files
-        ) -ccontains $Path
+        ) -icontains $Path
         if (-not $Managed) {
             foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
                 if ($Path.StartsWith(
                     [string]$Root + '/',
-                    [StringComparison]::Ordinal
+                    [StringComparison]::OrdinalIgnoreCase
                 )) {
                     $Managed = $true
                     break
@@ -582,7 +588,7 @@ function Assert-Manifest {
         foreach ($Path in $FilePaths) {
             if (([string]$Path).StartsWith(
                 [string]$Root + '/',
-                [StringComparison]::Ordinal
+                [StringComparison]::OrdinalIgnoreCase
             )) {
                 $Covered = $true
                 break
@@ -807,6 +813,27 @@ function Assert-PendingState {
     }
 }
 
+function Assert-RollbackJournal {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][string]$ExpectedTarget
+    )
+    Assert-ExactProperties $State @(
+        'schema_version',
+        'target',
+        'snapshot_path',
+        'snapshot_sha256',
+        'managed_surface'
+    ) 'rollback journal'
+    if ($State.schema_version -ne 1 -or
+        [string]$State.target -cne $ExpectedTarget -or
+        $State.snapshot_sha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Rollback journal is invalid'
+    }
+    $null = Get-ManagedSurfaceDigest $State.managed_surface
+}
+
 function Enter-TargetLock {
     param(
         [Parameter(Mandatory = $true)]$Paths,
@@ -814,14 +841,110 @@ function Enter-TargetLock {
     )
     New-SafeDirectory $Paths.foundation_root $HomeRoot
     New-SafeDirectory $Paths.locks_root $HomeRoot
+    Assert-SafeAncestors $Paths.lock $HomeRoot
+    if (Test-Path -LiteralPath $Paths.lock) {
+        $ExistingLock = Get-Item -LiteralPath $Paths.lock -Force
+        if ($ExistingLock.PSIsContainer -or
+            ($ExistingLock.Attributes -band
+                [IO.FileAttributes]::ReparsePoint)) {
+            Throw-Foundation 'UNSAFE_PATH' 'Lock entry is not a regular file'
+        }
+    }
+    if ($null -eq ('FoundationLockFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class FoundationLockFile
+{
+    private const uint GENERIC_READ = 0x80000000;
+    private const uint GENERIC_WRITE = 0x40000000;
+    private const uint OPEN_ALWAYS = 4;
+    private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+    private const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+    private const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
+    private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string name,
+        uint access,
+        uint share,
+        IntPtr security,
+        uint creation,
+        uint flags,
+        IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle handle,
+        out BY_HANDLE_FILE_INFORMATION information);
+
+    public static FileStream OpenExclusiveRegular(string path)
+    {
+        SafeFileHandle handle = CreateFile(
+            path,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            IntPtr.Zero,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new IOException(
+                "Cannot acquire lock: " + new Win32Exception(error).Message);
+        }
+        BY_HANDLE_FILE_INFORMATION information;
+        if (!GetFileInformationByHandle(handle, out information))
+        {
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new IOException(
+                "Cannot inspect lock: " + new Win32Exception(error).Message);
+        }
+        if ((information.FileAttributes & (
+                FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0)
+        {
+            handle.Dispose();
+            throw new UnauthorizedAccessException(
+                "Lock entry is not a regular file");
+        }
+        return new FileStream(handle, FileAccess.ReadWrite, 4096, false);
+    }
+}
+'@
+    }
     try {
-        $Handle = [IO.File]::Open(
-            $Paths.lock,
-            [IO.FileMode]::OpenOrCreate,
-            [IO.FileAccess]::ReadWrite,
-            [IO.FileShare]::None
-        )
+        $Handle = [FoundationLockFile]::OpenExclusiveRegular($Paths.lock)
     } catch {
+        $Cursor = $_.Exception
+        while ($null -ne $Cursor.InnerException) {
+            $Cursor = $Cursor.InnerException
+        }
+        if ($Cursor -is [UnauthorizedAccessException]) {
+            Throw-Foundation 'UNSAFE_PATH' $Cursor.Message
+        }
         Throw-Foundation 'LOCKED' (
             'Another destructive Foundation operation is active'
         )
@@ -890,7 +1013,7 @@ function Get-UnknownEntries {
             $Prefix = [string]$Root + '/'
             if (([string]$Row.path).StartsWith(
                 $Prefix,
-                [StringComparison]::Ordinal
+                [StringComparison]::OrdinalIgnoreCase
             )) {
                 $Remainder = ([string]$Row.path).Substring($Prefix.Length)
                 $null = $Expected.Add(($Remainder -split '/')[0])
@@ -1371,10 +1494,13 @@ function Get-ValidatedSnapshot {
         }
         $Covered = $false
         foreach ($Root in @($Snapshot.existed)) {
-            if ($Path -ceq [string]$Root -or
+            if ($Path.Equals(
+                    [string]$Root,
+                    [StringComparison]::OrdinalIgnoreCase
+                ) -or
                 $Path.StartsWith(
                     [string]$Root + '/',
-                    [StringComparison]::Ordinal
+                    [StringComparison]::OrdinalIgnoreCase
                 )) {
                 $Covered = $true
                 break
@@ -1424,7 +1550,7 @@ function Get-ValidatedSnapshot {
                 "Rollback exact directory conflicts with a file: $Root"
             )
         }
-        if (@($Snapshot.existed) -ccontains [string]$Root) {
+        if (@($Snapshot.existed) -icontains [string]$Root) {
             $Source = Join-Path $ManagedRoot (
                 ([string]$Root).Replace('/', '\')
             )
@@ -1443,7 +1569,7 @@ function Get-ValidatedSnapshot {
                 "Rollback replace file conflicts with a directory: $Relative"
             )
         }
-        if (@($Snapshot.existed) -ccontains [string]$Relative) {
+        if (@($Snapshot.existed) -icontains [string]$Relative) {
             $Source = Join-Path $ManagedRoot (
                 ([string]$Relative).Replace('/', '\')
             )
@@ -1479,6 +1605,14 @@ function Invoke-RollbackCheckpoint {
     }
 }
 
+function Invoke-RollbackStageCheckpoint {
+    param([Parameter(Mandatory = $true)][string]$Stage)
+    if ($env:FOUNDATION_ACCEPTANCE_MODE -cne '1') { return }
+    if ($env:FOUNDATION_ROLLBACK_CRASH_STAGE -ceq $Stage) {
+        [Environment]::Exit(97)
+    }
+}
+
 function Restore-Snapshot {
     param(
         [Parameter(Mandatory = $true)]$Expected,
@@ -1500,6 +1634,7 @@ function Restore-Snapshot {
             target = [string]$Paths.target
             snapshot_path = [string]$Prepared.snapshot_path
             snapshot_sha256 = [string]$Prepared.snapshot_sha256
+            managed_surface = $Expected.managed_surface
         }
         Write-JsonFile $Journal $Paths.rollback_journal
         foreach ($Root in @($Snapshot.managed_surface.exact_directories)) {
@@ -1532,9 +1667,12 @@ function Restore-Snapshot {
         } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
             Remove-Item -LiteralPath $Paths.active -Force
         }
+        Invoke-RollbackStageCheckpoint 'after_active'
         if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
             Remove-Item -LiteralPath $Paths.pending -Force
         }
+        Invoke-RollbackStageCheckpoint 'after_pending'
+        Invoke-RollbackStageCheckpoint 'before_journal_delete'
         if (Test-Path -LiteralPath $Paths.rollback_journal -PathType Leaf) {
             Remove-Item -LiteralPath $Paths.rollback_journal -Force
         }
@@ -1588,7 +1726,7 @@ function Test-InstalledState {
             $Prefix = [string]$Root + '/'
             if (([string]$Row.path).StartsWith(
                 $Prefix,
-                [StringComparison]::Ordinal
+                [StringComparison]::OrdinalIgnoreCase
             )) {
                 $null = $ExpectedByRoot[[string]$Root].Add(
                     [string]$Row.path
@@ -1777,7 +1915,10 @@ function Invoke-Rollback {
     )
     $Paths = Get-FoundationPaths $HomeRoot $TargetName
     $Expected = $null
-    if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
+    if (Test-Path -LiteralPath $Paths.rollback_journal -PathType Leaf) {
+        $Expected = Read-JsonFile $Paths.rollback_journal
+        Assert-RollbackJournal $Expected $TargetName
+    } elseif (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
         $Expected = Read-JsonFile $Paths.pending
         Assert-PendingState $Expected $TargetName
     } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {

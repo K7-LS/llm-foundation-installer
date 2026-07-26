@@ -35,6 +35,7 @@ def _package(
     omit_replace_row: bool = False,
     empty_exact_directory: bool = False,
     nested_managed_root: bool = False,
+    casefold_preserved: bool = False,
 ) -> Path:
     entries = {
         ".codex/AGENTS.md": b"# candidate\n",
@@ -60,6 +61,20 @@ def _package(
         entries[".codex/auth.json"] = b'{"token":"must-not-install"}\n'
         replace_files.append(".codex/auth.json")
         replace_files.sort()
+    exact_directories = [
+        ".agents/skills",
+        ".codex/agents",
+        *([".codex/agents/nested"] if nested_managed_root else []),
+        ".codex/base/cold",
+        ".codex/base/foundation",
+        ".codex/base/runtime",
+    ]
+    if casefold_preserved:
+        entries.pop(".codex/agents/auditor.toml")
+        entries[".CODEX/SESSIONS/managed.txt"] = b"must-not-install\n"
+        exact_directories.remove(".codex/agents")
+        exact_directories.append(".CODEX/SESSIONS")
+        exact_directories.sort()
     rows = []
     for name, payload in sorted(entries.items()):
         if omit_replace_row and name == ".codex/AGENTS.md":
@@ -85,12 +100,7 @@ def _package(
         "foundation_engine_version": foundation_engine_version,
         "managed_surface": {
             "exact_directories": [
-                ".agents/skills",
-                ".codex/agents",
-                *([".codex/agents/nested"] if nested_managed_root else []),
-                ".codex/base/cold",
-                ".codex/base/foundation",
-                ".codex/base/runtime",
+                *exact_directories,
             ],
             "replace_files": [
                 *replace_files,
@@ -482,6 +492,27 @@ def test_incompatible_engine_and_incomplete_managed_surface_fail_before_mutation
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+def test_preserved_paths_cannot_be_bypassed_by_windows_case_folding(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"casefold-{Path(executable).stem}"
+    home.mkdir()
+    sentinels = _seed_home(home)
+    session = home / ".codex" / "sessions" / "one.json"
+    package = _package(
+        tmp_path / f"casefold-{Path(executable).stem}.zip",
+        casefold_preserved=True,
+    )
+
+    result = _run(executable, engine_root, "install", home, package=package)
+
+    assert result.returncode == 40
+    assert _json(result)["code"] == "UNSAFE_PATH"
+    assert session.read_bytes() == sentinels[session]
+    assert not (home / ".llm-foundation").exists()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 @pytest.mark.parametrize("tamper", ["metadata", "missing_backup"])
 def test_rollback_preflights_hash_bound_snapshot_before_destination_mutation(
     engine_root, tmp_path, executable, tamper
@@ -552,6 +583,50 @@ def test_interrupted_rollback_is_journaled_and_idempotently_recoverable(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize(
+    "stage",
+    ["after_active", "after_pending", "before_journal_delete"],
+)
+def test_late_rollback_crash_recovers_from_journal_not_mutated_state(
+    engine_root, tmp_path, executable, stage
+):
+    home = tmp_path / f"rollback-{stage}-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(
+        tmp_path / f"rollback-{stage}-{Path(executable).stem}.zip"
+    )
+    installed = _run(executable, engine_root, "install", home, package=package)
+    assert installed.returncode == 0, installed.stderr
+
+    crashed = _run(
+        executable,
+        engine_root,
+        "rollback",
+        home,
+        target="codex",
+        extra_env={"FOUNDATION_ROLLBACK_CRASH_STAGE": stage},
+    )
+    assert crashed.returncode == 97
+    journal = (
+        home / ".llm-foundation" / "state" / "codex" / "rollback.json"
+    )
+    assert journal.is_file()
+    doctor = _run(
+        executable, engine_root, "doctor", home, target="codex"
+    )
+    assert doctor.returncode == 20
+    assert _json(doctor)["code"] == "RECOVERY_REQUIRED"
+
+    recovered = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+    assert recovered.returncode == 0, recovered.stderr
+    assert (home / ".codex" / "AGENTS.md").read_text() == "# previous\n"
+    assert not journal.exists()
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 def test_concurrent_destructive_operation_is_locked(
     engine_root, tmp_path, executable
 ):
@@ -607,6 +682,61 @@ def test_concurrent_destructive_operation_is_locked(
         executable, engine_root, "install", home, package=package
     )
     assert after_owner_exit.returncode == 0, after_owner_exit.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_lock_file_reparse_point_cannot_redirect_lock_write(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"lock-link-{Path(executable).stem}"
+    home.mkdir()
+    locks = home / ".llm-foundation" / "locks"
+    locks.mkdir(parents=True)
+    outside_root = tmp_path / f"outside-lock-{Path(executable).stem}"
+    outside_root.mkdir()
+    outside = outside_root / "sentinel.txt"
+    outside.write_text("untouched\n", encoding="utf-8")
+    link = locks / "codex.lock"
+    created = subprocess.run(
+        [
+            executable,
+            "-NoProfile",
+            "-Command",
+            (
+                "New-Item -ItemType SymbolicLink -Path "
+                f"'{link}' -Target '{outside}' | Out-Null"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if created.returncode != 0:
+        created = subprocess.run(
+            [
+                executable,
+                "-NoProfile",
+                "-Command",
+                (
+                    "New-Item -ItemType Junction -Path "
+                    f"'{link}' -Target '{outside_root}' | Out-Null"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    if created.returncode != 0:
+        pytest.skip(f"lock reparse point unavailable: {created.stderr}")
+    package = _package(tmp_path / f"lock-link-{Path(executable).stem}.zip")
+
+    result = _run(executable, engine_root, "install", home, package=package)
+
+    assert result.returncode == 40
+    assert _json(result)["code"] == "UNSAFE_PATH"
+    assert outside.read_text(encoding="utf-8") == "untouched\n"
 
 
 def test_engine_bundle_is_deterministic_across_ps7_and_ps51(
