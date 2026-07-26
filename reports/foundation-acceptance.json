@@ -1,0 +1,112 @@
+{
+  "FOUNDATION_SYNTHETIC": "PASS",
+  "deterministic_engine_bundle": "PASS",
+  "engine_builds": {
+    "ps51": {
+      "command": [
+        "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\tools\\build-engine.ps1",
+        "-OutputRoot",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\.work\\acceptance\\engine-ps51"
+      ],
+      "files": {
+        "VERSION": "e9dd8507f4bf0c6f42458e41aea833ad0bd3f6127272335eee9bf4d58541ed67",
+        "engine-manifest.json": "c20df63335d310119027ff3f055267528c71a79b1985c69db77461c8ecaac95c",
+        "foundation.ps1": "42f86618a99ccb8c46bc194eda8e6bc297bcd4cbc8a1e5790cda16405a22ee8e"
+      },
+      "returncode": 0,
+      "status": "PASS",
+      "stderr": "",
+      "stdout": "Foundation engine 0.1.0 built.\n"
+    },
+    "ps7": {
+      "command": [
+        "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\tools\\build-engine.ps1",
+        "-OutputRoot",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\.work\\acceptance\\engine-ps7"
+      ],
+      "files": {
+        "VERSION": "e9dd8507f4bf0c6f42458e41aea833ad0bd3f6127272335eee9bf4d58541ed67",
+        "engine-manifest.json": "c20df63335d310119027ff3f055267528c71a79b1985c69db77461c8ecaac95c",
+        "foundation.ps1": "42f86618a99ccb8c46bc194eda8e6bc297bcd4cbc8a1e5790cda16405a22ee8e"
+      },
+      "returncode": 0,
+      "status": "PASS",
+      "stderr": "",
+      "stdout": "Foundation engine 0.1.0 built.\n"
+    }
+  },
+  "engine_version": "0.1.0",
+  "generated_at_utc": "2026-07-26T16:25:00Z",
+  "limitations": [
+    "No live user home was modified.",
+    "No target canary or stable release is authorized by this verdict."
+  ],
+  "powershell_syntax": {
+    "ps51": {
+      "command": [
+        "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\tools\\check-ps-syntax.ps1",
+        "-Root",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "stderr": "",
+      "stdout": "PowerShell syntax PASS: 6\n"
+    },
+    "ps7": {
+      "command": [
+        "C:\\Program Files\\PowerShell\\7\\pwsh.EXE",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer\\tools\\check-ps-syntax.ps1",
+        "-Root",
+        "C:\\Users\\Даниил ПК\\Desktop\\Claude\\Заведомо проигранный бой (или нет)\\repos\\llm-foundation-installer"
+      ],
+      "returncode": 0,
+      "status": "PASS",
+      "stderr": "",
+      "stdout": "PowerShell syntax PASS: 5\n"
+    }
+  },
+  "pytest": {
+    "counts": {
+      "errors": 0,
+      "failures": 0,
+      "passed": 23,
+      "ps51_cases": 10,
+      "ps7_cases": 10,
+      "shared_cases": 3,
+      "skipped": 0,
+      "tests": 23
+    },
+    "status": "PASS",
+    "stderr": "",
+    "stdout": ".......................                                                  [100%]\n23 passed in 77.07s (0:01:17)\n"
+  },
+  "schema_version": 1,
+  "scope": [
+    "fake-home only",
+    "PowerShell 7 and Windows PowerShell 5.1",
+    "offline engine with no network implementation",
+    "plan/install/doctor/inventory/rollback",
+    "corrupt ZIP, traversal, reparse, interruption and downgrade",
+    "protected data preservation and exact rollback"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/daniileliseev1337/claude-lite-instaler",
+    "commit": "9a4c949feb8ccaa1126bdfd317f2fcd332039c32",
+    "tree": "2c2d77ce5da65909983b6c0100a290a090d513f3"
+  },
+  "migration_policy": {
+    "history": "clean",
+    "mode": "audited-port",
+    "legacy_repository_deleted": false
+  },
+  "ported_concepts": [
+    "strict package validation",
+    "current-user destination confinement",
+    "reparse-point rejection",
+    "transaction snapshot and rollback",
+    "doctor and inventory commands",
+    "PowerShell 7 and Windows PowerShell 5.1 acceptance"
+  ]
+}
