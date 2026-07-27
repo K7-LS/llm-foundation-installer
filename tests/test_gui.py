@@ -211,7 +211,9 @@ def _accepted_package(
             "id": client_ids[target],
             "supported_version": "1.0.0-test",
         },
-        "foundation_engine_version": "0.2.0",
+        "foundation_engine_version": package_manifest[
+            "foundation_engine_version"
+        ],
         "foundation_engine_manifest_sha256": "f" * 64,
         "source": {
             "repository": f"https://github.com/example/{target}-base",

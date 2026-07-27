@@ -14,7 +14,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:EngineVersion = '0.2.0'
+$Utf8NoBom = New-Object Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $Utf8NoBom
+$OutputEncoding = $Utf8NoBom
+$script:EngineVersion = '0.2.1'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -373,7 +376,8 @@ function Assert-StringArray {
     param(
         [AllowEmptyCollection()][object[]]$Values,
         [Parameter(Mandatory = $true)][string]$Label,
-        [switch]$AllowProtected
+        [switch]$AllowProtected,
+        [switch]$AllowUnsorted
     )
     $Seen = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase
@@ -385,7 +389,8 @@ function Assert-StringArray {
             -not $Seen.Add([string]$Value)) {
             Throw-Foundation 'INVALID_PACKAGE' "$Label contains an invalid path"
         }
-        if ($null -ne $Previous -and
+        if (-not $AllowUnsorted -and
+            $null -ne $Previous -and
             [StringComparer]::Ordinal.Compare(
                 [string]$Previous,
                 [string]$Value
@@ -398,6 +403,17 @@ function Assert-StringArray {
         }
         $Previous = [string]$Value
     }
+}
+
+function Sort-OrdinalStrings {
+    param([AllowEmptyCollection()][object[]]$Values)
+    $Result = [string[]]@(
+        foreach ($Value in @($Values)) {
+            [string]$Value
+        }
+    )
+    [Array]::Sort($Result, [StringComparer]::Ordinal)
+    return @($Result)
 }
 
 function Read-ZipEntryBytes {
@@ -1637,6 +1653,17 @@ function New-Snapshot {
             bytes = [int64]$File.Length
         }
     }
+    $BackupByPath = @{}
+    foreach ($Row in $BackupFiles) {
+        $BackupByPath[[string]$Row.path] = $Row
+    }
+    $SortedBackupFiles = @(
+        foreach ($BackupPath in @(
+            Sort-OrdinalStrings @($BackupByPath.Keys)
+        )) {
+            $BackupByPath[$BackupPath]
+        }
+    )
     $PriorActive = Read-ActiveState $Paths -AllowMissing
     $EnvironmentBefore = @(
         foreach ($Row in @($Validated.manifest.environment.set)) {
@@ -1662,8 +1689,8 @@ function New-Snapshot {
         managed_surface = $Validated.manifest.managed_surface
         environment = $Validated.manifest.environment
         environment_before = $EnvironmentBefore
-        existed = @($Existed | Sort-Object)
-        backup_files = @($BackupFiles | Sort-Object path)
+        existed = @(Sort-OrdinalStrings $Existed)
+        backup_files = $SortedBackupFiles
         prior_active = $PriorActive
         quarantined_unknown = @($Plan.quarantined_unknown)
     }
@@ -1739,7 +1766,11 @@ function Get-ValidatedSnapshot {
         )) {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot identity differs'
     }
-    Assert-StringArray @($Snapshot.existed) 'snapshot existed paths'
+    # Foundation 0.2.0 wrote these hash-bound local arrays with the
+    # culture-aware Sort-Object cmdlet. Accept that legacy order for recovery;
+    # new snapshots are emitted in ordinal order by New-Snapshot.
+    Assert-StringArray @($Snapshot.existed) 'snapshot existed paths' `
+        -AllowUnsorted
     $EnvironmentNames = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::Ordinal
     )
@@ -1790,7 +1821,6 @@ function Get-ValidatedSnapshot {
     }
     $Rows = @($Snapshot.backup_files)
     $RowsByPath = @{}
-    $Previous = $null
     foreach ($Row in $Rows) {
         Assert-ExactProperties $Row @(
             'path',
@@ -1804,9 +1834,7 @@ function Get-ValidatedSnapshot {
             $Row.sha256 -notmatch '^[0-9a-f]{64}$' -or
             ($Row.bytes -isnot [int] -and $Row.bytes -isnot [long]) -or
             [int64]$Row.bytes -lt 0 -or
-            $RowsByPath.ContainsKey($Path) -or
-            ($null -ne $Previous -and
-                [StringComparer]::Ordinal.Compare($Previous, $Path) -ge 0)) {
+            $RowsByPath.ContainsKey($Path)) {
             Throw-Foundation 'INVALID_PACKAGE' 'Snapshot backup row is invalid'
         }
         $Covered = $false
@@ -1840,7 +1868,6 @@ function Get-ValidatedSnapshot {
             )
         }
         $RowsByPath[$Path] = $Row
-        $Previous = $Path
     }
     $ActualFiles = @(Get-SafeTreeFiles $ManagedRoot)
     if ($ActualFiles.Count -ne $Rows.Count) {

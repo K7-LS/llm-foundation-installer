@@ -12,6 +12,9 @@ import pytest
 
 
 SUPPORTED_CLIENT = "0.146.0-alpha.3.1"
+ENGINE_VERSION = (
+    Path(__file__).resolve().parents[1] / "VERSION"
+).read_text(encoding="utf-8").strip()
 POWERSHELLS = [
     value
     for value in (shutil.which("pwsh"), shutil.which("powershell.exe"))
@@ -27,7 +30,7 @@ def _package(
     path: Path,
     *,
     version: str = "1.0.0",
-    foundation_engine_version: str = "0.2.0",
+    foundation_engine_version: str = ENGINE_VERSION,
     wrong_hash: bool = False,
     traversal: bool = False,
     protected: bool = False,
@@ -49,7 +52,9 @@ def _package(
         ".codex/base/components.lock.json": b'{"components":{}}\n',
         ".codex/base/cold/reference.md": b"# cold\n",
         ".codex/base/runtime/hooks/check.ps1": b"exit 0\n",
-        ".codex/base/foundation/0.2.0/VERSION": b"0.2.0\n",
+        f".codex/base/foundation/{ENGINE_VERSION}/VERSION": (
+            ENGINE_VERSION + "\n"
+        ).encode(),
     }
     replace_files = [
         ".codex/AGENTS.md",
@@ -322,6 +327,89 @@ def test_plan_install_doctor_inventory_and_rollback_preserve_user_data(
     assert not (home / ".agents" / "skills" / "alpha").exists()
     for path, payload in sentinels.items():
         assert path.read_bytes() == payload
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_rollback_accepts_existing_directory_and_case_variant_replace_file(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"ordinal-snapshot-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    legacy_agent = home / ".codex" / "agents" / "legacy.toml"
+    legacy_agent.parent.mkdir(parents=True)
+    legacy_agent.write_text('name = "legacy"\n', encoding="utf-8")
+    package = _package(
+        tmp_path / f"ordinal-snapshot-{Path(executable).stem}.zip"
+    )
+
+    install = _run(executable, engine_root, "install", home, package=package)
+    assert install.returncode == 0, install.stderr
+
+    rollback = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+    assert rollback.returncode == 0, rollback.stderr
+    assert legacy_agent.read_text(encoding="utf-8") == 'name = "legacy"\n'
+    assert (home / ".codex" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) == "# previous\n"
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_rollback_recovers_snapshot_written_by_legacy_culture_sort(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"legacy-sort-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    legacy_agent = home / ".codex" / "agents" / "legacy.toml"
+    legacy_agent.parent.mkdir(parents=True)
+    legacy_agent.write_text('name = "legacy"\n', encoding="utf-8")
+    package = _package(tmp_path / f"legacy-sort-{Path(executable).stem}.zip")
+
+    install = _run(executable, engine_root, "install", home, package=package)
+    assert install.returncode == 0, install.stderr
+    active_path = (
+        home / ".llm-foundation" / "state" / "codex" / "active.json"
+    )
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    snapshot_path = Path(active["snapshot_path"])
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    uppercase_index = snapshot["existed"].index(".codex/AGENTS.md")
+    agent_index = snapshot["existed"].index(".codex/agents")
+    snapshot["existed"][uppercase_index], snapshot["existed"][agent_index] = (
+        snapshot["existed"][agent_index],
+        snapshot["existed"][uppercase_index],
+    )
+    rows = {row["path"]: row for row in snapshot["backup_files"]}
+    legacy_order = sorted(rows)
+    uppercase_index = legacy_order.index(".codex/AGENTS.md")
+    agent_index = legacy_order.index(".codex/agents/legacy.toml")
+    legacy_order.insert(
+        uppercase_index,
+        legacy_order.pop(agent_index),
+    )
+    snapshot["backup_files"] = [rows[path] for path in legacy_order]
+    snapshot_path.write_text(
+        json.dumps(snapshot, ensure_ascii=False, sort_keys=True, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    active["snapshot_sha256"] = _sha256(snapshot_path.read_bytes())
+    active_path.write_text(
+        json.dumps(active, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    rollback = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+    assert rollback.returncode == 0, rollback.stderr
+    assert legacy_agent.read_text(encoding="utf-8") == 'name = "legacy"\n'
+    assert (home / ".codex" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    ) == "# previous\n"
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
@@ -699,7 +787,9 @@ def test_incompatible_engine_and_incomplete_managed_surface_fail_before_mutation
     marker.write_text("unchanged", encoding="utf-8")
     package = _package(
         tmp_path / f"coverage-{variant}-{Path(executable).stem}.zip",
-        foundation_engine_version="9.0.0" if variant == "engine" else "0.2.0",
+        foundation_engine_version=(
+            "9.0.0" if variant == "engine" else ENGINE_VERSION
+        ),
         omit_replace_row=variant == "missing_replace",
         empty_exact_directory=variant == "empty_exact",
         nested_managed_root=variant == "nested_root",
@@ -1025,7 +1115,7 @@ def test_engine_bundle_is_deterministic_across_ps7_and_ps51(
     assert first == second
     assert set(first) == {"VERSION", "engine-manifest.json", "foundation.ps1"}
     manifest = json.loads(first["engine-manifest.json"])
-    assert manifest["engine_version"] == "0.2.0"
+    assert manifest["engine_version"] == ENGINE_VERSION
     assert manifest["commands"] == [
         "doctor",
         "install",

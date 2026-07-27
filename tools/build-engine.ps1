@@ -5,6 +5,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = New-Object Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $Utf8NoBom
+$OutputEncoding = $Utf8NoBom
 $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $VersionPath = Join-Path $RepositoryRoot 'VERSION'
 $SourcePath = Join-Path $RepositoryRoot 'src\foundation.ps1'
