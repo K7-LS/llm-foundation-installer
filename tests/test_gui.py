@@ -982,7 +982,25 @@ def test_client_download_is_atomic_hash_verified_and_vpn_needs_no_proxy(
         )
         assert saved.returncode == 0, saved.stdout + saved.stderr
 
-        staging = tmp_path / "client-staging"
+        staging_component_length = max(
+            len("client-staging"),
+            174 - len(str(tmp_path)) - 1,
+        )
+        staging = tmp_path / "client-staging".ljust(
+            staging_component_length,
+            "x",
+        )
+        representative_partial = (
+            staging
+            / "fixture-client"
+            / "1.0.0"
+            / (
+                ".client.part-"
+                + ("0" * 32)
+                + ".bin"
+            )
+        )
+        assert len(str(representative_partial)) >= 245
         downloaded = subprocess.run(
             [
                 str(executable),

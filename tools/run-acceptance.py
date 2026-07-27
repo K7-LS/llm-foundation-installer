@@ -127,14 +127,12 @@ def _run(command: list[str], cwd: Path) -> dict[str, object]:
         cwd=cwd,
         check=False,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
     )
     return {
         "command": _portable_command(command, cwd),
         "returncode": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
+        "stdout": result.stdout.decode("utf-8", errors="replace"),
+        "stderr": result.stderr.decode("utf-8", errors="replace"),
     }
 
 

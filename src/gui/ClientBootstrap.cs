@@ -377,6 +377,7 @@ namespace LlmFoundationInstaller
                 ".part-" + Guid.NewGuid().ToString("N") +
                 Path.GetExtension(fileName)
             );
+            string curlOutputPath = ToExtendedLengthPath(partialPath);
             ConnectionProcessState connection = null;
             try
             {
@@ -398,7 +399,7 @@ namespace LlmFoundationInstaller
                     Arguments =
                         "--fail --location --silent --show-error " +
                         "--max-time 300 --output " +
-                        QuoteArgument(partialPath) + " " +
+                        QuoteArgument(curlOutputPath) + " " +
                         QuoteArgument(source.url),
                     UseShellExecute = false,
                     CreateNoWindow = true,
@@ -2330,8 +2331,54 @@ namespace LlmFoundationInstaller
 
         private static string QuoteArgument(string value)
         {
-            return "\"" + value.Replace("\\", "\\\\")
-                .Replace("\"", "\\\"") + "\"";
+            if (value.Length > 0 &&
+                !value.Any(character =>
+                    Char.IsWhiteSpace(character) || character == '"'))
+            {
+                return value;
+            }
+            StringBuilder result = new StringBuilder();
+            result.Append('"');
+            int backslashes = 0;
+            foreach (char character in value)
+            {
+                if (character == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+                if (character == '"')
+                {
+                    result.Append('\\', backslashes * 2 + 1);
+                    result.Append('"');
+                    backslashes = 0;
+                    continue;
+                }
+                result.Append('\\', backslashes);
+                backslashes = 0;
+                result.Append(character);
+            }
+            result.Append('\\', backslashes * 2);
+            result.Append('"');
+            return result.ToString();
+        }
+
+        private static string ToExtendedLengthPath(string path)
+        {
+            string fullPath = Path.GetFullPath(path);
+            if (fullPath.StartsWith(
+                    @"\\?\",
+                    StringComparison.Ordinal))
+            {
+                return fullPath;
+            }
+            if (fullPath.StartsWith(
+                    @"\\",
+                    StringComparison.Ordinal))
+            {
+                return @"\\?\UNC\" + fullPath.Substring(2);
+            }
+            return @"\\?\" + fullPath;
         }
 
         private static byte[] ComputeSha256(byte[] value)

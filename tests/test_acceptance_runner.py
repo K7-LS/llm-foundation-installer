@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -40,6 +41,21 @@ def test_pytest_command_keeps_fake_homes_inside_acceptance_work(tmp_path):
 
     assert command[-1] == f"--basetemp={tmp_path / 'pytest-home'}"
     assert f"--junitxml={tmp_path / 'pytest.xml'}" in command
+
+
+def test_run_preserves_non_utf8_child_output_without_crashing(tmp_path):
+    result = _load_runner()._run(
+        [
+            sys.executable,
+            "-c",
+            "import sys;sys.stdout.buffer.write(bytes([0xC4]))",
+        ],
+        tmp_path,
+    )
+
+    assert result["returncode"] == 0
+    assert result["stdout"] == "\ufffd"
+    assert result["stderr"] == ""
 
 
 def test_source_hashes_bind_gui_version_and_client_source_lock(tmp_path):
