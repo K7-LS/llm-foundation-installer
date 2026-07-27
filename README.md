@@ -1,80 +1,144 @@
 # LLM Foundation Installer
 
-Professional Windows installer and offline, current-user Foundation engine for
-three independently versioned native bases:
+Windows 10/11 current-user installer for three independently versioned native
+bases:
 
-- Codex;
+- Codex Desktop + Codex CLI;
 - Claude Code;
-- OpenCode.
+- OpenCode Desktop + CLI.
 
-The WPF application is DPI-aware, uses a branded multi-resolution executable
-icon, detects installed clients, presents the exact plan before mutation,
-shows live progress, and runs `doctor` after every install. A failed `doctor`
-triggers automatic rollback. The application does not require administrator
-rights.
+The WPF application is DPI-aware, has a seven-stage employee workflow, does
+not require administrator rights, and never collects LLM credentials. It
+downloads clients only from the hash-locked sources in
+`client-sources.lock.json`, verifies SHA-256 and Authenticode publisher before
+execution, then installs each base through the pinned Foundation engine.
 
-## Installation lifecycle
+## Employee workflow
 
-1. Validate every embedded target package against release acceptance evidence.
-2. Detect the exact installed client version.
-3. Let the user select one or more ready targets.
-4. Build and display a deterministic Foundation plan.
-5. Create a complete backup of the managed surface.
-6. Apply the target atomically.
-7. Run `doctor`; rollback automatically if it fails.
-8. Write a local report under `~/.llm-foundation/reports/`.
+1. Check Windows, accepted packages, and installed clients.
+2. Select `Direct`, `VPN`, or `Proxy`.
+3. Download and verify missing official clients.
+4. Show the deterministic base plan.
+5. Backup, install, run `doctor`, and rollback automatically on failure.
+6. Open the installed clients for interactive authorization.
+7. Write a local result and show `$sync-base` / rollback guidance.
 
-The engine implements `plan`, `install`, `doctor`, `inventory`, and `rollback`.
-It rejects a client mismatch, downgrade, corrupt ZIP, extra file, path
-traversal, protected-path overlap, incompatible engine, incomplete managed
-surface, unsafe reparse point, or concurrent mutation before changing the
-target home.
+Exact client versions are left unchanged. Older versions can be upgraded.
+Newer or different versions are never downgraded automatically; only the
+affected base is blocked. Codex Desktop uses the exact Microsoft Store Product
+ID and validates package name, publisher, architecture, and `SignatureKind`.
+No ambiguous Store/winget search is used.
 
-## Connection modes
+Codex CLI `0.146.0-alpha.3.1` is installed by the `install.ps1` asset attached
+to the same official OpenAI release tag. The root installer currently published
+at `chatgpt.com/codex/install.ps1` rejects the two-part alpha suffix, so it is
+not used for this pinned version. The release-specific script is downloaded to
+staging, checked against SHA-256
+`397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f`,
+AST-checked, and only then executed with
+`-Release 0.146.0-alpha.3.1`.
 
-Connection setup is shared by the GUI, release check, and `$sync-base`:
+Foundation provides `plan`, `install`, `doctor`, `inventory`, and `rollback`.
+It rejects corrupt ZIPs, extra files, path traversal, reparse-point paths,
+protected-path overlap, incompatible engines, concurrent mutations, and
+unsupported clients before changing the target home.
 
-- **Direct** — clears inherited proxy variables.
-- **VPN** — also requires no proxy; absence of a proxy is not a blocker.
-- **Proxy** — HTTP, HTTPS, or SOCKS5 with either no authentication or
-  username/password authentication.
+## Connection and credentials
 
-Proxy credentials are encrypted with Windows DPAPI for the current user and
-are never stored in the JSON profile or written to logs. A network probe runs
-only when the user explicitly clicks the test button. Package installation
-itself is offline.
+- **Direct** — inherited proxy variables are cleared.
+- **VPN** — uses system routing; absence of proxy is expected and never a
+  blocker.
+- **Proxy** — HTTP, HTTPS, or SOCKS5, with optional username/password.
 
-See [the employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md) for the
-complete workflow, preserved data, connection troubleshooting, and release
-gates.
+Proxy credentials are protected with Windows DPAPI for the current user. They
+are passed to child processes only through temporary environment variables and
+never written to argv, manifests, evidence, or logs. Verbose `curl` is not
+used.
 
-## Trust and distribution
+LLM authorization remains inside Codex, Claude, and OpenCode. Existing auth,
+sessions, memories, state, projects, and external workspaces are outside the
+managed surface and remain untouched. Consumer devices never upload feedback,
+telemetry, session reports, or local changes.
 
-A target package declares its exact client identity and accepted version,
-managed and preserved paths, one-way sync policy, and every payload SHA-256.
-An employee build additionally requires:
+## Distribution modes
 
-- accepted packages for all three targets;
-- immutable stable release evidence and asset attestations;
-- current, PII-free provider-eligibility evidence with all required controls;
-- a current-user Authenticode code-signing certificate;
-- a successful timestamped signature.
+```text
+-DistributionMode Preview | InternalUnsigned | PublicSigned
+```
 
-An `unsigned-preview` manifest is intentionally marked
-`employee_distribution_allowed: false`. It is for local visual and synthetic
-acceptance only.
+- `Preview` — development and synthetic validation only.
+- `InternalUnsigned` — employee distribution after all target/provider/client
+  evidence passes. Windows may show `Unknown Publisher` or SmartScreen.
+- `PublicSigned` — also requires a valid timestamped Authenticode signature.
 
-## Development
+The internal unsigned manifest explicitly records:
+
+```json
+{
+  "distribution_mode": "internal_unsigned",
+  "signature": "unsigned-internal",
+  "employee_release": true,
+  "employee_distribution_allowed": true,
+  "public_distribution_allowed": false,
+  "windows_warning_expected": true
+}
+```
+
+`PublicSigned` is implemented but currently `DEFERRED_BY_OWNER`; lack of a
+certificate does not block `InternalUnsigned`.
+
+## Build and test
+
+The release build host needs Python 3.12, PowerShell 7, Windows PowerShell
+5.1, and Microsoft Visual Studio Build Tools with the Roslyn/MSBuild
+component. Roslyn deterministic compilation is mandatory; the legacy
+Framework `csc.exe` is rejected rather than producing unstable EXE bytes.
 
 ```powershell
 py -3.12 -m pytest -q
 py -3.12 .\tools\run-acceptance.py
 
 pwsh -NoProfile -File .\tools\build-gui.ps1 `
-  -OutputRoot .\dist\gui-preview
+  -OutputRoot .\dist\gui-preview `
+  -DistributionMode Preview
 ```
 
-An employee build is fail-closed:
+`run-acceptance.py` refuses a dirty Git worktree. Its evidence binds the
+commit, tree, tracked source groups, both PowerShell builds, test counts and
+the exact three engine files.
+
+### Foundation 0.2.1 release
+
+The employee build never rebuilds Foundation from the current worktree. First
+prepare the exact synthetic-accepted engine bytes:
+
+```powershell
+py -3.12 .\tools\promote_foundation.py `
+  --engine-root .\.work\acceptance\engine-ps7 `
+  --acceptance-evidence .\dist\foundation-acceptance.json `
+  --output .\dist\foundation-stable-0.2.1
+```
+
+Publish those assets under `foundation-engine-v0.2.1`, then run:
+
+```powershell
+py -3.12 .\tools\verify_foundation_release.py `
+  --manifest .\dist\foundation-stable-0.2.1\release-manifest.json `
+  --asset .\dist\foundation-stable-0.2.1\foundation-engine-0.2.1.zip `
+  --output .\dist\foundation-stable-0.2.1\release-verification.json
+
+py -3.12 .\tools\create_foundation_package_acceptance.py `
+  --manifest .\dist\foundation-stable-0.2.1\release-manifest.json `
+  --evidence .\dist\foundation-stable-0.2.1\acceptance-evidence.json `
+  --release-verification `
+    .\dist\foundation-stable-0.2.1\release-verification.json `
+  --output .\dist\foundation-stable-0.2.1\package-acceptance.json
+```
+
+### Internal employee candidate
+
+After all three target releases have their own post-publication
+`package-acceptance.json`, create current PII-free provider evidence:
 
 ```powershell
 pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
@@ -88,18 +152,54 @@ pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
 pwsh -NoProfile -File .\tools\build-gui.ps1 `
   -OutputRoot .\dist\employee `
   -PackageRoot <accepted-packages-root> `
+  -FoundationPackageRoot .\dist\foundation-stable-0.2.1 `
   -ProviderEligibilityEvidence .\provider-eligibility-evidence.json `
-  -EmployeeRelease `
-  -SigningCertificateThumbprint <code-signing-thumbprint>
+  -DistributionMode InternalUnsigned
 ```
 
-Provider eligibility evidence expires within seven days, contains no employee
-identity, location, IP, or account data, is embedded into the signed
-executable, and is SHA-256-bound into `bundle-manifest.json`. Any build that
-contains an accepted Claude package requires it. Runtime catalog/preflight
-rechecks the embedded or sidecar evidence hash and expiry and reports
-`policy_blocked` instead of enabling Claude when it is invalid.
+Provider evidence is PII-free, expires within seven days, and is hash-bound to
+the bundle. Each target manifest must reference the same accepted Foundation
+`engine-manifest.json`; a mismatch blocks the build.
 
-Acceptance refuses a dirty Git worktree and writes commit/tree-bound evidence.
-`FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a client canary,
-employee rollout, or full-program release.
+### Hub canary, draft, pilot, publication
+
+```powershell
+py -3.12 .\tools\hub_canary.py `
+  --execute-approved-hub-canary `
+  --bundle .\dist\employee `
+  --home <isolated-canary-home> `
+  --output .\dist\hub-canary.json
+
+py -3.12 .\tools\installer_release.py `
+  --bundle .\dist\employee `
+  --hub-canary .\dist\hub-canary.json `
+  --output .\dist\installer-draft-0.3.0
+```
+
+The clean-PC pilot uses the exact draft EXE. Every pilot check is explicitly
+confirmed in a PII-free record made by `pilot_evidence.py`; no machine name,
+account, IP address, token or credential is stored. After a passing pilot:
+
+```powershell
+py -3.12 .\tools\pilot_release.py `
+  --draft .\dist\installer-draft-0.3.0 `
+  --pilot-evidence <pilot-evidence.json> `
+  --output .\dist\installer-stable-0.3.0
+```
+
+Final metadata and evidence are necessarily produced after the pilot, while
+`LLMFoundationInstaller.exe` remains byte-for-byte identical to the draft
+canary and pilot EXE. After immutable publication, verify the release and
+every asset:
+
+```powershell
+py -3.12 .\tools\installer_release_verifier.py `
+  --stable-root .\dist\installer-stable-0.3.0 `
+  --output .\dist\installer-v0.3.0-release-verification.json
+```
+
+`FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a provider
+canary, clean-PC pilot, or final employee release.
+
+See [the employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md) for the
+complete operating and release procedure.

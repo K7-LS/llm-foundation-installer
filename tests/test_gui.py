@@ -4,6 +4,7 @@ import ctypes
 from datetime import datetime, timedelta, timezone
 import hashlib
 import http.server
+import io
 import json
 import os
 import shutil
@@ -36,10 +37,29 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
+def _evidence_body_sha256(value: dict[str, object]) -> str:
+    body = dict(value)
+    body.pop("evidence_body_sha256", None)
+    payload = (
+        json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _build_gui_bundle(
     output: Path,
     package_root: Path | None = None,
     provider_eligibility_evidence: Path | None = None,
+    distribution_mode: str | None = None,
+    client_sources_lock: Path | None = None,
+    allow_local_test_sources: bool = False,
+    foundation_package_root: Path | None = None,
 ) -> Path:
     arguments = [
         POWERSHELL,
@@ -53,6 +73,16 @@ def _build_gui_bundle(
     ]
     if package_root is not None:
         arguments.extend(["-PackageRoot", str(package_root)])
+        implicit_foundation = package_root / "foundation"
+        if (
+            foundation_package_root is None
+            and implicit_foundation.is_dir()
+        ):
+            foundation_package_root = implicit_foundation
+    if foundation_package_root is not None:
+        arguments.extend(
+            ["-FoundationPackageRoot", str(foundation_package_root)]
+        )
     if provider_eligibility_evidence is not None:
         arguments.extend(
             [
@@ -60,6 +90,12 @@ def _build_gui_bundle(
                 str(provider_eligibility_evidence),
             ]
         )
+    if distribution_mode is not None:
+        arguments.extend(["-DistributionMode", distribution_mode])
+    if client_sources_lock is not None:
+        arguments.extend(["-ClientSourcesLock", str(client_sources_lock)])
+    if allow_local_test_sources:
+        arguments.append("-AllowLocalTestSources")
     result = subprocess.run(
         arguments,
         cwd=REPOSITORY_ROOT,
@@ -70,6 +106,63 @@ def _build_gui_bundle(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return output
+
+
+def _local_client_source_lock(
+    path: Path,
+    *,
+    url: str = "http://127.0.0.1:8765/client.bin",
+    sha256: str = "0" * 64,
+    signature_required: bool = False,
+    publisher: str | None = None,
+    version: str = "1.0.0",
+    artifact_kind: str = "portable-exe",
+    install_mode: str = "download-only",
+    detect_commands: list[str] | None = None,
+    archive_entry: str | None = None,
+) -> Path:
+    _write_json(
+        path,
+        {
+            "schema_version": 1,
+            "official_only": False,
+            "test_only": True,
+            "platform": {
+                "os": "windows",
+                "architecture": "x64",
+                "minimum_build": 19041,
+            },
+            "clients": [
+                {
+                    "id": "fixture-client",
+                    "target": "fixture",
+                    "display_name": "Fixture Client",
+                    "role": "cli",
+                    "required_for_base": True,
+                    "required_for_employee": False,
+                    "version": version,
+                    "source_kind": "download",
+                    "url": url,
+                    "sha256": sha256,
+                    "artifact_kind": artifact_kind,
+                    "archive_entry": archive_entry,
+                    "publisher": publisher,
+                    "signature_required": signature_required,
+                    "install_mode": install_mode,
+                    "detect_commands": (
+                        detect_commands
+                        if detect_commands is not None
+                        else ["fixture-client.exe"]
+                    ),
+                    "version_arguments": ["--version"],
+                    "store_identity": None,
+                    "store_publisher": None,
+                    "store_signature_kind": None,
+                }
+            ],
+        },
+    )
+    return path
 
 
 def _provider_eligibility_evidence(
@@ -114,12 +207,161 @@ def _provider_eligibility_evidence(
     return path
 
 
+def _accepted_foundation(root: Path) -> Path:
+    package_root = root / "foundation"
+    if package_root.exists():
+        return package_root
+    package_root.mkdir(parents=True)
+    engine_files = {
+        "foundation.ps1": (
+            REPOSITORY_ROOT / "src" / "foundation.ps1"
+        ).read_bytes(),
+        "VERSION": (
+            REPOSITORY_ROOT / "VERSION"
+        ).read_bytes(),
+    }
+    script_hash = hashlib.sha256(
+        engine_files["foundation.ps1"]
+    ).hexdigest()
+    engine_files["engine-manifest.json"] = (
+        json.dumps(
+            {
+                "commands": [
+                    "doctor",
+                    "install",
+                    "inventory",
+                    "plan",
+                    "rollback",
+                ],
+                "engine_version": "0.2.1",
+                "foundation_ps1_sha256": script_hash,
+                "network": "offline",
+                "protocol_version": 1,
+                "schema_version": 1,
+                "supported_powershell": ["5.1", "7"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+    asset = package_root / "foundation-engine-0.2.1.zip"
+    with zipfile.ZipFile(asset, "w") as archive:
+        for name, payload in sorted(engine_files.items()):
+            archive.writestr(name, payload)
+    engine_records = {
+        name: {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        for name, payload in sorted(engine_files.items())
+    }
+    evidence = package_root / "acceptance-evidence.json"
+    evidence_value = {
+        "schema_version": 1,
+        "engine_version": "0.2.1",
+        "installer_version": "0.3.0",
+        "FOUNDATION_SYNTHETIC": "PASS",
+        "deterministic_engine_bundle": "PASS",
+    }
+    evidence_value["evidence_body_sha256"] = _evidence_body_sha256(
+        evidence_value
+    )
+    _write_json(evidence, evidence_value)
+    release = package_root / "release-manifest.json"
+    release_value = {
+        "schema_version": 1,
+        "target": "foundation",
+        "version": "0.2.1",
+        "tag": "foundation-engine-v0.2.1",
+        "channel": "stable",
+        "source": {
+            "repository": (
+                "https://github.com/daniileliseev1337/"
+                "llm-foundation-installer"
+            ),
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+        },
+        "asset": {
+            "name": asset.name,
+            "sha256": _sha256(asset),
+            "bytes": asset.stat().st_size,
+        },
+        "engine_files": engine_records,
+        "acceptance_evidence_sha256": _sha256(evidence),
+        "requires": {
+            "immutable_release": True,
+            "release_attestation": True,
+        },
+    }
+    release_value["evidence_body_sha256"] = _evidence_body_sha256(
+        release_value
+    )
+    _write_json(release, release_value)
+    verification = package_root / "release-verification.json"
+    verification_value = {
+        "schema_version": 1,
+        "repository": (
+            "daniileliseev1337/llm-foundation-installer"
+        ),
+        "tag": "foundation-engine-v0.2.1",
+        "release_state": {
+            "draft": False,
+            "prerelease": False,
+            "immutable": True,
+        },
+        "release_attestation": "PASS",
+        "assets": [
+            {
+                **release_value["asset"],
+                "attestation": "PASS",
+            }
+        ],
+        "RELEASE_INTEGRITY": "PASS",
+    }
+    verification_value["evidence_body_sha256"] = _evidence_body_sha256(
+        verification_value
+    )
+    _write_json(verification, verification_value)
+    _write_json(
+        package_root / "package-acceptance.json",
+        {
+            "schema_version": 1,
+            "target": "foundation",
+            "engine_version": "0.2.1",
+            "package_acceptance": "PASS",
+            "asset": release_value["asset"],
+            "engine_files": engine_records,
+            "release_manifest": {
+                "name": release.name,
+                "sha256": _sha256(release),
+                "bytes": release.stat().st_size,
+            },
+            "acceptance_evidence": {
+                "name": evidence.name,
+                "sha256": _sha256(evidence),
+                "bytes": evidence.stat().st_size,
+            },
+            "release_verification": {
+                "name": verification.name,
+                "sha256": _sha256(verification),
+                "bytes": verification.stat().st_size,
+            },
+            "immutable_release": True,
+            "release_attestation": True,
+        },
+    )
+    return package_root
+
+
 def _accepted_package(
     root: Path,
     target: str = "codex",
     *,
     codex_flat_evidence: bool = True,
 ) -> Path:
+    foundation = _accepted_foundation(root)
     package_root = root / target
     package_root.mkdir(parents=True)
     client_ids = {
@@ -231,45 +473,76 @@ def _accepted_package(
             "release_attestation": True,
         },
     }
+    release_value["foundation_engine_manifest_sha256"] = json.loads(
+        (foundation / "package-acceptance.json").read_text(encoding="utf-8")
+    )["engine_files"]["engine-manifest.json"]["sha256"]
     _write_json(release, release_value)
     evidence = package_root / "acceptance-evidence.json"
+    binding_keys = (
+        "target",
+        "version",
+        "tag",
+        "client",
+        "asset",
+        "package_manifest_sha256",
+        "components_lock_sha256",
+        "source",
+        "foundation_engine_version",
+        "foundation_engine_manifest_sha256",
+    )
+    binding = {
+        key: release_value[key] for key in binding_keys
+    }
     if target == "codex" and codex_flat_evidence:
-        binding_keys = (
-            "target",
-            "version",
-            "tag",
-            "asset",
-            "package_manifest_sha256",
-            "components_lock_sha256",
-            "source",
-            "foundation_engine_version",
-            "foundation_engine_manifest_sha256",
-        )
         evidence_value = {
             "schema_version": 1,
             "target": target,
             "version": "1.0.0",
-            "release_binding": {
-                key: release_value[key] for key in binding_keys
-            },
+            "release_binding": binding,
             verdict_ids[target]: "PASS",
-            "RELEASE_INTEGRITY": "PASS",
+            "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
         }
     else:
         evidence_value = {
             "schema_version": 1,
             "target": target,
+            "version": "1.0.0",
+            "release_binding": binding,
             "asset_sha256": _sha256(asset),
-            "release_manifest_sha256": _sha256(release),
             "verdicts": {
                 verdict_ids[target]: "PASS",
-                "RELEASE_INTEGRITY": "PASS",
+                "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
             },
         }
+    evidence_value["evidence_body_sha256"] = _evidence_body_sha256(
+        evidence_value
+    )
     _write_json(evidence, evidence_value)
-    if target == "codex" and codex_flat_evidence:
-        release_value["acceptance_evidence_sha256"] = _sha256(evidence)
-        _write_json(release, release_value)
+    release_value["acceptance_evidence_sha256"] = _sha256(evidence)
+    _write_json(release, release_value)
+    release_verification = package_root / "release-verification.json"
+    release_verification_value = {
+        "schema_version": 1,
+        "repository": f"example/{target}-base",
+        "tag": release_value["tag"],
+        "release_state": {
+            "draft": False,
+            "prerelease": False,
+            "immutable": True,
+        },
+        "release_attestation": "PASS",
+        "assets": [
+            {
+                **asset_record,
+                "attestation": "PASS",
+            }
+        ],
+        "RELEASE_INTEGRITY": "PASS",
+    }
+    release_verification_value["evidence_body_sha256"] = (
+        _evidence_body_sha256(release_verification_value)
+    )
+    _write_json(release_verification, release_verification_value)
     _write_json(
         package_root / "package-acceptance.json",
         {
@@ -294,6 +567,11 @@ def _accepted_package(
                 "name": evidence.name,
                 "sha256": _sha256(evidence),
                 "bytes": evidence.stat().st_size,
+            },
+            "release_verification": {
+                "name": release_verification.name,
+                "sha256": _sha256(release_verification),
+                "bytes": release_verification.stat().st_size,
             },
             "immutable_release": True,
             "release_attestation": True,
@@ -320,6 +598,23 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     assert manifest_path.is_file()
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    app_version = (REPOSITORY_ROOT / "APP_VERSION").read_text(
+        encoding="utf-8"
+    ).strip()
+    engine_version = (REPOSITORY_ROOT / "VERSION").read_text(
+        encoding="utf-8"
+    ).strip()
+    assert app_version == "0.3.0"
+    assert engine_version == "0.2.1"
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    assert '[assembly: AssemblyVersion("0.3.0.0")]' in source
+    assert '[assembly: AssemblyFileVersion("0.3.0.0")]' in source
+    assert manifest["version"] == app_version
+    assert (gui_bundle / "engine" / "VERSION").read_text(
+        encoding="utf-8"
+    ).strip() == engine_version
     assert manifest["schema_version"] == 1
     assert manifest["app_id"] == "llm-foundation-installer"
     assert manifest["network"] == "user-initiated-only"
@@ -327,15 +622,27 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     assert manifest["telemetry"] is False
     assert manifest["reverse_flow"] is False
     assert manifest["distribution"] == "single-executable"
+    assert manifest["distribution_mode"] == "preview"
     assert manifest["embedded_foundation"] is True
     assert manifest["signature"] == "unsigned-preview"
     assert manifest["employee_release"] is False
     assert manifest["employee_distribution_allowed"] is False
+    assert manifest["public_distribution_allowed"] is False
+    assert manifest["windows_warning_expected"] is False
     assert manifest["artifacts"]["LLMFoundationInstaller.exe"]["sha256"] == _sha256(
         executable
     )
     assert manifest["artifacts"]["engine/foundation.ps1"]["sha256"] == _sha256(
         engine
+    )
+    assert manifest["artifacts"]["engine/engine-manifest.json"][
+        "sha256"
+    ] == _sha256(gui_bundle / "engine" / "engine-manifest.json")
+    assert manifest["artifacts"]["engine/VERSION"]["sha256"] == _sha256(
+        gui_bundle / "engine" / "VERSION"
+    )
+    assert manifest["artifacts"]["VERSION"]["sha256"] == _sha256(
+        gui_bundle / "VERSION"
     )
 
     result = subprocess.run(
@@ -360,6 +667,1641 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
         "telemetry": False,
         "version": manifest["version"],
     }
+
+
+def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
+    source_lock = REPOSITORY_ROOT / "client-sources.lock.json"
+    bundled_lock = gui_bundle / "client-sources.lock.json"
+    manifest = json.loads(
+        (gui_bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert bundled_lock.read_bytes() == source_lock.read_bytes()
+    assert manifest["client_sources"] == {
+        "schema_version": 1,
+        "official_only": True,
+        "test_only": False,
+        "relative_path": "client-sources.lock.json",
+        "resource_name": "ClientSources.lock.json",
+        "sha256": _sha256(source_lock),
+        "bytes": source_lock.stat().st_size,
+    }
+    assert manifest["artifacts"]["client-sources.lock.json"] == {
+        "sha256": _sha256(source_lock),
+        "bytes": source_lock.stat().st_size,
+    }
+
+    result = subprocess.run(
+        [str(gui_bundle / "LLMFoundationInstaller.exe"), "--client-sources-json"],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "READY"
+    assert payload["schema_version"] == 1
+    assert payload["platform"] == {
+        "os": "windows",
+        "architecture": "x64",
+        "minimum_build": 19041,
+    }
+    assert payload["official_only"] is True
+    assert payload["test_only"] is False
+    assert [
+        (entry["id"], entry["version"], entry["source_kind"])
+        for entry in payload["clients"]
+    ] == [
+        ("codex-cli", "0.146.0-alpha.3.1", "download"),
+        ("codex-desktop", "store-current", "store"),
+        ("claude-code", "2.1.218", "download"),
+        ("opencode-cli", "1.18.7", "download"),
+        ("opencode-desktop", "1.18.7", "download"),
+    ]
+
+
+def test_codex_desktop_source_uses_exact_store_product_and_identity(
+    gui_bundle: Path,
+):
+    source_lock = json.loads(
+        (gui_bundle / "client-sources.lock.json").read_text(encoding="utf-8")
+    )
+    desktop = next(
+        entry
+        for entry in source_lock["clients"]
+        if entry["id"] == "codex-desktop"
+    )
+    assert desktop["url"].startswith(
+        "https://apps.microsoft.com/detail/9plm9xgg6vks"
+    )
+    assert desktop["store_product_id"] == "9PLM9XGG6VKS"
+    assert desktop["store_identity"] == "OpenAI.Codex"
+    assert (
+        desktop["store_publisher"]
+        == "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B"
+    )
+    assert desktop["store_signature_kind"] == "Store"
+
+
+def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
+    source_lock = json.loads(
+        (
+            REPOSITORY_ROOT / "client-sources.lock.json"
+        ).read_text(encoding="utf-8")
+    )
+    cli = next(
+        entry
+        for entry in source_lock["clients"]
+        if entry["id"] == "codex-cli"
+    )
+
+    assert cli["version"] == "0.146.0-alpha.3.1"
+    assert cli["url"] == (
+        "https://github.com/openai/codex/releases/download/"
+        "rust-v0.146.0-alpha.3.1/install.ps1"
+    )
+    assert cli["sha256"] == (
+        "397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f"
+    )
+    assert cli["artifact_kind"] == "powershell-installer-script"
+    assert cli["install_mode"] == "official-script"
+
+
+def test_store_record_validation_accepts_only_locked_codex_identity(
+    gui_bundle: Path,
+    tmp_path: Path,
+):
+    valid_record = tmp_path / "valid-store-record.json"
+    _write_json(
+        valid_record,
+        {
+            "present": True,
+            "name": "OpenAI.Codex",
+            "publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
+            "signature_kind": "Store",
+            "architecture": "X64",
+            "version": "26.721.4979.0",
+            "package_full_name": (
+                "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+            ),
+        },
+    )
+    valid = subprocess.run(
+        [
+            str(gui_bundle / "LLMFoundationInstaller.exe"),
+            "--validate-store-record-json",
+            "codex-desktop",
+            str(valid_record),
+        ],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=20,
+    )
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    payload = json.loads(valid.stdout)
+    assert payload == {
+        "status": "READY",
+        "client_id": "codex-desktop",
+        "version": "26.721.4979.0",
+        "package_full_name": (
+            "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+        ),
+        "store_product_id": "9PLM9XGG6VKS",
+        "source_uri": (
+            "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS"
+        ),
+    }
+
+    for field, wrong in (
+        ("name", "Codex.QR"),
+        ("publisher", "CN=Third Party"),
+        ("signature_kind", "Developer"),
+        ("architecture", "Arm64"),
+    ):
+        record = json.loads(valid_record.read_text(encoding="utf-8"))
+        record[field] = wrong
+        invalid_record = tmp_path / f"invalid-{field}.json"
+        _write_json(invalid_record, record)
+        invalid = subprocess.run(
+            [
+                str(gui_bundle / "LLMFoundationInstaller.exe"),
+                "--validate-store-record-json",
+                "codex-desktop",
+                str(invalid_record),
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=20,
+        )
+        assert invalid.returncode != 0
+        assert "store package identity differs from source lock" in (
+            invalid.stderr.lower()
+        )
+
+
+def test_preview_can_embed_explicit_local_test_source_lock(tmp_path: Path):
+    source_lock = _local_client_source_lock(
+        tmp_path / "client-sources.test.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["distribution_mode"] == "preview"
+    assert manifest["client_sources"]["official_only"] is False
+    assert manifest["client_sources"]["test_only"] is True
+    result = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), "--client-sources-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["test_only"] is True
+    assert [entry["id"] for entry in payload["clients"]] == [
+        "fixture-client"
+    ]
+
+
+def test_internal_unsigned_rejects_local_test_client_source_lock(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    source_lock = _local_client_source_lock(
+        tmp_path / "client-sources.test.json"
+    )
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "bundle"),
+            "-PackageRoot",
+            str(package_source),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+            "-DistributionMode",
+            "InternalUnsigned",
+            "-ClientSourcesLock",
+            str(source_lock),
+            "-AllowLocalTestSources",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "local test client sources are only allowed for preview" in (
+        result.stdout + result.stderr
+    ).lower()
+
+
+def test_client_download_is_atomic_hash_verified_and_vpn_needs_no_proxy(
+    tmp_path: Path,
+):
+    content = b"fixture-client-binary\n"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.bin"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        executable = bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        profile = tmp_path / "vpn.json"
+        _write_json(
+            profile,
+            {"schema_version": 1, "mode": "VPN", "proxy": None},
+        )
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-connection-json",
+                str(home),
+                str(profile),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+
+        staging = tmp_path / "client-staging"
+        downloaded = subprocess.run(
+            [
+                str(executable),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+
+        assert downloaded.returncode == 0, (
+            downloaded.stdout + downloaded.stderr
+        )
+        payload = json.loads(downloaded.stdout)
+        assert payload == {
+            "status": "VERIFIED",
+            "client_id": "fixture-client",
+            "version": "1.0.0",
+            "connection_mode": "VPN",
+            "uses_proxy": False,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "bytes": len(content),
+            "relative_path": "fixture-client/1.0.0/client.bin",
+        }
+        final = staging / Path(payload["relative_path"])
+        assert final.read_bytes() == content
+        assert not list(staging.rglob("*part-*"))
+        assert Handler.requests == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_removes_partial_file_when_hash_is_wrong(
+    tmp_path: Path,
+):
+    content = b"tampered-client\n"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.bin"
+            ),
+            sha256="0" * 64,
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+        downloaded = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert downloaded.returncode != 0
+        assert "hash" in downloaded.stderr.lower()
+        assert not list(staging.rglob("client.bin"))
+        assert not list(staging.rglob("*part-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_rejects_reparse_ancestor_before_network(
+    tmp_path: Path,
+):
+    content = b"must-not-be-requested"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    target = tmp_path / "junction-target"
+    target.mkdir()
+    junction = tmp_path / "junction"
+    created = subprocess.run(
+        [
+            os.environ.get("COMSPEC", "cmd.exe"),
+            "/d",
+            "/c",
+            "mklink",
+            "/J",
+            str(junction),
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if created.returncode != 0:
+        pytest.skip("Windows junction fixture is unavailable")
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/client.bin",
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        result = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(junction / "nested"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode != 0
+        assert "reparse point" in result.stderr.lower()
+        assert Handler.requests == 0
+        assert not (target / "nested").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_interruption_leaves_no_partial_or_final_file(
+    tmp_path: Path,
+):
+    partial = b"partial-download"
+    expected = partial + b"-missing-tail"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(expected)))
+            self.end_headers()
+            self.wfile.write(partial)
+            self.wfile.flush()
+            self.close_connection = True
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/client.bin",
+            sha256=hashlib.sha256(expected).hexdigest(),
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+        result = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode != 0
+        assert "client download failed with curl exit" in result.stderr.lower()
+        assert not list(staging.rglob("*.part-*"))
+        assert not list(staging.rglob("client.bin"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_rejects_unsigned_executable_when_signature_required(
+    tmp_path: Path,
+):
+    content = b"MZ-not-a-signed-executable\n"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.exe"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            signature_required=True,
+            publisher="Fixture Publisher",
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+        downloaded = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert downloaded.returncode != 0
+        assert "authenticode" in downloaded.stderr.lower()
+        assert not list(staging.rglob("client.exe"))
+        assert not list(staging.rglob("*part-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_rejects_valid_signature_from_wrong_publisher(
+    tmp_path: Path,
+):
+    signed_fixture = Path(shutil.which("pwsh") or "")
+    if not signed_fixture.is_file():
+        pytest.skip("PowerShell 7 signed fixture is unavailable")
+    content = signed_fixture.read_bytes()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.exe"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            signature_required=True,
+            publisher="Fixture Publisher",
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+        downloaded = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert downloaded.returncode != 0
+        assert "publisher" in downloaded.stderr.lower()
+        assert not list(staging.rglob("client.exe"))
+        assert not list(staging.rglob("*part-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_rejects_publisher_substring_instead_of_exact_name(
+    tmp_path: Path,
+):
+    signed_fixture = Path(shutil.which("pwsh") or "")
+    if not signed_fixture.is_file():
+        pytest.skip("PowerShell 7 signed fixture is unavailable")
+    content = signed_fixture.read_bytes()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.exe"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            signature_required=True,
+            publisher="Microsoft",
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+
+        downloaded = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+
+        assert downloaded.returncode != 0
+        assert "publisher" in downloaded.stderr.lower()
+        assert not list(staging.rglob("client.exe"))
+        assert not list(staging.rglob("*part-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_download_accepts_exact_authenticode_simple_name(
+    tmp_path: Path,
+):
+    signed_fixture = Path(shutil.which("pwsh") or "")
+    if not signed_fixture.is_file():
+        pytest.skip("PowerShell 7 signed fixture is unavailable")
+    content = signed_fixture.read_bytes()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/client.exe"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            signature_required=True,
+            publisher="Microsoft Corporation",
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+
+        downloaded = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--download-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+
+        assert downloaded.returncode == 0, downloaded.stderr
+        result = json.loads(downloaded.stdout)
+        assert result["status"] == "VERIFIED"
+        assert result["sha256"] == hashlib.sha256(content).hexdigest()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_plan_and_install_managed_bin_without_mutating_real_user_path(
+    tmp_path: Path,
+):
+    content = (
+        b"@echo off\r\n"
+        b"echo fixture-client 1.0.0\r\n"
+    )
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/fixture-client.cmd"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            artifact_kind="portable-command",
+            install_mode="managed-bin",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        executable = bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+
+        missing = subprocess.run(
+            [
+                str(executable),
+                "--client-plan-json",
+                str(home),
+                "fixture-client",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert missing.returncode == 0, missing.stdout + missing.stderr
+        assert json.loads(missing.stdout) == {
+            "status": "INSTALL_AVAILABLE",
+            "client_id": "fixture-client",
+            "supported_version": "1.0.0",
+            "detected_version": None,
+            "detected_state": "missing",
+            "action": "install",
+        }
+
+        installed = subprocess.run(
+            [
+                str(executable),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        payload = json.loads(installed.stdout)
+        assert payload == {
+            "status": "INSTALLED",
+            "client_id": "fixture-client",
+            "version": "1.0.0",
+            "relative_install_path": (
+                ".llm-foundation/bin/fixture-client.cmd"
+            ),
+            "path_persisted": False,
+            "authentication_touched": False,
+        }
+        managed = home / ".llm-foundation" / "bin" / "fixture-client.cmd"
+        assert managed.read_bytes() == content
+        assert Handler.requests == 1
+
+        ready = subprocess.run(
+            [
+                str(executable),
+                "--client-plan-json",
+                str(home),
+                "fixture-client",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert ready.returncode == 0, ready.stdout + ready.stderr
+        assert json.loads(ready.stdout) == {
+            "status": "READY",
+            "client_id": "fixture-client",
+            "supported_version": "1.0.0",
+            "detected_version": "1.0.0",
+            "detected_state": "exact",
+            "action": "none",
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_install_blocks_newer_managed_version_before_download(
+    tmp_path: Path,
+):
+    source_content = (
+        b"@echo off\r\n"
+        b"echo fixture-client 1.0.0\r\n"
+    )
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(source_content)))
+            self.end_headers()
+            self.wfile.write(source_content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/fixture-client.cmd"
+            ),
+            sha256=hashlib.sha256(source_content).hexdigest(),
+            artifact_kind="portable-command",
+            install_mode="managed-bin",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        executable = bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "employee-home"
+        managed = home / ".llm-foundation" / "bin"
+        managed.mkdir(parents=True)
+        newer = managed / "fixture-client.cmd"
+        newer.write_bytes(
+            b"@echo off\r\necho fixture-client 2.0.0\r\n"
+        )
+        before = newer.read_bytes()
+
+        plan = subprocess.run(
+            [
+                str(executable),
+                "--client-plan-json",
+                str(home),
+                "fixture-client",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert plan.returncode == 20
+        assert json.loads(plan.stdout)["status"] == "BLOCKED_NO_DOWNGRADE"
+        install = subprocess.run(
+            [
+                str(executable),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert install.returncode == 20
+        assert json.loads(install.stdout)["status"] == "BLOCKED_NO_DOWNGRADE"
+        assert newer.read_bytes() == before
+        assert Handler.requests == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_install_extracts_only_locked_zip_payload(tmp_path: Path):
+    command = b"@echo off\r\necho fixture-client 1.0.0\r\n"
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("fixture-client.cmd", command)
+    archive_bytes = archive_buffer.getvalue()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(archive_bytes)))
+            self.end_headers()
+            self.wfile.write(archive_bytes)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/client.zip",
+            sha256=hashlib.sha256(archive_bytes).hexdigest(),
+            artifact_kind="zip",
+            archive_entry="fixture-client.cmd",
+            install_mode="managed-bin",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert json.loads(installed.stdout)["status"] == "INSTALLED"
+        assert (
+            home / ".llm-foundation" / "bin" / "fixture-client.cmd"
+        ).read_bytes() == command
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_client_install_rejects_zip_with_path_traversal_entry(
+    tmp_path: Path,
+):
+    command = b"@echo off\r\necho fixture-client 1.0.0\r\n"
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("fixture-client.cmd", command)
+        archive.writestr("../escape.txt", b"escape")
+    archive_bytes = archive_buffer.getvalue()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(archive_bytes)))
+            self.end_headers()
+            self.wfile.write(archive_bytes)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/client.zip",
+            sha256=hashlib.sha256(archive_bytes).hexdigest(),
+            artifact_kind="zip",
+            archive_entry="fixture-client.cmd",
+            install_mode="managed-bin",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode != 0
+        assert "unsafe zip entry" in installed.stderr.lower()
+        assert not (tmp_path / "escape.txt").exists()
+        assert not (
+            home / ".llm-foundation" / "bin" / "fixture-client.cmd"
+        ).exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_official_script_is_ast_checked_and_runs_pinned_release_from_staging(
+    tmp_path: Path,
+):
+    script = b"""[CmdletBinding()]
+param([string]$Release)
+$ErrorActionPreference = 'Stop'
+if ($Release -cne '1.0.0') { throw 'release was not pinned' }
+New-Item -ItemType Directory -Force -Path $env:CODEX_INSTALL_DIR | Out-Null
+$command = Join-Path $env:CODEX_INSTALL_DIR 'fixture-client.cmd'
+'@echo off`r`necho fixture-client 1.0.0' |
+    Set-Content -LiteralPath $command -Encoding Ascii
+"""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(script)))
+            self.end_headers()
+            self.wfile.write(script)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/install.ps1",
+            sha256=hashlib.sha256(script).hexdigest(),
+            artifact_kind="powershell-installer-script",
+            install_mode="official-script",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        payload = json.loads(installed.stdout)
+        assert payload == {
+            "status": "INSTALLED",
+            "client_id": "fixture-client",
+            "version": "1.0.0",
+            "relative_install_path": (
+                ".llm-foundation/clients/fixture-client/bin/"
+                "fixture-client.cmd"
+            ),
+            "path_persisted": False,
+            "authentication_touched": False,
+        }
+        command = (
+            home
+            / ".llm-foundation"
+            / "clients"
+            / "fixture-client"
+            / "bin"
+            / "fixture-client.cmd"
+        )
+        assert command.is_file()
+        assert Handler.requests == 1
+        assert not list((tmp_path / "client-staging").rglob("*.part-*"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_official_script_network_cmdlets_are_routed_through_safe_curl(
+    tmp_path: Path,
+):
+    script = b"""[CmdletBinding()]
+param([string]$Release)
+$ErrorActionPreference = 'Stop'
+if ((Get-Command Invoke-WebRequest).CommandType -cne 'Function' -or
+    (Get-Command Invoke-RestMethod).CommandType -cne 'Function') {
+    throw 'safe curl wrappers are not active'
+}
+$metadata = Invoke-RestMethod -Uri ($env:LLM_FIXTURE_BASE + '/metadata')
+$response = Invoke-WebRequest -UseBasicParsing -Uri (
+    $env:LLM_FIXTURE_BASE + '/payload'
+)
+if ($Release -cne '1.0.0' -or $metadata.version -cne '1.0.0') {
+    throw 'release metadata differs'
+}
+New-Item -ItemType Directory -Force -Path $env:CODEX_INSTALL_DIR | Out-Null
+$command = Join-Path $env:CODEX_INSTALL_DIR 'fixture-client.cmd'
+('@echo off`r`necho fixture-client ' + $response.Content.Trim()) |
+    Set-Content -LiteralPath $command -Encoding Ascii
+"""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/install.ps1":
+                payload = script
+                content_type = "text/plain"
+            elif self.path == "/metadata":
+                payload = b'{"version":"1.0.0"}'
+                content_type = "application/json"
+            elif self.path == "/payload":
+                payload = b"1.0.0"
+                content_type = "text/plain"
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=base_url + "/install.ps1",
+            sha256=hashlib.sha256(script).hexdigest(),
+            artifact_kind="powershell-installer-script",
+            install_mode="official-script",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        environment = os.environ.copy()
+        environment["LLM_FIXTURE_BASE"] = base_url
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert json.loads(installed.stdout)["status"] == "INSTALLED"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_official_script_rejects_parse_error_before_execution(tmp_path: Path):
+    script = b"""[CmdletBinding()]
+param([string]$Release)
+Set-Content -LiteralPath $env:LLM_SIDE_EFFECT -Value 'ran'
+if (
+"""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(script)))
+            self.end_headers()
+            self.wfile.write(script)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/install.ps1",
+            sha256=hashlib.sha256(script).hexdigest(),
+            artifact_kind="powershell-installer-script",
+            install_mode="official-script",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        side_effect = tmp_path / "must-not-exist.txt"
+        environment = os.environ.copy()
+        environment["LLM_SIDE_EFFECT"] = str(side_effect)
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode != 0
+        assert "powershell installer script failed ast validation" in (
+            installed.stderr.lower()
+        )
+        assert not side_effect.exists()
+        assert not (
+            home
+            / ".llm-foundation"
+            / "clients"
+            / "fixture-client"
+            / "bin"
+            / "fixture-client.cmd"
+        ).exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_managed_desktop_install_is_atomic_registered_and_idempotent(
+    tmp_path: Path,
+):
+    desktop = b"MZ-fixture-desktop-1.0.0"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(desktop)))
+            self.end_headers()
+            self.wfile.write(desktop)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/fixture-desktop.exe",
+            sha256=hashlib.sha256(desktop).hexdigest(),
+            artifact_kind="portable-exe",
+            install_mode="managed-desktop",
+            detect_commands=[],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        command = [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--install-client-json",
+            str(home),
+            "fixture-client",
+            str(tmp_path / "client-staging"),
+        ]
+        first = subprocess.run(
+            command,
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert first.returncode == 0, first.stdout + first.stderr
+        payload = json.loads(first.stdout)
+        assert payload == {
+            "status": "INSTALLED",
+            "client_id": "fixture-client",
+            "version": "1.0.0",
+            "relative_install_path": (
+                ".llm-foundation/apps/fixture-client/1.0.0/"
+                "fixture-desktop.exe"
+            ),
+            "path_persisted": False,
+            "authentication_touched": False,
+        }
+        installed = (
+            home
+            / ".llm-foundation"
+            / "apps"
+            / "fixture-client"
+            / "1.0.0"
+            / "fixture-desktop.exe"
+        )
+        record = (
+            home
+            / ".llm-foundation"
+            / "apps"
+            / "fixture-client"
+            / "current.json"
+        )
+        shortcut = (
+            home
+            / "AppData"
+            / "Roaming"
+            / "Microsoft"
+            / "Windows"
+            / "Start Menu"
+            / "Programs"
+            / "LLM Foundation"
+            / "fixture-client.lnk"
+        )
+        assert installed.read_bytes() == desktop
+        assert json.loads(record.read_text(encoding="utf-8")) == {
+            "schema_version": 1,
+            "client_id": "fixture-client",
+            "version": "1.0.0",
+            "relative_path": "1.0.0/fixture-desktop.exe",
+            "sha256": hashlib.sha256(desktop).hexdigest(),
+        }
+        assert shortcut.is_file()
+
+        second = subprocess.run(
+            command,
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert json.loads(second.stdout)["status"] == "ALREADY_READY"
+        assert Handler.requests == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_managed_desktop_newer_version_blocks_downgrade_before_download(
+    tmp_path: Path,
+):
+    desktop = b"MZ-fixture-desktop"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(desktop)))
+            self.end_headers()
+            self.wfile.write(desktop)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        newest_lock = _local_client_source_lock(
+            tmp_path / "client-sources-2.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/fixture-desktop.exe",
+            sha256=hashlib.sha256(desktop).hexdigest(),
+            artifact_kind="portable-exe",
+            install_mode="managed-desktop",
+            detect_commands=[],
+            version="2.0.0",
+        )
+        newest_bundle = _build_gui_bundle(
+            tmp_path / "bundle-2",
+            client_sources_lock=newest_lock,
+            allow_local_test_sources=True,
+        )
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = subprocess.run(
+            [
+                str(newest_bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=newest_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert Handler.requests == 1
+
+        older_lock = _local_client_source_lock(
+            tmp_path / "client-sources-1.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/fixture-desktop.exe",
+            sha256=hashlib.sha256(desktop).hexdigest(),
+            artifact_kind="portable-exe",
+            install_mode="managed-desktop",
+            detect_commands=[],
+            version="1.0.0",
+        )
+        older_bundle = _build_gui_bundle(
+            tmp_path / "bundle-1",
+            client_sources_lock=older_lock,
+            allow_local_test_sources=True,
+        )
+        blocked = subprocess.run(
+            [
+                str(older_bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "other-staging"),
+            ],
+            cwd=older_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert blocked.returncode == 20, blocked.stdout + blocked.stderr
+        payload = json.loads(blocked.stdout)
+        assert payload["status"] == "BLOCKED_NO_DOWNGRADE"
+        assert payload["detected_version"] == "2.0.0"
+        assert Handler.requests == 1
+        assert not (tmp_path / "other-staging").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @pytest.mark.parametrize("powershell", POWERSHELLS)
@@ -411,6 +2353,21 @@ def test_gui_executable_contains_a_branded_icon_resource(gui_bundle: Path):
     )
 
     assert icon_count >= 1
+
+
+def test_unsigned_gui_build_is_byte_deterministic(tmp_path: Path):
+    first = _build_gui_bundle(tmp_path / "first")
+    second = _build_gui_bundle(tmp_path / "second")
+
+    for relative in (
+        "LLMFoundationInstaller.exe",
+        "bundle-manifest.json",
+        "client-sources.lock.json",
+        "engine/foundation.ps1",
+        "engine/engine-manifest.json",
+        "engine/VERSION",
+    ):
+        assert (first / relative).read_bytes() == (second / relative).read_bytes()
 
 
 def test_gui_can_render_employee_facing_preview(gui_bundle: Path, tmp_path: Path):
@@ -491,6 +2448,63 @@ def test_gui_preflight_checks_clients_without_claiming_missing_packages(
     )
 
 
+def test_platform_preflight_accepts_only_windows_x64_build_19041_or_newer(
+    gui_bundle: Path,
+):
+    executable = gui_bundle / "LLMFoundationInstaller.exe"
+
+    accepted = subprocess.run(
+        [
+            str(executable),
+            "--evaluate-platform-json",
+            "windows",
+            "x64",
+            "19041",
+        ],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert json.loads(accepted.stdout) == {
+        "status": "READY",
+        "os": "windows",
+        "architecture": "x64",
+        "windows_build": 19041,
+        "minimum_build": 19041,
+        "admin_required": False,
+        "reason": None,
+    }
+
+    for os_name, architecture, build, reason in (
+        ("windows", "x86", "19041", "x64"),
+        ("windows", "x64", "18363", "19041"),
+        ("linux", "x64", "19041", "windows"),
+    ):
+        blocked = subprocess.run(
+            [
+                str(executable),
+                "--evaluate-platform-json",
+                os_name,
+                architecture,
+                build,
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert blocked.returncode == 20
+        payload = json.loads(blocked.stdout)
+        assert payload["status"] == "BLOCKED"
+        assert reason in payload["reason"].lower()
+
+
 def test_gui_report_write_failure_is_non_fatal(
     gui_bundle: Path,
     tmp_path: Path,
@@ -564,6 +2578,33 @@ def test_gui_accepts_only_build_verified_hash_bound_package(tmp_path: Path):
     assert tampered_states["codex"] == "tampered"
     assert tampered_payload["install_enabled"] is False
     assert tampered_payload["reason"] == "No accepted target packages are bundled"
+
+
+def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    environment = os.environ.copy()
+    environment["PATH"] = ""
+    result = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), "--preflight-json"],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    codex = next(row for row in payload["targets"] if row["id"] == "codex")
+    assert codex["package_state"] == "accepted"
+    assert codex["client_state"] == "missing"
+    assert payload["install_enabled"] is True
+    assert payload["reason"] == "Accepted target package is available"
 
 
 def test_gui_accepts_native_codex_flat_release_evidence(tmp_path: Path):
@@ -753,7 +2794,7 @@ def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
     )
 
 
-def test_employee_release_requires_all_targets_and_code_signing(
+def test_employee_distribution_requires_all_targets(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
@@ -771,7 +2812,8 @@ def test_employee_release_requires_all_targets_and_code_signing(
             str(output),
             "-PackageRoot",
             str(package_source),
-            "-EmployeeRelease",
+            "-DistributionMode",
+            "InternalUnsigned",
         ],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
@@ -785,7 +2827,7 @@ def test_employee_release_requires_all_targets_and_code_signing(
     ).lower()
 
 
-def test_employee_release_requires_provider_eligibility_before_signing(
+def test_employee_distribution_requires_provider_eligibility(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
@@ -804,7 +2846,8 @@ def test_employee_release_requires_provider_eligibility_before_signing(
             str(tmp_path / "missing-evidence"),
             "-PackageRoot",
             str(package_source),
-            "-EmployeeRelease",
+            "-DistributionMode",
+            "InternalUnsigned",
         ],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
@@ -820,7 +2863,43 @@ def test_employee_release_requires_provider_eligibility_before_signing(
     evidence = _provider_eligibility_evidence(
         tmp_path / "provider-eligibility-evidence.json"
     )
-    accepted_policy = subprocess.run(
+    internal = _build_gui_bundle(
+        tmp_path / "internal-unsigned",
+        package_source,
+        evidence,
+        "InternalUnsigned",
+    )
+    manifest = json.loads(
+        (internal / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["distribution_mode"] == "internal_unsigned"
+    assert manifest["signature"] == "unsigned-internal"
+    assert manifest["employee_release"] is True
+    assert manifest["employee_distribution_allowed"] is True
+    assert manifest["public_distribution_allowed"] is False
+    assert manifest["windows_warning_expected"] is True
+    assert manifest["foundation_release"]["package_acceptance"] == "PASS"
+    assert manifest["foundation_release"]["engine_version"] == "0.2.1"
+    foundation_acceptance = json.loads(
+        (
+            package_source
+            / "foundation"
+            / "package-acceptance.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["artifacts"][
+        "engine/engine-manifest.json"
+    ] == foundation_acceptance["engine_files"]["engine-manifest.json"]
+    assert manifest["verdicts"] == {
+        "FULL_RELEASE_CODEX": "PASS",
+        "FULL_RELEASE_CLAUDE": "PASS",
+        "FULL_RELEASE_OPENCODE": "PASS",
+        "PROGRAM_RELEASE": "3/3",
+        "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
+        "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+    }
+
+    public_signed = subprocess.run(
         [
             POWERSHELL,
             "-NoProfile",
@@ -829,12 +2908,13 @@ def test_employee_release_requires_provider_eligibility_before_signing(
             "-File",
             str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
             "-OutputRoot",
-            str(tmp_path / "accepted-policy"),
+            str(tmp_path / "public-signed"),
             "-PackageRoot",
             str(package_source),
             "-ProviderEligibilityEvidence",
             str(evidence),
-            "-EmployeeRelease",
+            "-DistributionMode",
+            "PublicSigned",
         ],
         cwd=REPOSITORY_ROOT,
         capture_output=True,
@@ -842,9 +2922,200 @@ def test_employee_release_requires_provider_eligibility_before_signing(
         encoding="utf-8",
         check=False,
     )
-    assert accepted_policy.returncode != 0
+    assert public_signed.returncode != 0
     assert "requires a code-signing certificate" in (
-        accepted_policy.stdout + accepted_policy.stderr
+        public_signed.stdout + public_signed.stderr
+    ).lower()
+
+
+def test_employee_distribution_requires_immutable_foundation_package(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+    foundation = package_source / "foundation"
+    detached = tmp_path / "detached-foundation"
+    foundation.rename(detached)
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider.json"
+    )
+
+    missing = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "missing-foundation"),
+            "-PackageRoot",
+            str(package_source),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+            "-DistributionMode",
+            "InternalUnsigned",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert missing.returncode != 0
+    assert "foundation package" in (
+        missing.stdout + missing.stderr
+    ).lower()
+
+    verification = detached / "release-verification.json"
+    payload = json.loads(verification.read_text(encoding="utf-8"))
+    payload["release_state"]["immutable"] = False
+    payload["evidence_body_sha256"] = _evidence_body_sha256(payload)
+    _write_json(verification, payload)
+    acceptance = detached / "package-acceptance.json"
+    acceptance_payload = json.loads(acceptance.read_text(encoding="utf-8"))
+    acceptance_payload["release_verification"]["sha256"] = _sha256(
+        verification
+    )
+    acceptance_payload["release_verification"]["bytes"] = (
+        verification.stat().st_size
+    )
+    _write_json(acceptance, acceptance_payload)
+    mutable = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "mutable-foundation"),
+            "-PackageRoot",
+            str(package_source),
+            "-FoundationPackageRoot",
+            str(detached),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+            "-DistributionMode",
+            "InternalUnsigned",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert mutable.returncode != 0
+    assert "foundation release verification" in (
+        mutable.stdout + mutable.stderr
+    ).lower()
+
+
+def test_non_public_distribution_rejects_signing_certificate(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "ambiguous-signing-mode"),
+            "-PackageRoot",
+            str(package_source),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+            "-DistributionMode",
+            "InternalUnsigned",
+            "-SigningCertificateThumbprint",
+            "0000000000000000000000000000000000000000",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "only valid for publicsigned" in (
+        result.stdout + result.stderr
+    ).lower()
+
+
+def test_employee_distribution_rejects_unverified_release_record(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+    verification = (
+        package_source
+        / "opencode"
+        / "release-verification.json"
+    )
+    payload = json.loads(verification.read_text(encoding="utf-8"))
+    payload["release_state"]["immutable"] = False
+    payload["evidence_body_sha256"] = _evidence_body_sha256(payload)
+    _write_json(verification, payload)
+    acceptance = (
+        package_source
+        / "opencode"
+        / "package-acceptance.json"
+    )
+    acceptance_payload = json.loads(
+        acceptance.read_text(encoding="utf-8")
+    )
+    acceptance_payload["release_verification"]["sha256"] = _sha256(
+        verification
+    )
+    acceptance_payload["release_verification"]["bytes"] = (
+        verification.stat().st_size
+    )
+    _write_json(acceptance, acceptance_payload)
+
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "bundle"),
+            "-PackageRoot",
+            str(package_source),
+            "-ProviderEligibilityEvidence",
+            str(
+                _provider_eligibility_evidence(
+                    tmp_path / "provider.json"
+                )
+            ),
+            "-DistributionMode",
+            "InternalUnsigned",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "release verification" in (
+        result.stdout + result.stderr
     ).lower()
 
 
@@ -1595,7 +3866,7 @@ def test_invalid_proxy_does_not_overwrite_last_known_good_profile(
     ).read_bytes() == saved_bytes
 
 
-def test_gui_source_contains_no_network_or_secret_collection():
+def test_gui_source_contains_no_reverse_flow_or_secret_collection():
     source_root = REPOSITORY_ROOT / "src" / "gui"
     source = "\n".join(
         path.read_text(encoding="utf-8").lower()
@@ -1604,7 +3875,6 @@ def test_gui_source_contains_no_network_or_secret_collection():
     )
     forbidden = (
         "httpclient",
-        "webrequest",
         "webclient",
         "feedback-pending",
         "auth.json",
@@ -1612,7 +3882,6 @@ def test_gui_source_contains_no_network_or_secret_collection():
         "proxy-authorization",
         "session-report",
         "--verbose",
-        "proxy-authorization",
     )
     assert not [token for token in forbidden if token in source]
 
@@ -1631,7 +3900,7 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
         'Path.Combine(\n                Path.GetFullPath(home),\n'
         '                ".llm-foundation",\n'
         '                "reports"',
-        '"network_during_install", "offline"',
+        '"official-client-downloads-only"',
         '"reverse_flow", false',
     ):
         assert required in source
@@ -1642,6 +3911,36 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
         'x:Name="CodexStatusBadge"',
     ):
         assert required in xaml
+
+
+def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    xaml = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "ClientBootstrap.PlanTarget",
+        "ClientBootstrap.RequiredSourcesForTarget",
+        "ClientBootstrap.Install",
+        "ClientBootstrap.OpenStoreSource",
+        "RunClientBootstrapAsync",
+        "OpenAuthorizationActions",
+        '"official-client-downloads-only"',
+    ):
+        assert required in source
+    for required in (
+        'x:Name="Step5Badge"',
+        'x:Name="Step6Badge"',
+        'x:Name="Step7Badge"',
+        'Text="Клиенты"',
+        'Text="Авторизация"',
+        'Text="Готово"',
+    ):
+        assert required in xaml
+    assert "winget search" not in source.lower()
+    assert "winget install codex" not in source.lower()
 
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():

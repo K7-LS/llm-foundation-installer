@@ -11,6 +11,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def _json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+
+
+def evidence_body_sha256(value: dict[str, object]) -> str:
+    body = dict(value)
+    body.pop("evidence_body_sha256", None)
+    return hashlib.sha256(_json_bytes(body)).hexdigest()
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -65,7 +77,14 @@ def _source_hashes(root: Path) -> dict[str, str]:
         if value
     ]
     result = {}
-    for relative in ("VERSION", "src", "tests", "tools"):
+    for relative in (
+        "VERSION",
+        "APP_VERSION",
+        "client-sources.lock.json",
+        "src",
+        "tests",
+        "tools",
+    ):
         selected = [
             value
             for value in tracked
@@ -240,6 +259,9 @@ def main(argv: list[str] | None = None) -> int:
         and counts.get("ps51_cases", 0) > 0
     )
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
+    installer_version = (
+        (root / "APP_VERSION").read_text(encoding="utf-8").strip()
+    )
     evidence = {
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc)
@@ -247,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         .isoformat()
         .replace("+00:00", "Z"),
         "engine_version": version,
+        "installer_version": installer_version,
         "source": source,
         "FOUNDATION_SYNTHETIC": "PASS" if passed else "NOT_PASS",
         "powershell_syntax": syntax,
@@ -277,12 +300,10 @@ def main(argv: list[str] | None = None) -> int:
             "No target canary or stable release is authorized by this verdict.",
         ],
     }
+    evidence["evidence_body_sha256"] = evidence_body_sha256(evidence)
     destination = (root / args.evidence).resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    destination.write_bytes(_json_bytes(evidence))
     print(destination)
     return 0 if passed else 1
 

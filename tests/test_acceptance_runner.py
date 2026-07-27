@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -39,3 +40,56 @@ def test_pytest_command_keeps_fake_homes_inside_acceptance_work(tmp_path):
 
     assert command[-1] == f"--basetemp={tmp_path / 'pytest-home'}"
     assert f"--junitxml={tmp_path / 'pytest.xml'}" in command
+
+
+def test_source_hashes_bind_gui_version_and_client_source_lock(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    tracked = {
+        "VERSION": "0.2.1\n",
+        "APP_VERSION": "0.3.0\n",
+        "client-sources.lock.json": '{"schema_version":1}\n',
+        "src/app.txt": "source\n",
+        "tests/test_app.py": "def test_app(): pass\n",
+        "tools/build.ps1": "Write-Output ok\n",
+    }
+    for relative, content in tracked.items():
+        path = repository / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "acceptance@example.invalid"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Acceptance Test"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=repository, check=True)
+
+    hashes = _load_runner()._source_hashes(repository)
+
+    assert set(hashes) == {
+        "VERSION",
+        "APP_VERSION",
+        "client-sources.lock.json",
+        "src",
+        "tests",
+        "tools",
+    }
+
+
+def test_acceptance_evidence_body_hash_excludes_only_its_own_field():
+    runner = _load_runner()
+    evidence = {
+        "schema_version": 1,
+        "FOUNDATION_SYNTHETIC": "PASS",
+    }
+    digest = runner.evidence_body_sha256(evidence)
+    evidence["evidence_body_sha256"] = digest
+
+    assert runner.evidence_body_sha256(evidence) == digest

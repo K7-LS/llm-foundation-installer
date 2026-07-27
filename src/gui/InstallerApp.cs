@@ -21,8 +21,8 @@ using System.Windows.Media.Imaging;
 [assembly: AssemblyCompany("LLM Foundation")]
 [assembly: AssemblyProduct("LLM Foundation Installer")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("0.2.1.0")]
-[assembly: AssemblyFileVersion("0.2.1.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyFileVersion("0.3.0.0")]
 [assembly: ComVisible(false)]
 
 namespace LlmFoundationInstaller
@@ -54,6 +54,7 @@ namespace LlmFoundationInstaller
         public TrustedFile asset { get; set; }
         public TrustedFile release_manifest { get; set; }
         public TrustedFile acceptance_evidence { get; set; }
+        public TrustedFile release_verification { get; set; }
         public TrustedFile package_acceptance { get; set; }
     }
 
@@ -96,6 +97,83 @@ namespace LlmFoundationInstaller
         public bool written { get; set; }
         public string path { get; set; }
         public string error { get; set; }
+    }
+
+    internal sealed class PlatformCompatibilityResult
+    {
+        public string status { get; set; }
+        public string os { get; set; }
+        public string architecture { get; set; }
+        public int windows_build { get; set; }
+        public int minimum_build { get; set; }
+        public bool admin_required { get; set; }
+        public string reason { get; set; }
+    }
+
+    internal static class PlatformCompatibility
+    {
+        private const int MinimumWindowsBuild = 19041;
+
+        public static PlatformCompatibilityResult Evaluate(
+            string os,
+            string architecture,
+            int windowsBuild
+        )
+        {
+            string reason = null;
+            if (!String.Equals(
+                    os,
+                    "windows",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "Windows is required.";
+            }
+            else if (!String.Equals(
+                    architecture,
+                    "x64",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "Windows x64 is required.";
+            }
+            else if (windowsBuild < MinimumWindowsBuild)
+            {
+                reason = "Windows build 19041 or newer is required.";
+            }
+            return new PlatformCompatibilityResult
+            {
+                status = reason == null ? "READY" : "BLOCKED",
+                os = os.ToLowerInvariant(),
+                architecture = architecture.ToLowerInvariant(),
+                windows_build = windowsBuild,
+                minimum_build = MinimumWindowsBuild,
+                admin_required = false,
+                reason = reason
+            };
+        }
+
+        public static PlatformCompatibilityResult Inspect()
+        {
+            string os = Environment.OSVersion.Platform == PlatformID.Win32NT
+                ? "windows"
+                : Environment.OSVersion.Platform.ToString().ToLowerInvariant();
+            string architecture = Environment.Is64BitOperatingSystem
+                ? "x64"
+                : "x86";
+            return Evaluate(
+                os,
+                architecture,
+                Environment.OSVersion.Version.Build
+            );
+        }
+
+        public static void RequireSupported()
+        {
+            PlatformCompatibilityResult result = Inspect();
+            if (result.status != "READY")
+            {
+                throw new InvalidOperationException(result.reason);
+            }
+        }
     }
 
     internal static class ProductCatalog
@@ -168,8 +246,7 @@ namespace LlmFoundationInstaller
             }
 
             bool enabled = targets.Any(row =>
-                row.package_state == "accepted" &&
-                (!detectClients || row.client_state == "ready")
+                row.package_state == "accepted"
             );
             return new CatalogResult
             {
@@ -181,11 +258,7 @@ namespace LlmFoundationInstaller
                         row => row.package_state == "policy_blocked"
                     )
                         ? "Claude provider eligibility evidence is missing, invalid, or expired"
-                        : (detectClients && targets.Any(
-                        row => row.package_state == "accepted"
-                    )
-                        ? "Accepted packages are present but compatible clients are not ready"
-                        : "No accepted target packages are bundled")),
+                        : "No accepted target packages are bundled"),
                 provider_eligibility = eligibilityState
             };
         }
@@ -364,6 +437,7 @@ namespace LlmFoundationInstaller
             return ValidateFile(bundleRoot, package.asset) &&
                 ValidateFile(bundleRoot, package.release_manifest) &&
                 ValidateFile(bundleRoot, package.acceptance_evidence) &&
+                ValidateFile(bundleRoot, package.release_verification) &&
                 ValidateFile(bundleRoot, package.package_acceptance);
         }
 
@@ -1026,11 +1100,9 @@ namespace LlmFoundationInstaller
                 }
                 if (selected != null)
                 {
-                    bool ready = row.package_state == "accepted" &&
-                        (row.client_state == "not_checked" ||
-                            row.client_state == "ready");
-                    selected.IsEnabled = ready;
-                    selected.IsChecked = ready;
+                    bool eligible = row.package_state == "accepted";
+                    selected.IsEnabled = eligible;
+                    selected.IsChecked = eligible;
                 }
             }
 
@@ -1049,7 +1121,7 @@ namespace LlmFoundationInstaller
                     ? "Компоненты готовы. Следующий шаг — проверяемый план изменений."
                     : (catalog.provider_eligibility == "INVALID_OR_EXPIRED"
                         ? "Установка Claude заблокирована: допуск провайдера истёк или недействителен."
-                        : "Установка заблокирована: нет готовых target-пакетов и клиентов.");
+                        : "Установка заблокирована: нет принятых target-пакетов.");
                 statusText.Foreground = new SolidColorBrush(
                     catalog.install_enabled
                         ? Color.FromRgb(22, 122, 88)
@@ -1073,7 +1145,7 @@ namespace LlmFoundationInstaller
             bool completedAll
         )
         {
-            for (int index = 1; index <= 4; index++)
+            for (int index = 1; index <= 7; index++)
             {
                 Border badge = view.FindName(
                     "Step" + index + "Badge"
@@ -1221,6 +1293,7 @@ namespace LlmFoundationInstaller
             string bundleRoot
         )
         {
+            PlatformCompatibility.RequireSupported();
             CatalogResult catalog = ProductCatalog.Inspect(bundleRoot, true);
             List<TargetRow> selected = catalog.targets.Where(row =>
             {
@@ -1231,13 +1304,13 @@ namespace LlmFoundationInstaller
                     prefix + "Selected"
                 ) as CheckBox;
                 return box != null && box.IsChecked == true &&
-                    row.client_state == "ready";
+                    row.package_state == "accepted";
             }).ToList();
             if (selected.Count == 0)
             {
                 SetStatus(
                     view,
-                    "Нет готовых компонентов: проверьте пакеты и версии клиентов.",
+                    "Нет выбранных принятых баз.",
                     "warning"
                 );
                 return;
@@ -1248,25 +1321,223 @@ namespace LlmFoundationInstaller
             ProgressBar progress = view.FindName(
                 "InstallProgress"
             ) as ProgressBar;
+            string connectionError;
+            InstallerView.SetWorkflowStep(view, 2, false);
+            if (!ConnectionUi.TrySaveCurrent(
+                    view,
+                    out connectionError))
+            {
+                SetStatus(
+                    view,
+                    "Параметры соединения не сохранены: " +
+                        connectionError,
+                    "warning"
+                );
+                return;
+            }
             SetBusy(view, catalog, true);
             if (progress != null)
             {
                 progress.Minimum = 0;
-                progress.Maximum = Math.Max(1, selected.Count * 3);
+                progress.Maximum = Math.Max(1, selected.Count * 7);
                 progress.Value = 0;
                 progress.Visibility = Visibility.Visible;
             }
-            List<string> planLines = new List<string>();
             int completedOperations = 0;
+            List<string> notices = new List<string>();
+            List<TargetRow> clientReady = new List<TargetRow>();
+            List<TargetRow> completed = new List<TargetRow>();
             try
             {
-                InstallerView.SetWorkflowStep(view, 2, false);
+                InstallerView.SetWorkflowStep(view, 3, false);
                 SetStatus(
                     view,
-                    "Формируется проверяемый план изменений...",
+                    "Проверяются официальные клиенты и версии...",
                     "info"
                 );
                 foreach (TargetRow row in selected)
+                {
+                    TargetClientPlanResult clientPlan =
+                        await RunClientPlanAsync(
+                            bundleRoot,
+                            home,
+                            row.id
+                        );
+                    completedOperations++;
+                    SetProgress(progress, completedOperations);
+                    if (clientPlan.status == "BLOCKED")
+                    {
+                        ClientPlanResult blocked =
+                            clientPlan.clients.First(plan =>
+                                plan.status ==
+                                    "BLOCKED_NO_DOWNGRADE");
+                        notices.Add(
+                            row.display_name +
+                            ": база пропущена — обнаружена версия " +
+                            blocked.detected_version +
+                            ", автоматический downgrade запрещён."
+                        );
+                        continue;
+                    }
+                    List<ClientPlanResult> guided =
+                        clientPlan.clients.Where(plan =>
+                            plan.status == "GUIDED_STORE"
+                        ).ToList();
+                    if (guided.Count > 0)
+                    {
+                        MessageBoxResult openStore = MessageBox.Show(
+                            "Для " + row.display_name +
+                            " требуется официальный Microsoft Store " +
+                            "пакет OpenAI.Codex.\n\n" +
+                            "Открыть точную карточку Store сейчас? " +
+                            "После установки нажмите «Проверить снова». " +
+                            "Остальные базы продолжат установку.",
+                            "Требуется Codex Desktop",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Information
+                        );
+                        if (openStore == MessageBoxResult.Yes)
+                        {
+                            foreach (ClientPlanResult store in guided)
+                            {
+                                ClientBootstrap.OpenStoreSource(
+                                    bundleRoot,
+                                    store.client_id
+                                );
+                            }
+                        }
+                        notices.Add(
+                            row.display_name +
+                            ": ожидается установка Codex Desktop из Store."
+                        );
+                        continue;
+                    }
+                    List<ClientPlanResult> toInstall =
+                        clientPlan.clients.Where(plan =>
+                            plan.status == "INSTALL_AVAILABLE"
+                        ).ToList();
+                    if (toInstall.Count > 0)
+                    {
+                        MessageBoxResult clientApproval =
+                            MessageBox.Show(
+                                "Для " + row.display_name +
+                                " будут скачаны и проверены официальные " +
+                                "клиенты:\n\n" +
+                                String.Join(
+                                    "\n",
+                                    toInstall.Select(plan =>
+                                        "• " + plan.client_id + " " +
+                                        plan.supported_version
+                                    ).ToArray()
+                                ) +
+                                "\n\nSHA-256 и издатель проверяются до " +
+                                "запуска. Учётные данные не читаются. " +
+                                "Продолжить?",
+                                "Установка официальных клиентов",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Question
+                            );
+                        if (clientApproval != MessageBoxResult.Yes)
+                        {
+                            notices.Add(
+                                row.display_name +
+                                ": установка клиентов отменена."
+                            );
+                            continue;
+                        }
+                    }
+                    bool clientFailed = false;
+                    foreach (ClientPlanResult client in toInstall)
+                    {
+                        SetStatus(
+                            view,
+                            "Загрузка и проверка " +
+                                client.client_id + "...",
+                            "info"
+                        );
+                        try
+                        {
+                            object installed =
+                                await RunClientBootstrapAsync(
+                                    bundleRoot,
+                                    home,
+                                    client.client_id
+                                );
+                            ClientPlanResult blocked =
+                                installed as ClientPlanResult;
+                            if (blocked != null)
+                            {
+                                notices.Add(
+                                    row.display_name +
+                                    ": клиент заблокирован политикой " +
+                                    "downgrade."
+                                );
+                                clientFailed = true;
+                                break;
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            notices.Add(
+                                row.display_name +
+                                ": клиент не установлен — " +
+                                FirstUseful(exception.Message, null)
+                            );
+                            clientFailed = true;
+                            break;
+                        }
+                        completedOperations++;
+                        SetProgress(progress, completedOperations);
+                    }
+                    if (clientFailed)
+                    {
+                        continue;
+                    }
+                    TargetClientPlanResult verified =
+                        await RunClientPlanAsync(
+                            bundleRoot,
+                            home,
+                            row.id
+                        );
+                    if (verified.status != "READY")
+                    {
+                        notices.Add(
+                            row.display_name +
+                            ": клиенты не достигли состояния READY."
+                        );
+                        continue;
+                    }
+                    ClientSource cli =
+                        ClientBootstrap.RequiredSourcesForTarget(
+                            bundleRoot,
+                            row.id
+                        ).First(source =>
+                            source.role == "cli");
+                    row.detected_version = cli.version;
+                    row.client_state = "ready";
+                    clientReady.Add(row);
+                }
+
+                if (clientReady.Count == 0)
+                {
+                    SetStatus(
+                        view,
+                        "Ни одна база не готова к установке. " +
+                            String.Join(" ", notices.ToArray()),
+                        "warning"
+                    );
+                    return;
+                }
+
+                InstallerView.SetWorkflowStep(view, 4, false);
+                SetStatus(
+                    view,
+                    "Формируется проверяемый план баз...",
+                    "info"
+                );
+                List<string> planLines = new List<string>();
+                List<TargetRow> planned = new List<TargetRow>();
+                foreach (TargetRow row in clientReady)
                 {
                     WorkflowRunResult result = await RunFoundationAsync(
                         bundleRoot,
@@ -1283,7 +1554,11 @@ namespace LlmFoundationInstaller
                                 FirstUseful(result.error, result.output),
                             "warning"
                         );
-                        return;
+                        notices.Add(
+                            row.display_name +
+                            ": план базы заблокирован."
+                        );
+                        continue;
                     }
                     Dictionary<string, object> plan =
                         new JavaScriptSerializer().Deserialize<
@@ -1300,8 +1575,13 @@ namespace LlmFoundationInstaller
                         row.display_name + ": " + actions +
                         " файлов, backup и doctor"
                     );
+                    planned.Add(row);
                     completedOperations++;
                     SetProgress(progress, completedOperations);
+                }
+                if (planned.Count == 0)
+                {
+                    return;
                 }
                 MessageBoxResult approval = MessageBox.Show(
                     "Будет установлено:\n\n" +
@@ -1321,8 +1601,8 @@ namespace LlmFoundationInstaller
                     );
                     return;
                 }
-                InstallerView.SetWorkflowStep(view, 3, false);
-                foreach (TargetRow row in selected)
+                InstallerView.SetWorkflowStep(view, 5, false);
+                foreach (TargetRow row in planned)
                 {
                     SetStatus(
                         view,
@@ -1340,17 +1620,14 @@ namespace LlmFoundationInstaller
                     SetProgress(progress, completedOperations);
                     if (install.code != 0)
                     {
-                        SetStatus(
-                            view,
-                            "Установка " + row.display_name +
-                                " остановлена: " +
-                                FirstUseful(
-                                    install.error,
-                                    install.output
-                                ),
-                            "warning"
+                        notices.Add(
+                            row.display_name + ": установка остановлена — " +
+                            FirstUseful(
+                                install.error,
+                                install.output
+                            )
                         );
-                        return;
+                        continue;
                     }
                     SetStatus(
                         view,
@@ -1368,6 +1645,7 @@ namespace LlmFoundationInstaller
                     SetProgress(progress, completedOperations);
                     if (doctor.code == 0)
                     {
+                        completed.Add(row);
                         continue;
                     }
                     SetStatus(
@@ -1382,39 +1660,59 @@ namespace LlmFoundationInstaller
                         row,
                         home
                     );
+                    notices.Add(
+                        rollback.code == 0
+                            ? row.display_name +
+                                ": doctor не пройден; предыдущая " +
+                                "версия восстановлена."
+                            : row.display_name +
+                                ": критическая ошибка doctor/rollback; " +
+                                "используйте Foundation inventory."
+                    );
+                }
+                if (completed.Count == 0)
+                {
                     SetStatus(
                         view,
-                        rollback.code == 0
-                            ? "Doctor не пройден для " +
-                                row.display_name +
-                                "; предыдущая версия восстановлена."
-                            : "Критическая ошибка: doctor и rollback " +
-                                "не завершились для " + row.display_name +
-                                ". Используйте Foundation inventory.",
+                        "Установка баз не завершена. " +
+                            String.Join(" ", notices.ToArray()),
                         "warning"
                     );
                     return;
                 }
+
+                InstallerView.SetWorkflowStep(view, 6, false);
+                OpenAuthorizationActions(completed);
                 SuccessReportResult report = TryWriteSuccessReport(
                     home,
-                    selected
+                    completed
                 );
-                InstallerView.SetWorkflowStep(view, 4, true);
+                InstallerView.SetWorkflowStep(view, 7, true);
+                string noticeText = notices.Count == 0
+                    ? ""
+                    : " Ограничения: " +
+                        String.Join(" ", notices.ToArray());
                 SetStatus(
                     view,
                     report.written
                         ? "Установка завершена. Doctor пройден. Отчёт: " +
-                            report.path
+                            report.path + noticeText
                         : "Установка завершена. Doctor пройден. " +
-                            "Локальный отчёт не сохранён: " + report.error,
+                            "Локальный отчёт не сохранён: " + report.error +
+                            noticeText,
                     "success"
                 );
                 MessageBox.Show(
                     "Рабочая среда установлена и проверена.\n\n" +
+                    "Авторизация выполняется только в самих клиентах.\n" +
                     "Для обновлений используйте $sync-base.\n" +
                     (report.written
                         ? "Локальный отчёт: " + report.path
-                        : "Локальный отчёт не сохранён: " + report.error),
+                        : "Локальный отчёт не сохранён: " + report.error) +
+                    (notices.Count == 0
+                        ? ""
+                        : "\n\nНе завершено:\n" +
+                            String.Join("\n", notices.ToArray())),
                     "LLM Foundation",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information
@@ -1436,6 +1734,96 @@ namespace LlmFoundationInstaller
                     progress.Visibility = Visibility.Collapsed;
                 }
                 SetBusy(view, catalog, false);
+            }
+        }
+
+        private static Task<TargetClientPlanResult> RunClientPlanAsync(
+            string bundleRoot,
+            string home,
+            string target
+        )
+        {
+            return Task.Run(delegate
+            {
+                return ClientBootstrap.PlanTarget(
+                    bundleRoot,
+                    home,
+                    target
+                );
+            });
+        }
+
+        private static Task<object> RunClientBootstrapAsync(
+            string bundleRoot,
+            string home,
+            string clientId
+        )
+        {
+            return Task.Run(delegate
+            {
+                string staging = Path.Combine(
+                    Path.GetFullPath(home),
+                    ".llm-foundation",
+                    "staging",
+                    "clients"
+                );
+                return ClientBootstrap.Install(
+                    bundleRoot,
+                    home,
+                    clientId,
+                    staging
+                );
+            });
+        }
+
+        private static void OpenAuthorizationActions(
+            List<TargetRow> targets
+        )
+        {
+            MessageBoxResult open = MessageBox.Show(
+                "Базы установлены. Следующий шаг — интерактивная " +
+                "авторизация в выбранных клиентах.\n\n" +
+                "Codex: войдите через ChatGPT в приложении.\n" +
+                "Claude: выполните вход в окне Claude Code.\n" +
+                "OpenCode: запустите /connect → OpenAI → " +
+                "ChatGPT Plus/Pro.\n\n" +
+                "Установщик не читает и не переносит токены. " +
+                "Открыть клиенты сейчас?",
+                "Интерактивная авторизация",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Information
+            );
+            if (open != MessageBoxResult.Yes)
+            {
+                return;
+            }
+            foreach (TargetRow row in targets)
+            {
+                if (row.id == "codex")
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments =
+                            "shell:AppsFolder\\" +
+                            "OpenAI.Codex_2p2nqsd0c76g0!App",
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    string command = row.id == "claude"
+                        ? "claude"
+                        : "opencode";
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = Environment.GetEnvironmentVariable(
+                            "COMSPEC"
+                        ) ?? "cmd.exe",
+                        Arguments = "/d /k " + command,
+                        UseShellExecute = true
+                    });
+                }
             }
         }
 
@@ -1511,8 +1899,7 @@ namespace LlmFoundationInstaller
                 if (box != null)
                 {
                     box.IsEnabled = !busy &&
-                        row.package_state == "accepted" &&
-                        row.client_state == "ready";
+                        row.package_state == "accepted";
                 }
             }
         }
@@ -1610,7 +1997,10 @@ namespace LlmFoundationInstaller
                             .GetName().Version.ToString(3)
                     },
                     { "targets", installed },
-                    { "network_during_install", "offline" },
+                    {
+                        "network_during_install",
+                        "official-client-downloads-only"
+                    },
                     { "reverse_flow", false },
                     { "result", "PASS" }
                 };
@@ -1637,6 +2027,83 @@ namespace LlmFoundationInstaller
 
     internal static class ConnectionUi
     {
+        public static bool TrySaveCurrent(
+            UserControl view,
+            out string error
+        )
+        {
+            error = null;
+            try
+            {
+                RadioButton direct = Find<RadioButton>(
+                    view,
+                    "DirectMode"
+                );
+                RadioButton vpn = Find<RadioButton>(
+                    view,
+                    "VpnMode"
+                );
+                ComboBox type = Find<ComboBox>(view, "ProxyType");
+                TextBox host = Find<TextBox>(view, "ProxyHost");
+                TextBox port = Find<TextBox>(view, "ProxyPort");
+                ComboBox auth = Find<ComboBox>(view, "ProxyAuth");
+                TextBox username = Find<TextBox>(
+                    view,
+                    "ProxyUsername"
+                );
+                PasswordBox password = Find<PasswordBox>(
+                    view,
+                    "ProxyPassword"
+                );
+                TextBlock status = Find<TextBlock>(
+                    view,
+                    "ConnectionStatus"
+                );
+                ConnectionProfile profile = BuildProfile(
+                    direct,
+                    vpn,
+                    type,
+                    host,
+                    port,
+                    auth,
+                    username
+                );
+                using (System.Security.SecureString secure =
+                    password.SecurePassword.Copy())
+                {
+                    secure.MakeReadOnly();
+                    ConnectionStateResult result = ConnectionStore.Save(
+                        UserHome(),
+                        profile,
+                        secure.Length > 0 ? secure : null
+                    );
+                    password.Clear();
+                    status.Text = result.profile.mode == "VPN"
+                        ? "VPN сохранён: отсутствие прокси не является ошибкой."
+                        : (result.profile.mode == "Direct"
+                            ? "Direct сохранён: прокси отключён."
+                            : "Proxy сохранён; пароль защищён Windows DPAPI.");
+                    status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(22, 122, 88)
+                    );
+                }
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = exception.Message;
+                TextBlock status = Find<TextBlock>(
+                    view,
+                    "ConnectionStatus"
+                );
+                status.Text = "Не сохранено: " + error;
+                status.Foreground = new SolidColorBrush(
+                    Color.FromRgb(161, 92, 0)
+                );
+                return false;
+            }
+        }
+
         public static void Bind(UserControl view, bool loadState)
         {
             RadioButton direct = Find<RadioButton>(view, "DirectMode");
@@ -2118,6 +2585,138 @@ namespace LlmFoundationInstaller
                     ));
                     return 0;
                 }
+                if (args.Length == 1 && args[0] == "--platform-json")
+                {
+                    PlatformCompatibilityResult platform =
+                        PlatformCompatibility.Inspect();
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        platform
+                    ));
+                    return platform.status == "READY" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--evaluate-platform-json")
+                {
+                    int build;
+                    if (!Int32.TryParse(
+                            args[3],
+                            NumberStyles.None,
+                            CultureInfo.InvariantCulture,
+                            out build) ||
+                        build < 0)
+                    {
+                        WriteError("Windows build is invalid");
+                        return 2;
+                    }
+                    PlatformCompatibilityResult platform =
+                        PlatformCompatibility.Evaluate(
+                            args[1],
+                            args[2],
+                            build
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        platform
+                    ));
+                    return platform.status == "READY" ? 0 : 20;
+                }
+                if (args.Length == 1 &&
+                    args[0] == "--client-sources-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ClientBootstrap.Describe(bundleRoot)
+                    ));
+                    return 0;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--validate-store-record-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ClientBootstrap.ValidateStoreRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--store-client-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ClientBootstrap.ProbeStore(
+                            bundleRoot,
+                            args[1]
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--open-store-client-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ClientBootstrap.OpenStoreSource(
+                            bundleRoot,
+                            args[1]
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--download-client-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ClientBootstrap.Download(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--client-plan-json")
+                {
+                    ClientPlanResult plan = ClientBootstrap.Plan(
+                        bundleRoot,
+                        args[1],
+                        args[2]
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(plan));
+                    return plan.status == "BLOCKED_NO_DOWNGRADE"
+                        ? 20
+                        : 0;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--target-client-plan-json")
+                {
+                    TargetClientPlanResult plan =
+                        ClientBootstrap.PlanTarget(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(plan));
+                    return plan.status == "BLOCKED" ? 20 : 0;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--install-client-json")
+                {
+                    object installed = ClientBootstrap.Install(
+                        bundleRoot,
+                        args[1],
+                        args[2],
+                        args[3]
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        installed
+                    ));
+                    ClientPlanResult blocked = installed as ClientPlanResult;
+                    return blocked != null &&
+                        blocked.status == "BLOCKED_NO_DOWNGRADE"
+                        ? 20
+                        : 0;
+                }
                 if (args.Length == 2 &&
                     args[0] == "--write-install-report-json")
                 {
@@ -2221,6 +2820,18 @@ namespace LlmFoundationInstaller
                     return 2;
                 }
 
+                PlatformCompatibilityResult currentPlatform =
+                    PlatformCompatibility.Inspect();
+                if (currentPlatform.status != "READY")
+                {
+                    MessageBox.Show(
+                        currentPlatform.reason,
+                        "LLM Foundation — неподдерживаемая система",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error
+                    );
+                    return 20;
+                }
                 Application application = new Application();
                 application.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 Window window = new Window
@@ -2248,6 +2859,8 @@ namespace LlmFoundationInstaller
         {
             int protocol;
             bool validated = BundleIntegrity.ValidateEngine(bundleRoot, out protocol);
+            bool platformReady =
+                PlatformCompatibility.Inspect().status == "READY";
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["app_id"] = "llm-foundation-installer";
             payload["engine_validated"] = validated;
@@ -2259,7 +2872,7 @@ namespace LlmFoundationInstaller
             payload["telemetry"] = false;
             payload["version"] = BundleIntegrity.ReadBundleVersion(bundleRoot);
             WriteOutput(new JavaScriptSerializer().Serialize(payload));
-            return validated ? 0 : 30;
+            return validated && platformReady ? 0 : 30;
         }
 
         private static void WriteOutput(string value)

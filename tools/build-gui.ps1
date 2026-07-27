@@ -3,8 +3,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [string]$PackageRoot,
+    [string]$FoundationPackageRoot,
     [string]$ProviderEligibilityEvidence,
-    [switch]$EmployeeRelease,
+    [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
+    [string]$DistributionMode = 'Preview',
+    [string]$ClientSourcesLock,
+    [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
@@ -20,6 +24,39 @@ if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
     if (-not (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
         throw 'PackageRoot does not exist'
     }
+}
+if ([string]::IsNullOrWhiteSpace($FoundationPackageRoot) -and
+    -not [string]::IsNullOrWhiteSpace($PackageRoot)) {
+    $FoundationCandidate = Join-Path $PackageRoot 'foundation'
+    if (Test-Path -LiteralPath $FoundationCandidate -PathType Container) {
+        $FoundationPackageRoot = $FoundationCandidate
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($FoundationPackageRoot)) {
+    $FoundationPackageRoot = [IO.Path]::GetFullPath(
+        $FoundationPackageRoot
+    )
+    if (-not (
+        Test-Path -LiteralPath $FoundationPackageRoot -PathType Container
+    )) {
+        throw 'FoundationPackageRoot does not exist'
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ClientSourcesLock)) {
+    $ClientSourcesLock = Join-Path (
+        [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    ) 'client-sources.lock.json'
+}
+$ClientSourcesLock = [IO.Path]::GetFullPath($ClientSourcesLock)
+if (-not (Test-Path -LiteralPath $ClientSourcesLock -PathType Leaf)) {
+    throw 'ClientSourcesLock does not exist'
+}
+$ClientSourcesItem = Get-Item -LiteralPath $ClientSourcesLock -Force
+if (($ClientSourcesItem.Attributes -band
+    [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+    $ClientSourcesItem.Length -lt 2 -or
+    $ClientSourcesItem.Length -gt 65536) {
+    throw 'ClientSourcesLock file is unsafe'
 }
 
 if (Test-Path -LiteralPath $OutputRoot) {
@@ -270,26 +307,31 @@ function Assert-FileBinding {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Package acceptance references missing $Label"
     }
+    $Item = Get-Item -LiteralPath $Path -Force
+    if (($Item.Attributes -band
+        [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Package acceptance $Label cannot be a reparse point"
+    }
     $ExpectedHash = [string]$Record.sha256
     $ExpectedBytes = [long]$Record.bytes
     if ($ExpectedHash -notmatch '^[a-f0-9]{64}$' -or
         $ExpectedBytes -lt 0 -or
         (Get-Sha256 $Path) -cne $ExpectedHash -or
-        (Get-Item -LiteralPath $Path).Length -ne $ExpectedBytes) {
+        $Item.Length -ne $ExpectedBytes) {
         throw "Package acceptance $Label binding mismatch"
     }
     return $Path
 }
 
-function Assert-CodexReleaseBinding {
+function Assert-ReleaseBinding {
     param(
         [Parameter(Mandatory = $true)]$Evidence,
         [Parameter(Mandatory = $true)]$Release
     )
     if ($null -eq $Evidence.release_binding) {
-        throw 'Codex acceptance evidence release binding is missing'
+        throw 'Acceptance evidence release binding is missing'
     }
-    foreach ($Field in @(
+    $Fields = @(
         'target',
         'version',
         'tag',
@@ -299,14 +341,200 @@ function Assert-CodexReleaseBinding {
         'source',
         'foundation_engine_version',
         'foundation_engine_manifest_sha256'
-    )) {
+    )
+    if ($null -ne $Evidence.release_binding.PSObject.Properties['client']) {
+        $Fields += 'client'
+    }
+    foreach ($Field in $Fields) {
         $EvidenceValue = $Evidence.release_binding.$Field |
             ConvertTo-Json -Depth 30 -Compress
         $ReleaseValue = $Release.$Field |
             ConvertTo-Json -Depth 30 -Compress
         if ($EvidenceValue -cne $ReleaseValue) {
-            throw "Codex acceptance release binding differs: $Field"
+            throw "Acceptance release binding differs: $Field"
         }
+    }
+}
+
+function Read-AcceptedFoundation {
+    param([string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        return $null
+    }
+    $Directory = Get-Item -LiteralPath $Root -Force
+    if (-not $Directory.PSIsContainer -or
+        ($Directory.Attributes -band
+            [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Foundation package directory is unsafe'
+    }
+    $AcceptancePath = Join-Path $Directory.FullName (
+        'package-acceptance.json'
+    )
+    if (-not (Test-Path -LiteralPath $AcceptancePath -PathType Leaf)) {
+        throw 'Foundation package acceptance is missing'
+    }
+    try {
+        $Acceptance = Get-Content -LiteralPath $AcceptancePath -Raw |
+            ConvertFrom-Json
+    } catch {
+        throw 'Foundation package acceptance JSON is invalid'
+    }
+    if ([int]$Acceptance.schema_version -ne 1 -or
+        [string]$Acceptance.target -cne 'foundation' -or
+        [string]$Acceptance.engine_version -cne '0.2.1' -or
+        [string]$Acceptance.package_acceptance -cne 'PASS' -or
+        $Acceptance.immutable_release -isnot [bool] -or
+        [bool]$Acceptance.immutable_release -ne $true -or
+        $Acceptance.release_attestation -isnot [bool] -or
+        [bool]$Acceptance.release_attestation -ne $true) {
+        throw 'Foundation package acceptance contract is not PASS'
+    }
+    $AssetPath = Assert-FileBinding $Directory.FullName `
+        $Acceptance.asset 'Foundation asset'
+    $ReleasePath = Assert-FileBinding $Directory.FullName `
+        $Acceptance.release_manifest 'Foundation release manifest'
+    $EvidencePath = Assert-FileBinding $Directory.FullName `
+        $Acceptance.acceptance_evidence 'Foundation acceptance evidence'
+    $VerificationPath = Assert-FileBinding $Directory.FullName `
+        $Acceptance.release_verification 'Foundation release verification'
+    try {
+        $Release = Get-Content -LiteralPath $ReleasePath -Raw |
+            ConvertFrom-Json
+        $Evidence = Get-Content -LiteralPath $EvidencePath -Raw |
+            ConvertFrom-Json
+        $Verification = Get-Content -LiteralPath $VerificationPath -Raw |
+            ConvertFrom-Json
+    } catch {
+        throw 'Foundation package evidence JSON is invalid'
+    }
+    $ExpectedRepository = (
+        [string]$Release.source.repository
+    ) -replace '^https://github\.com/', ''
+    $VerifiedAssets = @($Verification.assets)
+    $ReleaseFiles = @(
+        $Release.engine_files.PSObject.Properties.Name | Sort-Object
+    )
+    $AcceptanceFiles = @(
+        $Acceptance.engine_files.PSObject.Properties.Name | Sort-Object
+    )
+    if ([int]$Release.schema_version -ne 1 -or
+        [string]$Release.target -cne 'foundation' -or
+        [string]$Release.version -cne '0.2.1' -or
+        [string]$Release.tag -cne 'foundation-engine-v0.2.1' -or
+        [string]$Release.channel -cne 'stable' -or
+        [string]$Release.asset.name -cne (
+            [string]$Acceptance.asset.name
+        ) -or
+        [string]$Release.asset.sha256 -cne (
+            [string]$Acceptance.asset.sha256
+        ) -or
+        [long]$Release.asset.bytes -ne (
+            [long]$Acceptance.asset.bytes
+        ) -or
+        [string]$Release.acceptance_evidence_sha256 -cne (
+            Get-Sha256 $EvidencePath
+        ) -or
+        [bool]$Release.requires.immutable_release -ne $true -or
+        [bool]$Release.requires.release_attestation -ne $true -or
+        ($ReleaseFiles -join ',') -cne (
+            'engine-manifest.json,foundation.ps1,VERSION'
+        ) -or
+        ($AcceptanceFiles -join ',') -cne ($ReleaseFiles -join ',') -or
+        ($Release.engine_files | ConvertTo-Json -Depth 10 -Compress) -cne (
+            $Acceptance.engine_files |
+                ConvertTo-Json -Depth 10 -Compress
+        ) -or
+        [string]$Release.evidence_body_sha256 -notmatch (
+            '^[a-f0-9]{64}$'
+        )) {
+        throw 'Foundation package release manifest is invalid'
+    }
+    foreach ($Name in $ReleaseFiles) {
+        $Record = $Release.engine_files.PSObject.Properties[$Name].Value
+        if ([string]$Record.sha256 -notmatch '^[a-f0-9]{64}$' -or
+            ($Record.bytes -isnot [int] -and
+                $Record.bytes -isnot [long]) -or
+            [long]$Record.bytes -lt 1 -or
+            [long]$Record.bytes -gt 16777216) {
+            throw "Foundation engine file record is invalid: $Name"
+        }
+    }
+    if ([int]$Evidence.schema_version -ne 1 -or
+        [string]$Evidence.engine_version -cne '0.2.1' -or
+        [string]$Evidence.installer_version -cne '0.3.0' -or
+        [string]$Evidence.FOUNDATION_SYNTHETIC -cne 'PASS' -or
+        [string]$Evidence.deterministic_engine_bundle -cne 'PASS' -or
+        [string]$Evidence.evidence_body_sha256 -notmatch (
+            '^[a-f0-9]{64}$'
+        )) {
+        throw 'Foundation synthetic acceptance evidence is not PASS'
+    }
+    if ([string]::IsNullOrWhiteSpace($ExpectedRepository) -or
+        [int]$Verification.schema_version -ne 1 -or
+        [string]$Verification.repository -cne $ExpectedRepository -or
+        [string]$Verification.tag -cne [string]$Release.tag -or
+        $Verification.release_state.draft -isnot [bool] -or
+        [bool]$Verification.release_state.draft -ne $false -or
+        $Verification.release_state.prerelease -isnot [bool] -or
+        [bool]$Verification.release_state.prerelease -ne $false -or
+        $Verification.release_state.immutable -isnot [bool] -or
+        [bool]$Verification.release_state.immutable -ne $true -or
+        [string]$Verification.release_attestation -cne 'PASS' -or
+        [string]$Verification.RELEASE_INTEGRITY -cne 'PASS' -or
+        [string]$Verification.evidence_body_sha256 -notmatch (
+            '^[a-f0-9]{64}$'
+        ) -or
+        $VerifiedAssets.Count -ne 1 -or
+        [string]$VerifiedAssets[0].name -cne (
+            [string]$Release.asset.name
+        ) -or
+        [string]$VerifiedAssets[0].sha256 -cne (
+            [string]$Release.asset.sha256
+        ) -or
+        [long]$VerifiedAssets[0].bytes -ne (
+            [long]$Release.asset.bytes
+        ) -or
+        [string]$VerifiedAssets[0].attestation -cne 'PASS') {
+        throw 'Foundation release verification is not PASS'
+    }
+    return [ordered]@{
+        engine_version = '0.2.1'
+        engine_files = $Release.engine_files
+        asset_path = $AssetPath
+        asset = [ordered]@{
+            relative_path = 'foundation/' + (
+                [string]$Acceptance.asset.name
+            )
+            sha256 = [string]$Acceptance.asset.sha256
+            bytes = [long]$Acceptance.asset.bytes
+        }
+        release_manifest = [ordered]@{
+            relative_path = 'foundation/' + (
+                [string]$Acceptance.release_manifest.name
+            )
+            sha256 = [string]$Acceptance.release_manifest.sha256
+            bytes = [long]$Acceptance.release_manifest.bytes
+        }
+        acceptance_evidence = [ordered]@{
+            relative_path = 'foundation/' + (
+                [string]$Acceptance.acceptance_evidence.name
+            )
+            sha256 = [string]$Acceptance.acceptance_evidence.sha256
+            bytes = [long]$Acceptance.acceptance_evidence.bytes
+        }
+        release_verification = [ordered]@{
+            relative_path = 'foundation/' + (
+                [string]$Acceptance.release_verification.name
+            )
+            sha256 = [string]$Acceptance.release_verification.sha256
+            bytes = [long]$Acceptance.release_verification.bytes
+        }
+        package_acceptance = [ordered]@{
+            relative_path = 'foundation/package-acceptance.json'
+            sha256 = Get-Sha256 $AcceptancePath
+            bytes = (Get-Item -LiteralPath $AcceptancePath).Length
+        }
+        source_directory = $Directory.FullName
     }
 }
 
@@ -334,6 +562,9 @@ function Read-AcceptedPackages {
         Get-ChildItem -LiteralPath $Root -Directory | Sort-Object Name
     )) {
         $Target = $Directory.Name
+        if ($Target -ceq 'foundation') {
+            continue
+        }
         if (-not $Definitions.Contains($Target)) {
             throw "Package acceptance has unknown target: $Target"
         }
@@ -368,11 +599,15 @@ function Read-AcceptedPackages {
             $Acceptance.release_manifest 'release manifest'
         $EvidencePath = Assert-FileBinding $Directory.FullName `
             $Acceptance.acceptance_evidence 'acceptance evidence'
+        $VerificationPath = Assert-FileBinding $Directory.FullName `
+            $Acceptance.release_verification 'release verification'
 
         try {
             $Release = Get-Content -LiteralPath $ReleasePath -Raw |
                 ConvertFrom-Json
             $Evidence = Get-Content -LiteralPath $EvidencePath -Raw |
+                ConvertFrom-Json
+            $Verification = Get-Content -LiteralPath $VerificationPath -Raw |
                 ConvertFrom-Json
         } catch {
             throw "Package acceptance evidence JSON is invalid for target: $Target"
@@ -396,6 +631,39 @@ function Read-AcceptedPackages {
             [bool]$Release.requires.release_attestation -ne $true) {
             throw "Package acceptance release manifest is invalid for target: $Target"
         }
+        $ExpectedRepository = (
+            [string]$Release.source.repository
+        ) -replace '^https://github\.com/', ''
+        $VerifiedAssets = @($Verification.assets)
+        if ([string]::IsNullOrWhiteSpace($ExpectedRepository) -or
+            [int]$Verification.schema_version -ne 1 -or
+            [string]$Verification.repository -cne $ExpectedRepository -or
+            [string]$Verification.tag -cne [string]$Release.tag -or
+            $Verification.release_state.draft -isnot [bool] -or
+            [bool]$Verification.release_state.draft -ne $false -or
+            $Verification.release_state.prerelease -isnot [bool] -or
+            [bool]$Verification.release_state.prerelease -ne $false -or
+            $Verification.release_state.immutable -isnot [bool] -or
+            [bool]$Verification.release_state.immutable -ne $true -or
+            [string]$Verification.release_attestation -cne 'PASS' -or
+            [string]$Verification.RELEASE_INTEGRITY -cne 'PASS' -or
+            [string]$Verification.evidence_body_sha256 -notmatch (
+                '^[a-f0-9]{64}$'
+            ) -or
+            $VerifiedAssets.Count -ne 1 -or
+            [string]$VerifiedAssets[0].name -cne (
+                [string]$Release.asset.name
+            ) -or
+            [string]$VerifiedAssets[0].sha256 -cne (
+                [string]$Release.asset.sha256
+            ) -or
+            [long]$VerifiedAssets[0].bytes -ne (
+                [long]$Release.asset.bytes
+            ) -or
+            [string]$VerifiedAssets[0].attestation -cne 'PASS') {
+            throw "Package release verification is not PASS for target: $Target"
+        }
+        Assert-ReleaseBinding $Evidence $Release
         if ($Target -ceq 'codex') {
             $VerdictProperty = $Evidence.PSObject.Properties[
                 [string]$Definition.verdict
@@ -403,7 +671,6 @@ function Read-AcceptedPackages {
             $IntegrityProperty = $Evidence.PSObject.Properties[
                 'RELEASE_INTEGRITY'
             ]
-            Assert-CodexReleaseBinding $Evidence $Release
             $EvidenceBindingValid = (
                 [string]$Release.acceptance_evidence_sha256 -ceq (
                     Get-Sha256 $EvidencePath
@@ -418,20 +685,24 @@ function Read-AcceptedPackages {
                 'RELEASE_INTEGRITY'
             ]
             $EvidenceBindingValid = (
+                [string]$Release.acceptance_evidence_sha256 -ceq (
+                    Get-Sha256 $EvidencePath
+                ) -and
                 [string]$Evidence.asset_sha256 -ceq (
                     [string]$Acceptance.asset.sha256
-                ) -and
-                [string]$Evidence.release_manifest_sha256 -ceq (
-                    Get-Sha256 $ReleasePath
                 )
             )
         }
         if ([int]$Evidence.schema_version -ne 1 -or
             [string]$Evidence.target -cne $Target -or
+            [string]$Evidence.version -cne [string]$Release.version -or
+            [string]$Evidence.evidence_body_sha256 -notmatch (
+                '^[a-f0-9]{64}$'
+            ) -or
             $null -eq $VerdictProperty -or
             [string]$VerdictProperty.Value -cne 'PASS' -or
             $null -eq $IntegrityProperty -or
-            [string]$IntegrityProperty.Value -cne 'PASS' -or
+            [string]$IntegrityProperty.Value -cne 'PENDING_PUBLICATION' -or
             -not $EvidenceBindingValid) {
             throw "Package acceptance evidence is not PASS for target: $Target"
         }
@@ -441,6 +712,9 @@ function Read-AcceptedPackages {
             target = $Target
             client_id = [string]$Acceptance.client.id
             supported_version = [string]$Acceptance.client.supported_version
+            foundation_engine_manifest_sha256 = [string](
+                $Release.foundation_engine_manifest_sha256
+            )
             asset = [ordered]@{
                 relative_path = "packages/$Target/$(
                     [string]$Acceptance.asset.name
@@ -465,6 +739,14 @@ function Read-AcceptedPackages {
                 sha256 = [string]$Acceptance.acceptance_evidence.sha256
                 bytes = (Get-Item -LiteralPath $EvidencePath).Length
             }
+            release_verification = [ordered]@{
+                relative_path = "packages/$Target/$(
+                    [string]$Acceptance.release_verification.name
+                )"
+                resource_name = "TargetPackage.$Target.release_verification"
+                sha256 = [string]$Acceptance.release_verification.sha256
+                bytes = (Get-Item -LiteralPath $VerificationPath).Length
+            }
             package_acceptance = [ordered]@{
                 relative_path = "packages/$Target/package-acceptance.json"
                 resource_name = "TargetPackage.$Target.package_acceptance"
@@ -477,17 +759,150 @@ function Read-AcceptedPackages {
     return $Rows
 }
 
+function Export-AcceptedFoundationEngine {
+    param(
+        [Parameter(Mandatory = $true)]$Foundation,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (Test-Path -LiteralPath $Destination) {
+        throw 'Foundation engine destination must not exist'
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Directory]::CreateDirectory($Destination) | Out-Null
+    $Archive = [IO.Compression.ZipFile]::OpenRead(
+        [string]$Foundation.asset_path
+    )
+    try {
+        $Entries = @($Archive.Entries)
+        $Names = @($Entries.FullName | Sort-Object)
+        if ($Entries.Count -ne 3 -or
+            ($Names -join ',') -cne (
+                'engine-manifest.json,foundation.ps1,VERSION'
+            )) {
+            throw 'Foundation engine archive inventory differs'
+        }
+        foreach ($Entry in $Entries) {
+            $Record = $Foundation.engine_files.PSObject.Properties[
+                $Entry.FullName
+            ].Value
+            if ($null -eq $Record -or
+                [long]$Entry.Length -ne [long]$Record.bytes -or
+                [long]$Entry.Length -gt 16777216) {
+                throw "Foundation engine archive entry differs: $(
+                    $Entry.FullName
+                )"
+            }
+            $DestinationPath = Join-Path $Destination $Entry.FullName
+            $InputStream = $Entry.Open()
+            $OutputStream = [IO.File]::Open(
+                $DestinationPath,
+                [IO.FileMode]::CreateNew,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::None
+            )
+            try {
+                $InputStream.CopyTo($OutputStream)
+            } finally {
+                $OutputStream.Dispose()
+                $InputStream.Dispose()
+            }
+            if ((Get-Sha256 $DestinationPath) -cne (
+                    [string]$Record.sha256
+                ) -or
+                (Get-Item -LiteralPath $DestinationPath).Length -ne (
+                    [long]$Record.bytes
+                )) {
+                throw "Foundation engine extracted bytes differ: $(
+                    $Entry.FullName
+                )"
+            }
+        }
+    } finally {
+        $Archive.Dispose()
+    }
+    if (([IO.File]::ReadAllText(
+            (Join-Path $Destination 'VERSION')
+        )).Trim() -cne '0.2.1') {
+        throw 'Foundation engine extracted version differs'
+    }
+    try {
+        $EngineManifest = Get-Content -LiteralPath (
+            Join-Path $Destination 'engine-manifest.json'
+        ) -Raw | ConvertFrom-Json
+    } catch {
+        throw 'Foundation engine extracted manifest is invalid'
+    }
+    if ([int]$EngineManifest.schema_version -ne 1 -or
+        [int]$EngineManifest.protocol_version -ne 1 -or
+        [string]$EngineManifest.engine_version -cne '0.2.1' -or
+        [string]$EngineManifest.network -cne 'offline' -or
+        (@($EngineManifest.commands) -join ',') -cne (
+            'doctor,install,inventory,plan,rollback'
+        ) -or
+        (@($EngineManifest.supported_powershell) -join ',') -cne '5.1,7' -or
+        [string]$EngineManifest.foundation_ps1_sha256 -cne (
+            Get-Sha256 (Join-Path $Destination 'foundation.ps1')
+        )) {
+        throw 'Foundation engine extracted contract differs'
+    }
+}
+
 $Version = ([IO.File]::ReadAllText(
-    (Join-Path $RepositoryRoot 'VERSION')
+    (Join-Path $RepositoryRoot 'APP_VERSION')
 )).Trim()
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-    throw 'Foundation version is invalid'
+    throw 'Installer application version is invalid'
 }
 
 $WindowsRoot = [Environment]::GetFolderPath('Windows')
-$Compiler = Join-Path $WindowsRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (-not (Test-Path -LiteralPath $Compiler -PathType Leaf)) {
-    throw 'The Windows .NET Framework compiler is not available'
+$CompilerCandidates = New-Object System.Collections.Generic.List[string]
+$VsWhere = Join-Path ${env:ProgramFiles(x86)} (
+    'Microsoft Visual Studio\Installer\vswhere.exe'
+)
+if (Test-Path -LiteralPath $VsWhere -PathType Leaf) {
+    $VsInstallations = @(
+        & $VsWhere -products '*' -requires Microsoft.Component.MSBuild `
+            -property installationPath
+    )
+    foreach ($VsInstallation in $VsInstallations) {
+        if (-not [string]::IsNullOrWhiteSpace($VsInstallation)) {
+            $CompilerCandidates.Add(
+                (Join-Path $VsInstallation (
+                    'MSBuild\Current\Bin\Roslyn\csc.exe'
+                ))
+            )
+        }
+    }
+}
+foreach ($VisualStudioRoot in @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'),
+    (Join-Path $env:ProgramFiles 'Microsoft Visual Studio')
+)) {
+    if (Test-Path -LiteralPath $VisualStudioRoot -PathType Container) {
+        @(
+            Get-ChildItem -Path (
+                Join-Path $VisualStudioRoot (
+                    '*\*\MSBuild\Current\Bin\Roslyn\csc.exe'
+                )
+            ) -File -ErrorAction SilentlyContinue |
+                Sort-Object -Property FullName -Descending
+        ) | ForEach-Object {
+            $CompilerCandidates.Add($_.FullName)
+        }
+    }
+}
+$Compiler = @(
+    $CompilerCandidates |
+        Where-Object {
+            Test-Path -LiteralPath $_ -PathType Leaf
+        } |
+        Select-Object -Unique
+) | Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($Compiler)) {
+    throw (
+        'A Roslyn C# compiler is required for a deterministic GUI build. ' +
+        'Install Microsoft Visual Studio Build Tools with MSBuild.'
+    )
 }
 
 $AssemblyRoots = @(
@@ -498,14 +913,121 @@ $References = @(
     (Get-AssemblyPath $AssemblyRoots 'PresentationFramework.dll'),
     (Get-AssemblyPath $AssemblyRoots 'PresentationCore.dll'),
     (Get-AssemblyPath $AssemblyRoots 'WindowsBase.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'System.Xaml.dll')
+    (Get-AssemblyPath $AssemblyRoots 'System.Xaml.dll'),
+    (Get-AssemblyPath $AssemblyRoots 'System.IO.Compression.dll'),
+    (Get-AssemblyPath $AssemblyRoots 'System.IO.Compression.FileSystem.dll')
 )
 
 $AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
+$AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
 $ProviderEligibility = Read-ProviderEligibilityEvidence `
     $ProviderEligibilityEvidence
 $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
-if ($EmployeeRelease) {
+$IsEmployeeRelease = $DistributionMode -cne 'Preview'
+$IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
+$ClientSources = $null
+try {
+    $ClientSources = [IO.File]::ReadAllText(
+        $ClientSourcesLock
+    ) | ConvertFrom-Json
+} catch {
+    throw 'ClientSourcesLock JSON is invalid'
+}
+if ($null -eq $ClientSources -or
+    ($ClientSources.schema_version -isnot [int] -and
+        $ClientSources.schema_version -isnot [long]) -or
+    [int]$ClientSources.schema_version -ne 1 -or
+    $ClientSources.official_only -isnot [bool] -or
+    $ClientSources.test_only -isnot [bool] -or
+    $null -eq $ClientSources.platform -or
+    [string]$ClientSources.platform.os -cne 'windows' -or
+    [string]$ClientSources.platform.architecture -cne 'x64' -or
+    ($ClientSources.platform.minimum_build -isnot [int] -and
+        $ClientSources.platform.minimum_build -isnot [long]) -or
+    [int]$ClientSources.platform.minimum_build -lt 19041 -or
+    @($ClientSources.clients).Count -lt 1) {
+    throw 'ClientSourcesLock schema is invalid'
+}
+$ClientSourcesOfficialOnly = [bool]$ClientSources.official_only
+$ClientSourcesTestOnly = [bool]$ClientSources.test_only
+if ($ClientSourcesTestOnly) {
+    if (-not $AllowLocalTestSources) {
+        throw 'Local test client sources require AllowLocalTestSources'
+    }
+    if ($DistributionMode -cne 'Preview') {
+        throw 'Local test client sources are only allowed for Preview'
+    }
+    if ($ClientSourcesOfficialOnly) {
+        throw 'Local test client sources cannot be official-only'
+    }
+}
+elseif (-not $ClientSourcesOfficialOnly) {
+    throw 'Non-official client sources must be marked test-only'
+}
+$ApprovedHosts = @(
+    'chatgpt.com',
+    'downloads.claude.ai',
+    'github.com',
+    'openai.com',
+    'apps.microsoft.com'
+)
+$SeenClientIds = @{}
+foreach ($ClientSource in @($ClientSources.clients)) {
+    $ClientId = [string]$ClientSource.id
+    $Uri = $null
+    if ([string]::IsNullOrWhiteSpace($ClientId) -or
+        $SeenClientIds.ContainsKey($ClientId) -or
+        -not [Uri]::TryCreate(
+            [string]$ClientSource.url,
+            [UriKind]::Absolute,
+            [ref]$Uri
+        ) -or
+        -not [string]::IsNullOrWhiteSpace($Uri.UserInfo)) {
+        throw 'ClientSourcesLock contains an invalid client entry'
+    }
+    $SeenClientIds[$ClientId] = $true
+    if ($ClientSourcesTestOnly) {
+        if (-not $Uri.IsLoopback -or
+            $Uri.Scheme -notin @('http', 'https')) {
+            throw 'Local test client source is unsafe'
+        }
+    }
+    elseif ($Uri.Scheme -cne 'https' -or
+        $ApprovedHosts -cnotcontains $Uri.Host) {
+        throw 'Client source URL is not an approved official endpoint'
+    }
+    if ([string]$ClientSource.source_kind -ceq 'download') {
+        $Hash = [string]$ClientSource.sha256
+        if ($Hash -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw 'Client source hash is invalid'
+        }
+    }
+    elseif ($ClientSourcesOfficialOnly -and
+        $ClientId -ceq 'codex-desktop' -and (
+            [string]$ClientSource.store_product_id -cne '9PLM9XGG6VKS' -or
+            [string]$ClientSource.store_identity -cne 'OpenAI.Codex' -or
+            [string]$ClientSource.store_publisher -cne (
+                'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
+            ) -or
+            [string]$ClientSource.store_signature_kind -cne 'Store'
+        )) {
+        throw 'Codex Store client identity is invalid'
+    }
+}
+if ($ClientSourcesOfficialOnly) {
+    $ExpectedClients = @(
+        'claude-code',
+        'codex-cli',
+        'codex-desktop',
+        'opencode-cli',
+        'opencode-desktop'
+    )
+    $ActualClients = @($SeenClientIds.Keys | Sort-Object)
+    if (($ActualClients -join ',') -cne ($ExpectedClients -join ',')) {
+        throw 'Official client source inventory is incomplete'
+    }
+}
+if ($IsEmployeeRelease) {
     if (($AcceptedTargets -join ',') -cne 'claude,codex,opencode') {
         throw (
             'Employee release requires accepted Codex, Claude, and ' +
@@ -517,7 +1039,29 @@ if ($EmployeeRelease) {
             'Employee release requires current provider eligibility evidence'
         )
     }
-    if ([string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+    if ($null -eq $AcceptedFoundation) {
+        throw (
+            'Employee release requires an accepted immutable Foundation ' +
+            'package'
+        )
+    }
+    $FoundationManifestRecord = (
+        $AcceptedFoundation.engine_files.PSObject.Properties[
+            'engine-manifest.json'
+        ].Value
+    )
+    foreach ($Package in $AcceptedPackages) {
+        if ([string]$Package.foundation_engine_manifest_sha256 -cne (
+                [string]$FoundationManifestRecord.sha256
+            )) {
+            throw (
+                'Target package Foundation binding differs: ' +
+                [string]$Package.target
+            )
+        }
+    }
+    if ($IsPublicSigned -and
+        [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
         throw 'Employee release requires a code-signing certificate'
     }
 }
@@ -528,12 +1072,23 @@ elseif ($AcceptedTargets -ccontains 'claude' -and
         'evidence'
     )
 }
-
+if (-not $IsPublicSigned -and
+    -not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+    throw (
+        'SigningCertificateThumbprint is only valid for PublicSigned builds'
+    )
+}
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $EngineRoot = Join-Path $OutputRoot 'engine'
-& (Join-Path $RepositoryRoot 'tools\build-engine.ps1') -OutputRoot $EngineRoot
-if (-not $?) {
-    throw 'Foundation engine build failed'
+if ($IsEmployeeRelease) {
+    Export-AcceptedFoundationEngine $AcceptedFoundation $EngineRoot
+}
+else {
+    & (Join-Path $RepositoryRoot 'tools\build-engine.ps1') `
+        -OutputRoot $EngineRoot
+    if (-not $?) {
+        throw 'Foundation engine build failed'
+    }
 }
 
 $TrustedProviderEligibility = [ordered]@{
@@ -564,6 +1119,7 @@ $TrustedIndex = [ordered]@{
                 asset = $_.asset
                 release_manifest = $_.release_manifest
                 acceptance_evidence = $_.acceptance_evidence
+                release_verification = $_.release_verification
                 package_acceptance = $_.package_acceptance
             }
         }
@@ -580,6 +1136,11 @@ $TrustedResource = Join-Path $OutputRoot '.trusted-packages.json'
 $Executable = Join-Path $OutputRoot 'LLMFoundationInstaller.exe'
 $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
+$ClientBootstrapSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\ClientBootstrap.cs'
+$ClientSourcesBytes = (Get-Item -LiteralPath $ClientSourcesLock).Length
+$ClientSourcesHash = Get-Sha256 $ClientSourcesLock
 $View = Join-Path $RepositoryRoot 'src\gui\InstallerView.xaml'
 $ApplicationManifest = Join-Path $RepositoryRoot 'src\gui\app.manifest'
 $ApplicationIcon = Join-Path $OutputRoot '.installer.ico'
@@ -591,16 +1152,18 @@ $CompilerArguments = @(
     '/platform:anycpu',
     '/optimize+',
     '/checked+',
+    '/deterministic+',
     '/utf8output',
     "/out:$Executable",
     "/win32manifest:$ApplicationManifest",
     "/win32icon:$ApplicationIcon",
     "/resource:$View,InstallerView.xaml",
     "/resource:$TrustedResource,TrustedPackages.json",
+    "/resource:$ClientSourcesLock,ClientSources.lock.json",
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
-    "/resource:$(Join-Path $RepositoryRoot 'VERSION'),FoundationInstaller.VERSION"
+    "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
 )
 $CompilerArguments += @(
     foreach ($Package in $AcceptedPackages) {
@@ -608,6 +1171,7 @@ $CompilerArguments += @(
             $Package.asset,
             $Package.release_manifest,
             $Package.acceptance_evidence,
+            $Package.release_verification,
             $Package.package_acceptance
         )) {
             $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
@@ -623,7 +1187,11 @@ if ($null -ne $ProviderEligibility) {
     )
 }
 $CompilerArguments += $References | ForEach-Object { "/reference:$_" }
-$CompilerArguments += @($Source, $ConnectionSource)
+$CompilerArguments += @(
+    $Source,
+    $ConnectionSource,
+    $ClientBootstrapSource
+)
 
 & $Compiler @CompilerArguments
 if ($LASTEXITCODE -ne 0 -or
@@ -633,8 +1201,12 @@ if ($LASTEXITCODE -ne 0 -or
 
 Remove-Item -LiteralPath @($TrustedResource, $ApplicationIcon) -Force
 
-$SignatureState = 'unsigned-preview'
-if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+$SignatureState = if ($DistributionMode -ceq 'InternalUnsigned') {
+    'unsigned-internal'
+} else {
+    'unsigned-preview'
+}
+if ($IsPublicSigned) {
     $NormalizedThumbprint = (
         $SigningCertificateThumbprint -replace '\s', ''
     ).ToUpperInvariant()
@@ -671,6 +1243,7 @@ foreach ($Package in $AcceptedPackages) {
         $Package.asset,
         $Package.release_manifest,
         $Package.acceptance_evidence,
+        $Package.release_verification,
         $Package.package_acceptance
     )) {
         $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
@@ -679,6 +1252,25 @@ foreach ($Package in $AcceptedPackages) {
         ) -Destination (Join-Path $Destination $Name)
     }
 }
+if ($null -ne $AcceptedFoundation) {
+    $FoundationDestination = Join-Path $OutputRoot 'foundation'
+    [IO.Directory]::CreateDirectory($FoundationDestination) | Out-Null
+    foreach ($Record in @(
+        $AcceptedFoundation.asset,
+        $AcceptedFoundation.release_manifest,
+        $AcceptedFoundation.acceptance_evidence,
+        $AcceptedFoundation.release_verification,
+        $AcceptedFoundation.package_acceptance
+    )) {
+        $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
+        Copy-Item -LiteralPath (
+            Join-Path $AcceptedFoundation.source_directory $Name
+        ) -Destination (Join-Path $FoundationDestination $Name)
+    }
+}
+Copy-Item -LiteralPath $ClientSourcesLock -Destination (
+    Join-Path $OutputRoot 'client-sources.lock.json'
+)
 $ProviderEligibilityManifest = [ordered]@{
     status = 'NOT_PROVIDED'
 }
@@ -692,6 +1284,25 @@ if ($null -ne $ProviderEligibility) {
         reviewed_at_utc = [string]$ProviderEligibility.reviewed_at_utc
         expires_at_utc = [string]$ProviderEligibility.expires_at_utc
         contains_personal_data = $false
+    }
+}
+$FoundationReleaseManifest = if ($IsEmployeeRelease) {
+    [ordered]@{
+        package_acceptance = 'PASS'
+        engine_version = [string]$AcceptedFoundation.engine_version
+        asset = $AcceptedFoundation.asset
+        release_manifest = $AcceptedFoundation.release_manifest
+        acceptance_evidence = $AcceptedFoundation.acceptance_evidence
+        release_verification = $AcceptedFoundation.release_verification
+        package_acceptance_record = (
+            $AcceptedFoundation.package_acceptance
+        )
+    }
+}
+else {
+    [ordered]@{
+        package_acceptance = 'LOCAL_PREVIEW'
+        engine_version = '0.2.1'
     }
 }
 
@@ -710,17 +1321,72 @@ $Manifest = [ordered]@{
     telemetry = $false
     reverse_flow = $false
     distribution = 'single-executable'
+    distribution_mode = switch ($DistributionMode) {
+        'Preview' { 'preview' }
+        'InternalUnsigned' { 'internal_unsigned' }
+        'PublicSigned' { 'public_signed' }
+    }
     embedded_foundation = $true
     embedded_target_count = $AcceptedPackages.Count
     signature = $SignatureState
-    employee_release = [bool]$EmployeeRelease
+    employee_release = [bool]$IsEmployeeRelease
     employee_distribution_allowed = (
-        [bool]$EmployeeRelease -and
+        [bool]$IsEmployeeRelease -and
+        $null -ne $ProviderEligibility -and
+        [string]$ProviderEligibility.status -ceq 'PASS'
+    )
+    public_distribution_allowed = (
+        [bool]$IsPublicSigned -and
         $SignatureState -ceq 'valid-authenticode' -and
         $null -ne $ProviderEligibility -and
         [string]$ProviderEligibility.status -ceq 'PASS'
     )
+    windows_warning_expected = (
+        $DistributionMode -ceq 'InternalUnsigned'
+    )
+    verdicts = [ordered]@{
+        FULL_RELEASE_CODEX = if (
+            $AcceptedTargets -ccontains 'codex'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        FULL_RELEASE_CLAUDE = if (
+            $AcceptedTargets -ccontains 'claude'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        FULL_RELEASE_OPENCODE = if (
+            $AcceptedTargets -ccontains 'opencode'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        PROGRAM_RELEASE = if (
+            ($AcceptedTargets -join ',') -ceq 'claude,codex,opencode'
+        ) { '3/3' } else { "$($AcceptedTargets.Count)/3" }
+        EMPLOYEE_INSTALLER_INTERNAL = if (
+            $DistributionMode -ceq 'InternalUnsigned' -and
+            ($AcceptedTargets -join ',') -ceq 'claude,codex,opencode' -and
+            $null -ne $ProviderEligibility -and
+            [string]$ProviderEligibility.status -ceq 'PASS'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        PUBLIC_SIGNED_RELEASE = if (
+            $DistributionMode -ceq 'InternalUnsigned'
+        ) {
+            'DEFERRED_BY_OWNER'
+        } elseif (
+            $DistributionMode -ceq 'PublicSigned' -and
+            $SignatureState -ceq 'valid-authenticode'
+        ) {
+            'PASS'
+        } else {
+            'NOT_PASS'
+        }
+    }
     provider_eligibility = $ProviderEligibilityManifest
+    foundation_release = $FoundationReleaseManifest
+    client_sources = [ordered]@{
+        schema_version = 1
+        official_only = $ClientSourcesOfficialOnly
+        test_only = $ClientSourcesTestOnly
+        relative_path = 'client-sources.lock.json'
+        resource_name = 'ClientSources.lock.json'
+        sha256 = $ClientSourcesHash
+        bytes = $ClientSourcesBytes
+    }
     targets = @('codex', 'claude', 'opencode')
     artifacts = [ordered]@{
         'LLMFoundationInstaller.exe' = [ordered]@{
@@ -733,6 +1399,30 @@ $Manifest = [ordered]@{
                 Join-Path $EngineRoot 'foundation.ps1'
             )).Length
         }
+        'engine/engine-manifest.json' = [ordered]@{
+            sha256 = Get-Sha256 (
+                Join-Path $EngineRoot 'engine-manifest.json'
+            )
+            bytes = (Get-Item -LiteralPath (
+                Join-Path $EngineRoot 'engine-manifest.json'
+            )).Length
+        }
+        'engine/VERSION' = [ordered]@{
+            sha256 = Get-Sha256 (Join-Path $EngineRoot 'VERSION')
+            bytes = (Get-Item -LiteralPath (
+                Join-Path $EngineRoot 'VERSION'
+            )).Length
+        }
+        'VERSION' = [ordered]@{
+            sha256 = Get-Sha256 (Join-Path $OutputRoot 'VERSION')
+            bytes = (Get-Item -LiteralPath (
+                Join-Path $OutputRoot 'VERSION'
+            )).Length
+        }
+        'client-sources.lock.json' = [ordered]@{
+            sha256 = $ClientSourcesHash
+            bytes = $ClientSourcesBytes
+        }
     }
 }
 foreach ($Package in $AcceptedPackages) {
@@ -740,7 +1430,23 @@ foreach ($Package in $AcceptedPackages) {
         $Package.asset,
         $Package.release_manifest,
         $Package.acceptance_evidence,
+        $Package.release_verification,
         $Package.package_acceptance
+    )) {
+        $Relative = [string]$Record.relative_path
+        $Manifest.artifacts[$Relative] = [ordered]@{
+            sha256 = [string]$Record.sha256
+            bytes = [long]$Record.bytes
+        }
+    }
+}
+if ($null -ne $AcceptedFoundation) {
+    foreach ($Record in @(
+        $AcceptedFoundation.asset,
+        $AcceptedFoundation.release_manifest,
+        $AcceptedFoundation.acceptance_evidence,
+        $AcceptedFoundation.release_verification,
+        $AcceptedFoundation.package_acceptance
     )) {
         $Relative = [string]$Record.relative_path
         $Manifest.artifacts[$Relative] = [ordered]@{

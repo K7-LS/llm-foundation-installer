@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "official_only": true,
+  "test_only": false,
+  "platform": {
+    "os": "windows",
+    "architecture": "x64",
+    "minimum_build": 19041
+  },
+  "clients": [
+    {
+      "id": "codex-cli",
+      "target": "codex",
+      "display_name": "Codex CLI",
+      "role": "cli",
+      "required_for_base": true,
+      "required_for_employee": true,
+      "version": "0.146.0-alpha.3.1",
+      "source_kind": "download",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.146.0-alpha.3.1/install.ps1",
+      "sha256": "397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f",
+      "artifact_kind": "powershell-installer-script",
+      "archive_entry": null,
+      "publisher": null,
+      "signature_required": false,
+      "install_mode": "official-script",
+      "detect_commands": [
+        "codex.exe"
+      ],
+      "version_arguments": [
+        "--version"
+      ],
+      "store_identity": null,
+      "store_publisher": null,
+      "store_signature_kind": null
+    },
+    {
+      "id": "codex-desktop",
+      "target": "codex",
+      "display_name": "Codex Desktop",
+      "role": "desktop",
+      "required_for_base": false,
+      "required_for_employee": true,
+      "version": "store-current",
+      "source_kind": "store",
+      "url": "https://apps.microsoft.com/detail/9plm9xgg6vks?gl=US&hl=en-US",
+      "sha256": null,
+      "artifact_kind": "microsoft-store",
+      "archive_entry": null,
+      "publisher": "OpenAI OpCo, LLC",
+      "signature_required": true,
+      "install_mode": "guided-store",
+      "detect_commands": [],
+      "version_arguments": [],
+      "store_product_id": "9PLM9XGG6VKS",
+      "store_identity": "OpenAI.Codex",
+      "store_publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
+      "store_signature_kind": "Store"
+    },
+    {
+      "id": "claude-code",
+      "target": "claude",
+      "display_name": "Claude Code",
+      "role": "cli",
+      "required_for_base": true,
+      "required_for_employee": true,
+      "version": "2.1.218",
+      "source_kind": "download",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.218/win32-x64/claude.exe",
+      "sha256": "81fcf59bb7abb558aedc6f2361f4723b3d757d28e799962d88b18b4520df66ca",
+      "artifact_kind": "portable-exe",
+      "archive_entry": null,
+      "publisher": "Anthropic, PBC",
+      "signature_required": true,
+      "install_mode": "managed-bin",
+      "detect_commands": [
+        "claude.exe"
+      ],
+      "version_arguments": [
+        "--version"
+      ],
+      "store_identity": null,
+      "store_publisher": null,
+      "store_signature_kind": null
+    },
+    {
+      "id": "opencode-cli",
+      "target": "opencode",
+      "display_name": "OpenCode CLI",
+      "role": "cli",
+      "required_for_base": true,
+      "required_for_employee": true,
+      "version": "1.18.7",
+      "source_kind": "download",
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.7/opencode-windows-x64.zip",
+      "sha256": "54598e262c0744e6c3b9ddba85764917a48d366a9aa6c817c2feb9d34b3f1105",
+      "artifact_kind": "zip",
+      "archive_entry": "opencode.exe",
+      "publisher": "Anomaly Innovations, Inc https://anoma.ly/",
+      "signature_required": true,
+      "install_mode": "managed-bin",
+      "detect_commands": [
+        "opencode.exe"
+      ],
+      "version_arguments": [
+        "--version"
+      ],
+      "store_identity": null,
+      "store_publisher": null,
+      "store_signature_kind": null
+    },
+    {
+      "id": "opencode-desktop",
+      "target": "opencode",
+      "display_name": "OpenCode Desktop",
+      "role": "desktop",
+      "required_for_base": false,
+      "required_for_employee": true,
+      "version": "1.18.7",
+      "source_kind": "download",
+      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.7/opencode-desktop-win-x64.exe",
+      "sha256": "d44d535d4f3ac0dafcca8cbbf2bad6e0baefb089352a795fc57268337bdea378",
+      "artifact_kind": "portable-exe",
+      "archive_entry": null,
+      "publisher": "Anomaly Innovations, Inc https://anoma.ly/",
+      "signature_required": true,
+      "install_mode": "managed-desktop",
+      "detect_commands": [],
+      "version_arguments": [],
+      "store_identity": null,
+      "store_publisher": null,
+      "store_signature_kind": null
+    }
+  ]
+}

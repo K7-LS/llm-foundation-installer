@@ -2,7 +2,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     FontFamily="Segoe UI"
-    Background="#F4F7FB"
+    Background="#F3F6FA"
     SnapsToDevicePixels="True"
     UseLayoutRounding="True">
   <UserControl.Resources>
@@ -23,6 +23,7 @@
     <Style x:Key="SectionTitle" TargetType="TextBlock">
       <Setter Property="FontSize" Value="20" />
       <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontFamily" Value="Bahnschrift SemiBold" />
     </Style>
     <Style x:Key="Caption" TargetType="TextBlock">
       <Setter Property="FontSize" Value="13" />
@@ -104,69 +105,90 @@
         </Grid>
 
         <StackPanel Grid.Row="2">
-          <TextBlock Text="НАСТРОЙКА" FontSize="11" FontWeight="Bold" Foreground="#7F8DA3" Margin="0,0,0,18" />
+          <TextBlock Text="КОНТУР УСТАНОВКИ" FontSize="11" FontWeight="Bold" Foreground="#7F8DA3" Margin="0,0,0,16" />
 
-          <Grid Margin="0,0,0,20">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="42" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <Border x:Name="Step1Badge" Width="32" Height="32" CornerRadius="16" Background="#4169E1" VerticalAlignment="Top">
               <TextBlock x:Name="Step1Number" Text="1" Foreground="#FFFFFF" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
-            <StackPanel Grid.Column="1" Margin="4,2,0,0">
-              <TextBlock x:Name="Step1Title" Text="Проверка среды" Foreground="#FFFFFF" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="Клиенты и пакеты" Foreground="#93A1B6" FontSize="12" Margin="0,4,0,0" />
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step1Title" Text="Система" Foreground="#FFFFFF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Windows и пакеты" Foreground="#93A1B6" FontSize="11" Margin="0,2,0,0" />
             </StackPanel>
           </Grid>
 
-          <Grid Margin="0,0,0,20">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="42" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <Border x:Name="Step2Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
               <TextBlock x:Name="Step2Number" Text="2" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
-            <StackPanel Grid.Column="1" Margin="4,2,0,0">
-              <TextBlock x:Name="Step2Title" Text="План изменений" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="Что будет заменено" Foreground="#7F8DA3" FontSize="12" Margin="0,4,0,0" />
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step2Title" Text="Соединение" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Direct, VPN или Proxy" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
             </StackPanel>
           </Grid>
 
-          <Grid Margin="0,0,0,20">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="42" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
             <Border x:Name="Step3Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
               <TextBlock x:Name="Step3Number" Text="3" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
-            <StackPanel Grid.Column="1" Margin="4,2,0,0">
-              <TextBlock x:Name="Step3Title" Text="Установка" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="Backup, apply, doctor" Foreground="#7F8DA3" FontSize="12" Margin="0,4,0,0" />
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step3Title" Text="Клиенты" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Загрузка и проверка" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
+            </StackPanel>
+          </Grid>
+
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border x:Name="Step4Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
+              <TextBlock x:Name="Step4Number" Text="4" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step4Title" Text="План баз" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Управляемая поверхность" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
+            </StackPanel>
+          </Grid>
+
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border x:Name="Step5Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
+              <TextBlock x:Name="Step5Number" Text="5" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step5Title" Text="Установка" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Backup, apply, doctor" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
+            </StackPanel>
+          </Grid>
+
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border x:Name="Step6Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
+              <TextBlock x:Name="Step6Number" Text="6" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step6Title" Text="Авторизация" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Только в клиентах" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
             </StackPanel>
           </Grid>
 
           <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="42" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Border x:Name="Step4Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
-              <TextBlock x:Name="Step4Number" Text="4" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border x:Name="Step7Badge" Width="32" Height="32" CornerRadius="16" BorderBrush="#526078" BorderThickness="1.5" VerticalAlignment="Top">
+              <TextBlock x:Name="Step7Number" Text="7" Foreground="#AAB6C8" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
-            <StackPanel Grid.Column="1" Margin="4,2,0,0">
-              <TextBlock x:Name="Step4Title" Text="Готово" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="Отчёт и откат" Foreground="#7F8DA3" FontSize="12" Margin="0,4,0,0" />
+            <StackPanel Grid.Column="1" Margin="4,1,0,0">
+              <TextBlock x:Name="Step7Title" Text="Готово" Foreground="#C9D2DF" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="Отчёт, sync, rollback" Foreground="#7F8DA3" FontSize="11" Margin="0,2,0,0" />
             </StackPanel>
           </Grid>
         </StackPanel>
 
         <Border Grid.Row="3" Background="#192336" BorderBrush="#2B3850" BorderThickness="1" CornerRadius="12" Padding="16">
           <StackPanel>
-            <TextBlock Text="Локальная установка" Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold" />
-            <TextBlock Text="Без администратора и без отправки данных наружу."
+            <TextBlock Text="Контур доверия" Foreground="#FFFFFF" FontSize="13" FontWeight="SemiBold" />
+            <TextBlock Text="SHA-256 до запуска  ·  DPAPI  ·  0 телеметрии"
                        Foreground="#AAB6C8"
                        FontSize="12"
                        TextWrapping="Wrap"
@@ -191,8 +213,11 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel>
-          <TextBlock Text="Настройка рабочей среды" FontSize="30" FontWeight="SemiBold" />
-          <TextBlock Text="Проверим клиенты и подготовим безопасный план для Codex, Claude и OpenCode."
+          <TextBlock Text="Развёртывание LLM Foundation"
+                     FontFamily="Bahnschrift SemiBold"
+                     FontSize="30"
+                     FontWeight="SemiBold" />
+          <TextBlock Text="Официальные клиенты, три независимые базы и проверяемый откат — в одном контуре."
                      FontSize="14"
                      Foreground="{StaticResource MutedInk}"
                      Margin="0,8,0,0" />
@@ -200,7 +225,7 @@
         <Border Grid.Column="1" Background="{StaticResource PositiveSoft}" CornerRadius="18" Padding="14,8" VerticalAlignment="Top">
           <StackPanel Orientation="Horizontal">
             <Ellipse Width="8" Height="8" Fill="{StaticResource Positive}" Margin="0,0,8,0" />
-            <TextBlock Text="OFFLINE INSTALL  ·  CURRENT USER" Foreground="{StaticResource Positive}" FontSize="12" FontWeight="Bold" />
+            <TextBlock Text="VERIFIED SOURCES  ·  CURRENT USER" Foreground="{StaticResource Positive}" FontSize="12" FontWeight="Bold" />
           </StackPanel>
         </Border>
       </Grid>
@@ -341,8 +366,8 @@
                   <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                  <TextBlock Text="Соединение для обновлений" FontSize="17" FontWeight="SemiBold" />
-                  <TextBlock Text="Режим используется для проверки соединения и $sync-base. Пакеты базы устанавливаются offline."
+                  <TextBlock Text="Соединение" FontSize="17" FontWeight="SemiBold" />
+                  <TextBlock Text="Режим используется для загрузки официальных клиентов и для $sync-base. Пакеты баз уже проверены и встроены."
                              Style="{StaticResource Caption}"
                              Margin="0,5,0,0" />
                   <TextBlock Text="VPN/Proxy — это только транспорт: режим не подтверждает доступность сервиса в регионе и не используется для обхода ограничений."
@@ -356,7 +381,7 @@
                         CornerRadius="13"
                         Padding="11,6"
                         VerticalAlignment="Top">
-                  <TextBlock Text="НЕ БЛОКИРУЕТ OFFLINE-УСТАНОВКУ"
+                  <TextBlock Text="VPN ≠ PROXY"
                              Foreground="#3157C7"
                              FontSize="11"
                              FontWeight="Bold" />
