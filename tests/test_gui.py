@@ -1160,3 +1160,15 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
         'x:Name="CodexStatusBadge"',
     ):
         assert required in xaml
+
+
+def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
+    guide = (
+        REPOSITORY_ROOT / "docs" / "EMPLOYEE-OPERATOR-GUIDE.md"
+    ).read_text(encoding="utf-8").lower()
+    guide = " ".join(guide.split())
+    assert "https://www.anthropic.com/supported-countries" in guide
+    assert "не подтверждает право использования" in guide
+    assert "не должен использоваться для обхода" in guide
+    assert "отдельная допустимая учётная запись" in guide
+    assert "автоматизированный или без участия человека доступ" in guide
