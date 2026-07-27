@@ -15,34 +15,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  offline-test:
-    name: Python 3.12 / ${{ matrix.shell }}
+  offline-test-ps7:
+    name: Python 3.12 / PowerShell 7
     runs-on: windows-2022
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [pwsh, powershell]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install test dependency
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         run: python -m pip install --disable-pip-version-check pytest
       - name: Show runtime versions
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         run: |
           python --version
           $PSVersionTable.PSVersion.ToString()
       - name: Run offline suite
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         env:
           LLM_FOUNDATION_CI_OFFLINE: "1"
         run: python -m pytest -q
       - name: Verify tests did not mutate tracked files
-        shell: ${{ matrix.shell }}
+        shell: pwsh
+        run: |
+          $dirty = git status --porcelain
+          if ($dirty) {
+            $dirty
+            throw "Offline tests modified the worktree"
+          }
+
+  offline-test-ps51:
+    name: Python 3.12 / Windows PowerShell 5.1
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        shell: powershell
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Show runtime versions
+        shell: powershell
+        run: |
+          python --version
+          $PSVersionTable.PSVersion.ToString()
+      - name: Run offline suite
+        shell: powershell
+        env:
+          LLM_FOUNDATION_CI_OFFLINE: "1"
+        run: python -m pytest -q
+      - name: Verify tests did not mutate tracked files
+        shell: powershell
         run: |
           $dirty = git status --porcelain
           if ($dirty) {
