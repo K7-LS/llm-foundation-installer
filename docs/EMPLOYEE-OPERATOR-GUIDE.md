@@ -88,6 +88,45 @@ API-ключ или общий аккаунт нельзя.
 может установить причину блокировки. По заблокированному аккаунту используется
 только официальный процесс appeal/review Anthropic, а не технический обход.
 
+### Provider eligibility evidence для employee build
+
+Перед финальной employee-сборкой оператор после фактической проверки создаёт
+обезличенное подтверждение:
+
+```powershell
+pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
+  -OutputPath .\provider-eligibility-evidence.json `
+  -ConfirmEmployeeLocationEligibility `
+  -ConfirmOrganizationEligibility `
+  -ConfirmIndividualAccounts `
+  -ConfirmNoRegionOrBanBypass `
+  -ConfirmNoUnattendedConsumerAutomation
+```
+
+Файл действует не более 7 суток. Он содержит только отметки контроля, UTC-время
+и канонические ссылки на правила — без ФИО, страны, IP, email, аккаунта или иных
+персональных данных. Генератор требует все пять подтверждений и не
+перезаписывает существующий файл.
+
+Сборщик получает файл явно:
+
+```powershell
+pwsh -NoProfile -File .\tools\build-gui.ps1 `
+  -OutputRoot .\dist\employee `
+  -PackageRoot <accepted-packages-root> `
+  -ProviderEligibilityEvidence .\provider-eligibility-evidence.json `
+  -EmployeeRelease `
+  -SigningCertificateThumbprint <code-signing-thumbprint>
+```
+
+Employee build отклоняет отсутствующий, просроченный, изменённый,
+неполный или содержащий дополнительные поля evidence. Принятый файл
+встраивается в EXE, а его SHA-256 и срок действия записываются в
+`bundle-manifest.json`. Любая сборка с принятым Claude-пакетом требует этот
+evidence. При каждом запуске EXE повторно проверяет встроенный/sidecar-файл,
+его SHA-256 и срок; результат `policy_blocked` запрещает установку Claude и
+видимо объясняется в интерфейсе.
+
 ## Что происходит при установке
 
 1. EXE проверяет встроенный Foundation engine и target-пакеты по размеру и

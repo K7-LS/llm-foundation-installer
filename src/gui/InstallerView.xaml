@@ -345,6 +345,11 @@
                   <TextBlock Text="Режим используется для проверки соединения и $sync-base. Пакеты базы устанавливаются offline."
                              Style="{StaticResource Caption}"
                              Margin="0,5,0,0" />
+                  <TextBlock Text="VPN/Proxy — это только транспорт: режим не подтверждает доступность сервиса в регионе и не используется для обхода ограничений."
+                             TextWrapping="Wrap"
+                             Foreground="{StaticResource Warning}"
+                             FontSize="11"
+                             Margin="0,5,20,0" />
                 </StackPanel>
                 <Border Grid.Column="1"
                         Background="{StaticResource BrandSoft}"

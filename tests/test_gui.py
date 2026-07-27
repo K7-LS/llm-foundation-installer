@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from datetime import datetime, timedelta, timezone
 import hashlib
 import http.server
 import json
@@ -35,7 +36,11 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
-def _build_gui_bundle(output: Path, package_root: Path | None = None) -> Path:
+def _build_gui_bundle(
+    output: Path,
+    package_root: Path | None = None,
+    provider_eligibility_evidence: Path | None = None,
+) -> Path:
     arguments = [
         POWERSHELL,
         "-NoProfile",
@@ -48,6 +53,13 @@ def _build_gui_bundle(output: Path, package_root: Path | None = None) -> Path:
     ]
     if package_root is not None:
         arguments.extend(["-PackageRoot", str(package_root)])
+    if provider_eligibility_evidence is not None:
+        arguments.extend(
+            [
+                "-ProviderEligibilityEvidence",
+                str(provider_eligibility_evidence),
+            ]
+        )
     result = subprocess.run(
         arguments,
         cwd=REPOSITORY_ROOT,
@@ -58,6 +70,48 @@ def _build_gui_bundle(output: Path, package_root: Path | None = None) -> Path:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return output
+
+
+def _provider_eligibility_evidence(
+    path: Path,
+    *,
+    reviewed_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    extra_top_level: dict[str, object] | None = None,
+) -> Path:
+    reviewed = reviewed_at or datetime.now(timezone.utc).replace(
+        microsecond=0
+    )
+    expires = expires_at or reviewed + timedelta(days=7)
+    value: dict[str, object] = {
+        "schema_version": 1,
+        "reviewed_at_utc": reviewed.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at_utc": expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sources": {
+            "supported_regions": (
+                "https://www.anthropic.com/supported-countries"
+            ),
+            "usage_policy": "https://www.anthropic.com/legal/aup",
+            "consumer_terms": (
+                "https://www.anthropic.com/legal/consumer-terms"
+            ),
+            "safeguards_appeals": (
+                "https://support.claude.com/en/articles/"
+                "8241253-safeguards-warnings-and-appeals"
+            ),
+        },
+        "claude": {
+            "employee_location_eligibility_verified": True,
+            "organization_eligibility_verified": True,
+            "individual_accounts_only": True,
+            "transport_not_used_for_region_or_ban_bypass": True,
+            "unattended_consumer_automation": False,
+        },
+    }
+    if extra_top_level:
+        value.update(extra_top_level)
+    _write_json(path, value)
+    return path
 
 
 def _accepted_package(
@@ -609,6 +663,94 @@ def test_gui_build_rejects_codex_evidence_bound_to_another_release(
     ).lower()
 
 
+def test_gui_rejects_accepted_claude_package_without_provider_evidence(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source, "claude")
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "bundle"),
+            "-PackageRoot",
+            str(package_source),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "accepted claude package requires current provider eligibility" in (
+        result.stdout + result.stderr
+    ).lower()
+
+
+def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source, "claude")
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        package_source,
+        evidence,
+    )
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    accepted = subprocess.run(
+        [str(executable), "--catalog-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    accepted_payload = json.loads(accepted.stdout)
+    accepted_states = {
+        row["id"]: row["package_state"]
+        for row in accepted_payload["targets"]
+    }
+    assert accepted_states["claude"] == "accepted"
+    assert accepted_payload["provider_eligibility"] == "PASS"
+
+    bundled_evidence = bundle / "provider-eligibility-evidence.json"
+    bundled_evidence.write_text("tampered\n", encoding="utf-8")
+    blocked = subprocess.run(
+        [str(executable), "--catalog-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert blocked.returncode == 0, blocked.stdout + blocked.stderr
+    blocked_payload = json.loads(blocked.stdout)
+    blocked_states = {
+        row["id"]: row["package_state"]
+        for row in blocked_payload["targets"]
+    }
+    assert blocked_states["claude"] == "policy_blocked"
+    assert blocked_payload["provider_eligibility"] == "INVALID_OR_EXPIRED"
+    assert blocked_payload["install_enabled"] is False
+    assert blocked_payload["reason"] == (
+        "Claude provider eligibility evidence is missing, invalid, or expired"
+    )
+
+
 def test_employee_release_requires_all_targets_and_code_signing(
     tmp_path: Path,
 ):
@@ -639,6 +781,344 @@ def test_employee_release_requires_all_targets_and_code_signing(
     assert "requires accepted codex, claude, and opencode" in (
         result.stdout + result.stderr
     ).lower()
+
+
+def test_employee_release_requires_provider_eligibility_before_signing(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+
+    missing = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "missing-evidence"),
+            "-PackageRoot",
+            str(package_source),
+            "-EmployeeRelease",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert missing.returncode != 0
+    assert "requires current provider eligibility evidence" in (
+        missing.stdout + missing.stderr
+    ).lower()
+
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    accepted_policy = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "accepted-policy"),
+            "-PackageRoot",
+            str(package_source),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+            "-EmployeeRelease",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert accepted_policy.returncode != 0
+    assert "requires a code-signing certificate" in (
+        accepted_policy.stdout + accepted_policy.stderr
+    ).lower()
+
+
+def test_provider_eligibility_rejects_expired_or_pii_bearing_evidence(
+    tmp_path: Path,
+):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    expired = _provider_eligibility_evidence(
+        tmp_path / "expired.json",
+        reviewed_at=now - timedelta(days=8),
+        expires_at=now - timedelta(days=1),
+    )
+    expired_result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "expired-output"),
+            "-ProviderEligibilityEvidence",
+            str(expired),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert expired_result.returncode != 0
+    assert "provider eligibility evidence is expired" in (
+        expired_result.stdout + expired_result.stderr
+    ).lower()
+
+    pii = _provider_eligibility_evidence(
+        tmp_path / "pii.json",
+        extra_top_level={"employee_names": ["Employee One"]},
+    )
+    pii_result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "pii-output"),
+            "-ProviderEligibilityEvidence",
+            str(pii),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert pii_result.returncode != 0
+    assert "unexpected or personal-data fields" in (
+        pii_result.stdout + pii_result.stderr
+    ).lower()
+
+    noncanonical = _provider_eligibility_evidence(
+        tmp_path / "noncanonical-timestamp.json"
+    )
+    noncanonical_value = json.loads(
+        noncanonical.read_text(encoding="utf-8")
+    )
+    noncanonical_value["reviewed_at_utc"] = (
+        noncanonical_value["reviewed_at_utc"][:-1] + "+00:00"
+    )
+    _write_json(noncanonical, noncanonical_value)
+    noncanonical_result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "noncanonical-output"),
+            "-ProviderEligibilityEvidence",
+            str(noncanonical),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert noncanonical_result.returncode != 0
+    assert "timestamps are not canonical utc" in (
+        noncanonical_result.stdout + noncanonical_result.stderr
+    ).lower()
+
+    schema_string = _provider_eligibility_evidence(
+        tmp_path / "schema-string.json"
+    )
+    schema_value = json.loads(schema_string.read_text(encoding="utf-8"))
+    schema_value["schema_version"] = "1"
+    _write_json(schema_string, schema_value)
+    schema_result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "schema-output"),
+            "-ProviderEligibilityEvidence",
+            str(schema_string),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert schema_result.returncode != 0
+    assert "schema is unsupported" in (
+        schema_result.stdout + schema_result.stderr
+    ).lower()
+
+
+@pytest.mark.parametrize("powershell", POWERSHELLS)
+def test_provider_eligibility_generator_is_fail_closed_and_pii_free(
+    tmp_path: Path,
+    powershell: str,
+):
+    output = tmp_path / f"eligibility-{Path(powershell).stem.lower()}.json"
+    command = [
+        powershell,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(
+            REPOSITORY_ROOT
+            / "tools"
+            / "new-provider-eligibility-evidence.ps1"
+        ),
+        "-OutputPath",
+        str(output),
+    ]
+    missing = subprocess.run(
+        command,
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert missing.returncode != 0
+    assert "all provider eligibility confirmations are required" in (
+        missing.stdout + missing.stderr
+    ).lower()
+    assert not output.exists()
+
+    generated = subprocess.run(
+        command
+        + [
+            "-ConfirmEmployeeLocationEligibility",
+            "-ConfirmOrganizationEligibility",
+            "-ConfirmIndividualAccounts",
+            "-ConfirmNoRegionOrBanBypass",
+            "-ConfirmNoUnattendedConsumerAutomation",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    value = json.loads(output.read_text(encoding="utf-8"))
+    assert set(value) == {
+        "schema_version",
+        "reviewed_at_utc",
+        "expires_at_utc",
+        "sources",
+        "claude",
+    }
+    assert value["claude"] == {
+        "employee_location_eligibility_verified": True,
+        "organization_eligibility_verified": True,
+        "individual_accounts_only": True,
+        "transport_not_used_for_region_or_ban_bypass": True,
+        "unattended_consumer_automation": False,
+    }
+    assert "employee" not in value
+    assert "country" not in value
+    reviewed = datetime.strptime(
+        value["reviewed_at_utc"], "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
+    expires = datetime.strptime(
+        value["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
+    assert timedelta(days=6, hours=23) < expires - reviewed <= timedelta(
+        days=7
+    )
+
+    overwrite = subprocess.run(
+        command
+        + [
+            "-ConfirmEmployeeLocationEligibility",
+            "-ConfirmOrganizationEligibility",
+            "-ConfirmIndividualAccounts",
+            "-ConfirmNoRegionOrBanBypass",
+            "-ConfirmNoUnattendedConsumerAutomation",
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert overwrite.returncode != 0
+    assert "output already exists" in (
+        overwrite.stdout + overwrite.stderr
+    ).lower()
+
+
+@pytest.mark.parametrize("powershell", POWERSHELLS)
+def test_provider_eligibility_is_hash_bound_into_bundle_manifest(
+    tmp_path: Path,
+    powershell: str,
+):
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    bundle = tmp_path / f"bundle-{Path(powershell).stem.lower()}"
+    built = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-OutputRoot",
+            str(bundle),
+            "-ProviderEligibilityEvidence",
+            str(evidence),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["provider_eligibility"] == {
+        "status": "PASS",
+        "sha256": _sha256(evidence),
+        "reviewed_at_utc": json.loads(
+            evidence.read_text(encoding="utf-8")
+        )["reviewed_at_utc"],
+        "expires_at_utc": json.loads(
+            evidence.read_text(encoding="utf-8")
+        )["expires_at_utc"],
+        "contains_personal_data": False,
+    }
+    bundled = bundle / "provider-eligibility-evidence.json"
+    assert bundled.read_bytes() == evidence.read_bytes()
+    assert manifest["artifacts"][bundled.name] == {
+        "sha256": _sha256(bundled),
+        "bytes": bundled.stat().st_size,
+    }
 
 
 def test_gui_runs_real_foundation_workflow_and_preserves_auth(tmp_path: Path):
@@ -1172,3 +1652,19 @@ def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
     assert "не должен использоваться для обхода" in guide
     assert "отдельная допустимая учётная запись" in guide
     assert "автоматизированный или без участия человека доступ" in guide
+    assert "new-provider-eligibility-evidence.ps1" in guide
+    assert "providereligibilityevidence" in guide
+    assert "7 суток" in guide
+
+
+def test_installer_ui_makes_provider_policy_boundary_visible():
+    xaml = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
+    ).read_text(encoding="utf-8").lower()
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    assert "vpn/proxy — это только транспорт" in xaml
+    assert "не подтверждает доступность сервиса в регионе" in xaml
+    assert "Допуск провайдера истёк или недействителен" in source
+    assert "Установка Claude заблокирована" in source

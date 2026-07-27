@@ -57,9 +57,18 @@ namespace LlmFoundationInstaller
         public TrustedFile package_acceptance { get; set; }
     }
 
+    internal sealed class ProviderEligibilityRecord
+    {
+        public string status { get; set; }
+        public string reviewed_at_utc { get; set; }
+        public string expires_at_utc { get; set; }
+        public TrustedFile evidence { get; set; }
+    }
+
     internal sealed class TrustedPackageIndex
     {
         public int schema_version { get; set; }
+        public ProviderEligibilityRecord provider_eligibility { get; set; }
         public List<TrustedPackage> packages { get; set; }
     }
 
@@ -68,6 +77,7 @@ namespace LlmFoundationInstaller
         public List<TargetRow> targets { get; set; }
         public bool install_enabled { get; set; }
         public string reason { get; set; }
+        public string provider_eligibility { get; set; }
     }
 
     internal sealed class ConnectionProbeResult
@@ -102,7 +112,13 @@ namespace LlmFoundationInstaller
             bool detectClients = false
         )
         {
-            Dictionary<string, TrustedPackage> trusted = LoadTrustedPackages();
+            ProviderEligibilityRecord eligibility;
+            Dictionary<string, TrustedPackage> trusted =
+                LoadTrustedPackages(out eligibility);
+            string eligibilityState = ProviderEligibilityState(
+                bundleRoot,
+                eligibility
+            );
             List<TargetRow> targets = new List<TargetRow>();
             foreach (string[] definition in Definitions)
             {
@@ -115,6 +131,12 @@ namespace LlmFoundationInstaller
                         definition[0],
                         definition[2]
                     ) ? "accepted" : "tampered");
+                if (state == "accepted" &&
+                    definition[0] == "claude" &&
+                    eligibilityState != "PASS")
+                {
+                    state = "policy_blocked";
+                }
                 string detected = null;
                 string clientState = "not_checked";
                 string supported = package == null
@@ -155,11 +177,16 @@ namespace LlmFoundationInstaller
                 install_enabled = enabled,
                 reason = enabled
                     ? "Accepted target package is available"
-                    : (detectClients && targets.Any(
+                    : (targets.Any(
+                        row => row.package_state == "policy_blocked"
+                    )
+                        ? "Claude provider eligibility evidence is missing, invalid, or expired"
+                        : (detectClients && targets.Any(
                         row => row.package_state == "accepted"
                     )
                         ? "Accepted packages are present but compatible clients are not ready"
-                        : "No accepted target packages are bundled")
+                        : "No accepted target packages are bundled")),
+                provider_eligibility = eligibilityState
             };
         }
 
@@ -186,7 +213,9 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            Dictionary<string, TrustedPackage> trusted = LoadTrustedPackages();
+            ProviderEligibilityRecord eligibility;
+            Dictionary<string, TrustedPackage> trusted =
+                LoadTrustedPackages(out eligibility);
             TrustedPackage candidate;
             if (!trusted.TryGetValue(target, out candidate) ||
                 !ValidateTrustedPackage(
@@ -194,7 +223,12 @@ namespace LlmFoundationInstaller
                     candidate,
                     definition[0],
                     definition[2]
-                ))
+                ) ||
+                (target == "claude" &&
+                    ProviderEligibilityState(
+                        bundleRoot,
+                        eligibility
+                    ) != "PASS"))
             {
                 return false;
             }
@@ -202,7 +236,9 @@ namespace LlmFoundationInstaller
             return true;
         }
 
-        private static Dictionary<string, TrustedPackage> LoadTrustedPackages()
+        private static Dictionary<string, TrustedPackage> LoadTrustedPackages(
+            out ProviderEligibilityRecord eligibility
+        )
         {
             Stream resource = Assembly.GetExecutingAssembly()
                 .GetManifestResourceStream("TrustedPackages.json");
@@ -231,6 +267,7 @@ namespace LlmFoundationInstaller
                     "Trusted package index is invalid"
                 );
             }
+            eligibility = index.provider_eligibility;
             Dictionary<string, TrustedPackage> packages =
                 new Dictionary<string, TrustedPackage>(
                     StringComparer.OrdinalIgnoreCase
@@ -247,6 +284,60 @@ namespace LlmFoundationInstaller
                 packages.Add(package.target, package);
             }
             return packages;
+        }
+
+        private static string ProviderEligibilityState(
+            string bundleRoot,
+            ProviderEligibilityRecord record
+        )
+        {
+            if (record == null ||
+                String.Equals(
+                    record.status,
+                    "NOT_PROVIDED",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "NOT_PROVIDED";
+            }
+            DateTimeOffset reviewed = DateTimeOffset.MinValue;
+            DateTimeOffset expires = DateTimeOffset.MinValue;
+            const string format = "yyyy-MM-dd'T'HH:mm:ss'Z'";
+            DateTimeStyles styles = DateTimeStyles.AssumeUniversal |
+                DateTimeStyles.AdjustToUniversal;
+            bool valid = String.Equals(
+                    record.status,
+                    "PASS",
+                    StringComparison.Ordinal
+                ) &&
+                ValidateFile(bundleRoot, record.evidence) &&
+                DateTimeOffset.TryParseExact(
+                    record.reviewed_at_utc,
+                    format,
+                    CultureInfo.InvariantCulture,
+                    styles,
+                    out reviewed
+                ) &&
+                DateTimeOffset.TryParseExact(
+                    record.expires_at_utc,
+                    format,
+                    CultureInfo.InvariantCulture,
+                    styles,
+                    out expires
+                );
+            if (!valid)
+            {
+                return "INVALID_OR_EXPIRED";
+            }
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (reviewed > now.AddMinutes(5) ||
+                expires <= now ||
+                expires <= reviewed ||
+                expires - reviewed > TimeSpan.FromDays(7))
+            {
+                return "INVALID_OR_EXPIRED";
+            }
+            return "PASS";
         }
 
         private static bool ValidateTrustedPackage(
@@ -902,12 +993,14 @@ namespace LlmFoundationInstaller
                                         row.supported_version)))
                         : (row.package_state == "tampered"
                             ? "Пакет повреждён · установка запрещена"
-                            : (row.client_state == "present_unbound"
-                                ? "Клиент " + row.detected_version +
-                                    " найден · пакет не включён"
-                                : (row.client_state == "missing"
-                                    ? "Пакет не включён · клиент не найден"
-                                    : "Пакет не включён в эту сборку")));
+                            : (row.package_state == "policy_blocked"
+                                ? "Допуск провайдера истёк или недействителен"
+                                : (row.client_state == "present_unbound"
+                                    ? "Клиент " + row.detected_version +
+                                        " найден · пакет не включён"
+                                    : (row.client_state == "missing"
+                                        ? "Пакет не включён · клиент не найден"
+                                        : "Пакет не включён в эту сборку"))));
                     bool ready = row.package_state == "accepted" &&
                         (row.client_state == "ready" ||
                             row.client_state == "not_checked");
@@ -919,7 +1012,9 @@ namespace LlmFoundationInstaller
                     status.ToolTip = row.package_state == "accepted"
                         ? "Пакет проверен. Поддерживаемая версия клиента: " +
                             row.supported_version
-                        : null;
+                        : (row.package_state == "policy_blocked"
+                            ? "Повторите проверку Supported Regions Policy и соберите новый подписанный installer."
+                            : null);
                     if (badge != null)
                     {
                         badge.Background = new SolidColorBrush(
@@ -952,7 +1047,9 @@ namespace LlmFoundationInstaller
             {
                 statusText.Text = catalog.install_enabled
                     ? "Компоненты готовы. Следующий шаг — проверяемый план изменений."
-                    : "Установка заблокирована: нет готовых target-пакетов и клиентов.";
+                    : (catalog.provider_eligibility == "INVALID_OR_EXPIRED"
+                        ? "Установка Claude заблокирована: допуск провайдера истёк или недействителен."
+                        : "Установка заблокирована: нет готовых target-пакетов и клиентов.");
                 statusText.Foreground = new SolidColorBrush(
                     catalog.install_enabled
                         ? Color.FromRgb(22, 122, 88)

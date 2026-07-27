@@ -56,6 +56,7 @@ An employee build additionally requires:
 
 - accepted packages for all three targets;
 - immutable stable release evidence and asset attestations;
+- current, PII-free provider-eligibility evidence with all required controls;
 - a current-user Authenticode code-signing certificate;
 - a successful timestamped signature.
 
@@ -76,12 +77,28 @@ pwsh -NoProfile -File .\tools\build-gui.ps1 `
 An employee build is fail-closed:
 
 ```powershell
+pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
+  -OutputPath .\provider-eligibility-evidence.json `
+  -ConfirmEmployeeLocationEligibility `
+  -ConfirmOrganizationEligibility `
+  -ConfirmIndividualAccounts `
+  -ConfirmNoRegionOrBanBypass `
+  -ConfirmNoUnattendedConsumerAutomation
+
 pwsh -NoProfile -File .\tools\build-gui.ps1 `
   -OutputRoot .\dist\employee `
   -PackageRoot <accepted-packages-root> `
+  -ProviderEligibilityEvidence .\provider-eligibility-evidence.json `
   -EmployeeRelease `
   -SigningCertificateThumbprint <code-signing-thumbprint>
 ```
+
+Provider eligibility evidence expires within seven days, contains no employee
+identity, location, IP, or account data, is embedded into the signed
+executable, and is SHA-256-bound into `bundle-manifest.json`. Any build that
+contains an accepted Claude package requires it. Runtime catalog/preflight
+rechecks the embedded or sidecar evidence hash and expiry and reports
+`policy_blocked` instead of enabling Claude when it is invalid.
 
 Acceptance refuses a dirty Git worktree and writes commit/tree-bound evidence.
 `FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a client canary,

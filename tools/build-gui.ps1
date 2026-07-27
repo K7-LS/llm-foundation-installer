@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [string]$PackageRoot,
+    [string]$ProviderEligibilityEvidence,
     [switch]$EmployeeRelease,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
@@ -51,6 +52,195 @@ function Get-Sha256 {
     } finally {
         $Algorithm.Dispose()
         $Stream.Dispose()
+    }
+}
+
+function Assert-ExactJsonProperties {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string[]]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if ($null -eq $Value) {
+        throw "$Label is missing"
+    }
+    $Actual = @($Value.PSObject.Properties.Name)
+    $Unexpected = @(
+        $Actual | Where-Object { $Expected -cnotcontains $_ }
+    )
+    $Missing = @(
+        $Expected | Where-Object { $Actual -cnotcontains $_ }
+    )
+    if ($Unexpected.Count -gt 0 -or $Missing.Count -gt 0) {
+        throw "$Label contains unexpected or personal-data fields"
+    }
+}
+
+function Assert-JsonBoolean {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][bool]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if ($Value -isnot [bool] -or [bool]$Value -ne $Expected) {
+        throw "Provider eligibility control is not accepted: $Label"
+    }
+}
+
+function Convert-ProviderTimestamp {
+    param(
+        [Parameter(Mandatory = $true)]$Value
+    )
+    if ($Value -is [DateTime]) {
+        if ($Value.Kind -ne [DateTimeKind]::Utc) {
+            throw 'Provider eligibility timestamp must be UTC'
+        }
+        return ([DateTimeOffset]$Value).ToUniversalTime()
+    }
+    if ($Value -isnot [string]) {
+        throw 'Provider eligibility timestamp must be a string'
+    }
+    return [DateTimeOffset]::ParseExact(
+        [string]$Value,
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal
+    ).ToUniversalTime()
+}
+
+function Read-ProviderEligibilityEvidence {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+    $FullPath = [IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf)) {
+        throw 'Provider eligibility evidence does not exist'
+    }
+    $Item = Get-Item -LiteralPath $FullPath -Force
+    if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Provider eligibility evidence cannot be a reparse point'
+    }
+    if ($Item.Length -lt 1 -or $Item.Length -gt 16384) {
+        throw 'Provider eligibility evidence size is invalid'
+    }
+    $RawEvidence = [IO.File]::ReadAllText($FullPath)
+    try {
+        $Evidence = $RawEvidence | ConvertFrom-Json
+    } catch {
+        throw 'Provider eligibility evidence JSON is invalid'
+    }
+
+    Assert-ExactJsonProperties $Evidence @(
+        'schema_version',
+        'reviewed_at_utc',
+        'expires_at_utc',
+        'sources',
+        'claude'
+    ) 'Provider eligibility evidence'
+    Assert-ExactJsonProperties $Evidence.sources @(
+        'supported_regions',
+        'usage_policy',
+        'consumer_terms',
+        'safeguards_appeals'
+    ) 'Provider eligibility sources'
+    Assert-ExactJsonProperties $Evidence.claude @(
+        'employee_location_eligibility_verified',
+        'organization_eligibility_verified',
+        'individual_accounts_only',
+        'transport_not_used_for_region_or_ban_bypass',
+        'unattended_consumer_automation'
+    ) 'Provider eligibility Claude controls'
+
+    if (($Evidence.schema_version -isnot [int] -and
+        $Evidence.schema_version -isnot [long]) -or
+        [long]$Evidence.schema_version -ne 1) {
+        throw 'Provider eligibility evidence schema is unsupported'
+    }
+    $ExpectedSources = [ordered]@{
+        supported_regions = 'https://www.anthropic.com/supported-countries'
+        usage_policy = 'https://www.anthropic.com/legal/aup'
+        consumer_terms = 'https://www.anthropic.com/legal/consumer-terms'
+        safeguards_appeals = (
+            'https://support.claude.com/en/articles/' +
+            '8241253-safeguards-warnings-and-appeals'
+        )
+    }
+    foreach ($Name in $ExpectedSources.Keys) {
+        if ([string]$Evidence.sources.$Name -cne $ExpectedSources[$Name]) {
+            throw "Provider eligibility source is not canonical: $Name"
+        }
+    }
+
+    Assert-JsonBoolean `
+        $Evidence.claude.employee_location_eligibility_verified `
+        $true 'employee location eligibility'
+    Assert-JsonBoolean `
+        $Evidence.claude.organization_eligibility_verified `
+        $true 'organization eligibility'
+    Assert-JsonBoolean `
+        $Evidence.claude.individual_accounts_only `
+        $true 'individual accounts'
+    Assert-JsonBoolean `
+        $Evidence.claude.transport_not_used_for_region_or_ban_bypass `
+        $true 'transport is not a region or ban bypass'
+    Assert-JsonBoolean `
+        $Evidence.claude.unattended_consumer_automation `
+        $false 'unattended consumer automation'
+
+    $CanonicalTimestamp = (
+        '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z'
+    )
+    $ReviewedMatches = [regex]::Matches(
+        $RawEvidence,
+        '"reviewed_at_utc"\s*:\s*"(?<value>' +
+            $CanonicalTimestamp + ')"'
+    )
+    $ExpiresMatches = [regex]::Matches(
+        $RawEvidence,
+        '"expires_at_utc"\s*:\s*"(?<value>' +
+            $CanonicalTimestamp + ')"'
+    )
+    if ($ReviewedMatches.Count -ne 1 -or
+        $ExpiresMatches.Count -ne 1) {
+        throw 'Provider eligibility timestamps are not canonical UTC'
+    }
+    try {
+        $ReviewedAt = Convert-ProviderTimestamp (
+            $ReviewedMatches[0].Groups['value'].Value
+        )
+        $ExpiresAt = Convert-ProviderTimestamp (
+            $ExpiresMatches[0].Groups['value'].Value
+        )
+    } catch {
+        throw 'Provider eligibility evidence timestamps are invalid'
+    }
+    $Now = [DateTimeOffset]::UtcNow
+    if ($ReviewedAt -gt $Now.AddMinutes(5)) {
+        throw 'Provider eligibility evidence review time is in the future'
+    }
+    if ($ExpiresAt -le $Now) {
+        throw 'Provider eligibility evidence is expired'
+    }
+    if ($ExpiresAt -le $ReviewedAt -or
+        ($ExpiresAt - $ReviewedAt) -gt [TimeSpan]::FromDays(7)) {
+        throw 'Provider eligibility evidence validity window is invalid'
+    }
+
+    return [ordered]@{
+        status = 'PASS'
+        path = $FullPath
+        sha256 = Get-Sha256 $FullPath
+        bytes = [long]$Item.Length
+        reviewed_at_utc = $ReviewedAt.ToString(
+            'yyyy-MM-ddTHH:mm:ssZ',
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+        expires_at_utc = $ExpiresAt.ToString(
+            'yyyy-MM-ddTHH:mm:ssZ',
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+        contains_personal_data = $false
     }
 }
 
@@ -308,6 +498,34 @@ $References = @(
     (Get-AssemblyPath $AssemblyRoots 'System.Xaml.dll')
 )
 
+$AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
+$ProviderEligibility = Read-ProviderEligibilityEvidence `
+    $ProviderEligibilityEvidence
+$AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
+if ($EmployeeRelease) {
+    if (($AcceptedTargets -join ',') -cne 'claude,codex,opencode') {
+        throw (
+            'Employee release requires accepted Codex, Claude, and ' +
+            'OpenCode packages'
+        )
+    }
+    if ($null -eq $ProviderEligibility) {
+        throw (
+            'Employee release requires current provider eligibility evidence'
+        )
+    }
+    if ([string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+        throw 'Employee release requires a code-signing certificate'
+    }
+}
+elseif ($AcceptedTargets -ccontains 'claude' -and
+    $null -eq $ProviderEligibility) {
+    throw (
+        'Accepted Claude package requires current provider eligibility ' +
+        'evidence'
+    )
+}
+
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $EngineRoot = Join-Path $OutputRoot 'engine'
 & (Join-Path $RepositoryRoot 'tools\build-engine.ps1') -OutputRoot $EngineRoot
@@ -315,21 +533,25 @@ if (-not $?) {
     throw 'Foundation engine build failed'
 }
 
-$AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
-if ($EmployeeRelease) {
-    $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
-    if (($AcceptedTargets -join ',') -cne 'claude,codex,opencode') {
-        throw (
-            'Employee release requires accepted Codex, Claude, and ' +
-            'OpenCode packages'
-        )
-    }
-    if ([string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
-        throw 'Employee release requires a code-signing certificate'
+$TrustedProviderEligibility = [ordered]@{
+    status = 'NOT_PROVIDED'
+}
+if ($null -ne $ProviderEligibility) {
+    $TrustedProviderEligibility = [ordered]@{
+        status = 'PASS'
+        reviewed_at_utc = [string]$ProviderEligibility.reviewed_at_utc
+        expires_at_utc = [string]$ProviderEligibility.expires_at_utc
+        evidence = [ordered]@{
+            relative_path = 'provider-eligibility-evidence.json'
+            resource_name = 'ProviderEligibilityEvidence.json'
+            sha256 = [string]$ProviderEligibility.sha256
+            bytes = [long]$ProviderEligibility.bytes
+        }
     }
 }
 $TrustedIndex = [ordered]@{
     schema_version = 1
+    provider_eligibility = $TrustedProviderEligibility
     packages = @(
         $AcceptedPackages | ForEach-Object {
             [ordered]@{
@@ -391,6 +613,12 @@ $CompilerArguments += @(
         }
     }
 )
+if ($null -ne $ProviderEligibility) {
+    $CompilerArguments += (
+        "/resource:$($ProviderEligibility.path)," +
+        'ProviderEligibilityEvidence.json'
+    )
+}
 $CompilerArguments += $References | ForEach-Object { "/reference:$_" }
 $CompilerArguments += @($Source, $ConnectionSource)
 
@@ -448,6 +676,21 @@ foreach ($Package in $AcceptedPackages) {
         ) -Destination (Join-Path $Destination $Name)
     }
 }
+$ProviderEligibilityManifest = [ordered]@{
+    status = 'NOT_PROVIDED'
+}
+if ($null -ne $ProviderEligibility) {
+    Copy-Item -LiteralPath $ProviderEligibility.path -Destination (
+        Join-Path $OutputRoot 'provider-eligibility-evidence.json'
+    )
+    $ProviderEligibilityManifest = [ordered]@{
+        status = [string]$ProviderEligibility.status
+        sha256 = [string]$ProviderEligibility.sha256
+        reviewed_at_utc = [string]$ProviderEligibility.reviewed_at_utc
+        expires_at_utc = [string]$ProviderEligibility.expires_at_utc
+        contains_personal_data = $false
+    }
+}
 
 [IO.File]::WriteAllText(
     (Join-Path $OutputRoot 'VERSION'),
@@ -470,8 +713,11 @@ $Manifest = [ordered]@{
     employee_release = [bool]$EmployeeRelease
     employee_distribution_allowed = (
         [bool]$EmployeeRelease -and
-        $SignatureState -ceq 'valid-authenticode'
+        $SignatureState -ceq 'valid-authenticode' -and
+        $null -ne $ProviderEligibility -and
+        [string]$ProviderEligibility.status -ceq 'PASS'
     )
+    provider_eligibility = $ProviderEligibilityManifest
     targets = @('codex', 'claude', 'opencode')
     artifacts = [ordered]@{
         'LLMFoundationInstaller.exe' = [ordered]@{
@@ -499,6 +745,14 @@ foreach ($Package in $AcceptedPackages) {
             bytes = [long]$Record.bytes
         }
     }
+}
+if ($null -ne $ProviderEligibility) {
+    $Manifest.artifacts['provider-eligibility-evidence.json'] = (
+        [ordered]@{
+            sha256 = [string]$ProviderEligibility.sha256
+            bytes = [long]$ProviderEligibility.bytes
+        }
+    )
 }
 $ManifestJson = (ConvertTo-Json $Manifest -Depth 8) + "`n"
 [IO.File]::WriteAllText(
