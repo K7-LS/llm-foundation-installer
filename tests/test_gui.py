@@ -2140,8 +2140,27 @@ def test_managed_desktop_install_is_atomic_registered_and_idempotent(
             client_sources_lock=source_lock,
             allow_local_test_sources=True,
         )
-        home = tmp_path / "employee-home"
+        home_component_length = max(
+            len("employee-home"),
+            174 - len(str(tmp_path)) - 1,
+        )
+        home = tmp_path / "employee-home".ljust(
+            home_component_length,
+            "x",
+        )
         home.mkdir()
+        representative_temporary = (
+            home
+            / ".llm-foundation"
+            / "apps"
+            / "fixture-client"
+            / "1.0.0"
+            / (
+                "fixture-desktop.exe.install-"
+                + ("0" * 32)
+            )
+        )
+        assert len(str(representative_temporary)) >= 260
         command = [
             str(bundle / "LLMFoundationInstaller.exe"),
             "--install-client-json",

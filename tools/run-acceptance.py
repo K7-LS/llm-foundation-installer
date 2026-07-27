@@ -123,12 +123,17 @@ def _portable_command(command: list[str], root: Path) -> list[str]:
     return portable
 
 
-def _run(command: list[str], cwd: Path) -> dict[str, object]:
+def _run(
+    command: list[str],
+    cwd: Path,
+    environment: dict[str, str] | None = None,
+) -> dict[str, object]:
     result = subprocess.run(
         command,
         cwd=cwd,
         check=False,
         capture_output=True,
+        env=environment,
     )
     return {
         "command": _portable_command(command, cwd),
@@ -136,6 +141,13 @@ def _run(command: list[str], cwd: Path) -> dict[str, object]:
         "stdout": result.stdout.decode("utf-8", errors="replace"),
         "stderr": result.stderr.decode("utf-8", errors="replace"),
     }
+
+
+def _pytest_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return environment
 
 
 def _remove_tree(path: Path) -> None:
@@ -254,7 +266,11 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     junit = work / "pytest.xml"
-    tests = _run(_pytest_command(work), root)
+    tests = _run(
+        _pytest_command(work),
+        root,
+        environment=_pytest_environment(),
+    )
     counts = _junit_counts(junit) if junit.is_file() else {}
     deterministic = (
         bool(builds.get("ps7", {}).get("files"))

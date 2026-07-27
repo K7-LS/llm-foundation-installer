@@ -2564,6 +2564,14 @@ namespace LlmFoundationInstaller
         [STAThread]
         private static int Main(string[] args)
         {
+            AppContext.SetSwitch(
+                "Switch.System.IO.UseLegacyPathHandling",
+                false
+            );
+            AppContext.SetSwitch(
+                "Switch.System.IO.BlockLongPaths",
+                false
+            );
             try
             {
                 string bundleRoot = AppDomain.CurrentDomain.BaseDirectory;

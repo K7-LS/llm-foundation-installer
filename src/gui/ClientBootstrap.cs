@@ -1104,28 +1104,43 @@ namespace LlmFoundationInstaller
             }
             string destination = Path.Combine(versionRoot, fileName);
             string recordPath = Path.Combine(appRoot, "current.json");
-            byte[] priorDestination = File.Exists(destination)
-                ? File.ReadAllBytes(destination)
+            string destinationIo = ToExtendedLengthPath(destination);
+            string recordIo = ToExtendedLengthPath(recordPath);
+            byte[] priorDestination = File.Exists(destinationIo)
+                ? File.ReadAllBytes(destinationIo)
                 : null;
-            byte[] priorRecord = File.Exists(recordPath)
-                ? File.ReadAllBytes(recordPath)
+            byte[] priorRecord = File.Exists(recordIo)
+                ? File.ReadAllBytes(recordIo)
                 : null;
             string temporary = destination + ".install-" +
                 Guid.NewGuid().ToString("N");
             string recordTemporary = recordPath + ".install-" +
                 Guid.NewGuid().ToString("N");
+            string temporaryIo = ToExtendedLengthPath(temporary);
+            string recordTemporaryIo = ToExtendedLengthPath(
+                recordTemporary
+            );
             try
             {
-                File.Copy(stagedPath, temporary, false);
-                if (File.Exists(destination))
+                File.Copy(
+                    ToExtendedLengthPath(stagedPath),
+                    temporaryIo,
+                    false
+                );
+                if (File.Exists(destinationIo))
                 {
-                    File.Replace(temporary, destination, null, true);
+                    File.Replace(
+                        temporaryIo,
+                        destinationIo,
+                        null,
+                        true
+                    );
                 }
                 else
                 {
-                    File.Move(temporary, destination);
+                    File.Move(temporaryIo, destinationIo);
                 }
-                string actualHash = BundleIntegrity.Sha256(destination);
+                string actualHash = BundleIntegrity.Sha256(destinationIo);
                 if (!String.Equals(
                         actualHash,
                         source.sha256,
@@ -1146,17 +1161,22 @@ namespace LlmFoundationInstaller
                 string json = new JavaScriptSerializer()
                     .Serialize(record);
                 File.WriteAllText(
-                    recordTemporary,
+                    recordTemporaryIo,
                     json,
                     new UTF8Encoding(false)
                 );
-                if (File.Exists(recordPath))
+                if (File.Exists(recordIo))
                 {
-                    File.Replace(recordTemporary, recordPath, null, true);
+                    File.Replace(
+                        recordTemporaryIo,
+                        recordIo,
+                        null,
+                        true
+                    );
                 }
                 else
                 {
-                    File.Move(recordTemporary, recordPath);
+                    File.Move(recordTemporaryIo, recordIo);
                 }
                 CreateManagedDesktopShortcut(
                     home,
@@ -1166,13 +1186,13 @@ namespace LlmFoundationInstaller
             }
             catch
             {
-                if (File.Exists(temporary))
+                if (File.Exists(temporaryIo))
                 {
-                    File.Delete(temporary);
+                    File.Delete(temporaryIo);
                 }
-                if (File.Exists(recordTemporary))
+                if (File.Exists(recordTemporaryIo))
                 {
-                    File.Delete(recordTemporary);
+                    File.Delete(recordTemporaryIo);
                 }
                 RestoreManagedFile(destination, priorDestination);
                 RestoreManagedFile(recordPath, priorRecord);
@@ -1196,7 +1216,8 @@ namespace LlmFoundationInstaller
         {
             string root = ManagedDesktopRoot(home, source);
             string recordPath = Path.Combine(root, "current.json");
-            if (!File.Exists(recordPath))
+            string recordIo = ToExtendedLengthPath(recordPath);
+            if (!File.Exists(recordIo))
             {
                 return null;
             }
@@ -1206,7 +1227,7 @@ namespace LlmFoundationInstaller
                 record = new JavaScriptSerializer()
                     .Deserialize<ManagedDesktopRecord>(
                         File.ReadAllText(
-                            recordPath,
+                            recordIo,
                             new UTF8Encoding(false, true)
                         )
                     );
@@ -1254,9 +1275,11 @@ namespace LlmFoundationInstaller
             if (!executable.StartsWith(
                     rootPrefix,
                     StringComparison.OrdinalIgnoreCase) ||
-                !File.Exists(executable) ||
+                !File.Exists(ToExtendedLengthPath(executable)) ||
                 !String.Equals(
-                    BundleIntegrity.Sha256(executable),
+                    BundleIntegrity.Sha256(
+                        ToExtendedLengthPath(executable)
+                    ),
                     record.sha256,
                     StringComparison.OrdinalIgnoreCase))
             {
@@ -1299,6 +1322,21 @@ namespace LlmFoundationInstaller
                 shortcutRoot,
                 source.id + ".lnk"
             );
+            string shortcutIo = ToExtendedLengthPath(shortcut);
+            string adjacentTemporary = shortcut + ".install-" +
+                Guid.NewGuid().ToString("N");
+            string adjacentTemporaryIo = ToExtendedLengthPath(
+                adjacentTemporary
+            );
+            string shellTemporary = Path.Combine(
+                Path.GetTempPath(),
+                "llm-foundation-shortcut-" +
+                Guid.NewGuid().ToString("N") +
+                ".lnk"
+            );
+            byte[] priorShortcut = File.Exists(shortcutIo)
+                ? File.ReadAllBytes(shortcutIo)
+                : null;
             const string command =
                 "$ErrorActionPreference='Stop';" +
                 "$shell=New-Object -ComObject WScript.Shell;" +
@@ -1323,27 +1361,71 @@ namespace LlmFoundationInstaller
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
-            start.EnvironmentVariables["LLM_SHORTCUT_PATH"] = shortcut;
+            start.EnvironmentVariables["LLM_SHORTCUT_PATH"] =
+                shellTemporary;
             start.EnvironmentVariables["LLM_SHORTCUT_TARGET"] = executable;
             start.EnvironmentVariables["LLM_SHORTCUT_DESCRIPTION"] =
                 source.display_name ?? source.id;
-            using (Process process = Process.Start(start))
+            try
             {
-                if (process == null)
+                using (Process process = Process.Start(start))
+                {
+                    if (process == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Managed desktop shortcut could not be created"
+                        );
+                    }
+                    process.StandardOutput.ReadToEnd();
+                    process.StandardError.ReadToEnd();
+                    if (!process.WaitForExit(30000) ||
+                        process.ExitCode != 0 ||
+                        !File.Exists(shellTemporary))
+                    {
+                        throw new InvalidOperationException(
+                            "Managed desktop shortcut could not be created"
+                        );
+                    }
+                }
+                File.Copy(
+                    ToExtendedLengthPath(shellTemporary),
+                    adjacentTemporaryIo,
+                    false
+                );
+                if (File.Exists(shortcutIo))
+                {
+                    File.Replace(
+                        adjacentTemporaryIo,
+                        shortcutIo,
+                        null,
+                        true
+                    );
+                }
+                else
+                {
+                    File.Move(adjacentTemporaryIo, shortcutIo);
+                }
+                if (!File.Exists(shortcutIo))
                 {
                     throw new InvalidOperationException(
                         "Managed desktop shortcut could not be created"
                     );
                 }
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(30000) ||
-                    process.ExitCode != 0 ||
-                    !File.Exists(shortcut))
+            }
+            catch
+            {
+                if (File.Exists(adjacentTemporaryIo))
                 {
-                    throw new InvalidOperationException(
-                        "Managed desktop shortcut could not be created"
-                    );
+                    File.Delete(adjacentTemporaryIo);
+                }
+                RestoreManagedFile(shortcut, priorShortcut);
+                throw;
+            }
+            finally
+            {
+                if (File.Exists(shellTemporary))
+                {
+                    File.Delete(shellTemporary);
                 }
             }
         }
@@ -1753,9 +1835,11 @@ namespace LlmFoundationInstaller
                 );
             }
             AssertNoReparseAncestors(full);
-            Directory.CreateDirectory(full);
+            Directory.CreateDirectory(ToExtendedLengthPath(full));
             AssertNoReparseAncestors(full);
-            FileAttributes attributes = File.GetAttributes(full);
+            FileAttributes attributes = File.GetAttributes(
+                ToExtendedLengthPath(full)
+            );
             if ((attributes & FileAttributes.ReparsePoint) != 0)
             {
                 throw new InvalidOperationException(
@@ -1769,9 +1853,13 @@ namespace LlmFoundationInstaller
             string current = Path.GetFullPath(path);
             while (!String.IsNullOrWhiteSpace(current))
             {
-                if (Directory.Exists(current) || File.Exists(current))
+                string currentIo = ToExtendedLengthPath(current);
+                if (Directory.Exists(currentIo) ||
+                    File.Exists(currentIo))
                 {
-                    FileAttributes attributes = File.GetAttributes(current);
+                    FileAttributes attributes = File.GetAttributes(
+                        currentIo
+                    );
                     if ((attributes & FileAttributes.ReparsePoint) != 0)
                     {
                         throw new InvalidOperationException(
@@ -2185,24 +2273,25 @@ namespace LlmFoundationInstaller
             byte[] prior
         )
         {
+            string pathIo = ToExtendedLengthPath(path);
             if (prior == null)
             {
-                if (File.Exists(path))
+                if (File.Exists(pathIo))
                 {
-                    File.Delete(path);
+                    File.Delete(pathIo);
                 }
                 return;
             }
-            string temporary = path + ".restore-" +
+            string temporary = pathIo + ".restore-" +
                 Guid.NewGuid().ToString("N");
             File.WriteAllBytes(temporary, prior);
-            if (File.Exists(path))
+            if (File.Exists(pathIo))
             {
-                File.Replace(temporary, path, null, true);
+                File.Replace(temporary, pathIo, null, true);
             }
             else
             {
-                File.Move(temporary, path);
+                File.Move(temporary, pathIo);
             }
         }
 

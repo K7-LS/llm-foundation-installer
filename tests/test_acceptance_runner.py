@@ -59,6 +59,15 @@ def test_run_preserves_non_utf8_child_output_without_crashing(tmp_path):
     assert result["stderr"] == ""
 
 
+def test_pytest_environment_forces_utf8_without_mutating_parent():
+    runner = _load_runner()
+    environment = runner._pytest_environment()
+
+    assert environment["PYTHONUTF8"] == "1"
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment is not runner.os.environ
+
+
 def test_remove_tree_clears_read_only_files(tmp_path):
     work = tmp_path / "acceptance"
     work.mkdir()
