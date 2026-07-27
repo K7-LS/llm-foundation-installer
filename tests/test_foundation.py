@@ -182,6 +182,10 @@ def _run(
         arguments.extend(["-ClientVersion", client])
     environment = os.environ.copy()
     environment["FOUNDATION_ACCEPTANCE_MODE"] = "1"
+    acceptance_temp = home.parent / "_foundation-temp"
+    acceptance_temp.mkdir(parents=True, exist_ok=True)
+    environment["TEMP"] = str(acceptance_temp)
+    environment["TMP"] = str(acceptance_temp)
     if extra_env:
         environment.update(extra_env)
     return subprocess.run(
@@ -573,6 +577,30 @@ def test_injected_interruption_rolls_back_and_hard_crash_is_recoverable(
     )
     assert rollback.returncode == 0, rollback.stderr
     assert (home / ".codex" / "AGENTS.md").read_text() == "# previous\n"
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_acceptance_crash_staging_is_scoped_to_pytest_home(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"scoped-crash-{Path(executable).stem}"
+    home.mkdir()
+    package = _package(
+        tmp_path / f"scoped-crash-{Path(executable).stem}.zip"
+    )
+
+    crashed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        extra_env={"FOUNDATION_CRASH_AFTER": "1"},
+    )
+
+    assert crashed.returncode == 99
+    scoped_temp = tmp_path / "_foundation-temp"
+    assert list(scoped_temp.glob("foundation-*"))
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
