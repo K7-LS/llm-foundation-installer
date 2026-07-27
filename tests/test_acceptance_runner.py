@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -56,6 +57,18 @@ def test_run_preserves_non_utf8_child_output_without_crashing(tmp_path):
     assert result["returncode"] == 0
     assert result["stdout"] == "\ufffd"
     assert result["stderr"] == ""
+
+
+def test_remove_tree_clears_read_only_files(tmp_path):
+    work = tmp_path / "acceptance"
+    work.mkdir()
+    locked = work / "git-object"
+    locked.write_bytes(b"fixture")
+    locked.chmod(stat.S_IREAD)
+
+    _load_runner()._remove_tree(work)
+
+    assert not work.exists()
 
 
 def test_source_hashes_bind_gui_version_and_client_source_lock(tmp_path):

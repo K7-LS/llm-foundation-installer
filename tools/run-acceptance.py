@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -136,6 +138,18 @@ def _run(command: list[str], cwd: Path) -> dict[str, object]:
     }
 
 
+def _remove_tree(path: Path) -> None:
+    def clear_read_only(function, child, _error) -> None:
+        os.chmod(child, stat.S_IWRITE)
+        function(child)
+
+    if path.exists():
+        try:
+            shutil.rmtree(path, onexc=clear_read_only)
+        except TypeError:
+            shutil.rmtree(path, onerror=clear_read_only)
+
+
 def _junit_counts(path: Path) -> dict[str, object]:
     root = ET.parse(path).getroot()
     suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
@@ -188,8 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     source = _git_identity(root)
     source["hashes"] = _source_hashes(root)
     work = root / ".work" / "acceptance"
-    if work.exists():
-        shutil.rmtree(work)
+    _remove_tree(work)
     work.mkdir(parents=True)
     powershells = {
         "ps7": shutil.which("pwsh"),
