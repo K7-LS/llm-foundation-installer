@@ -147,6 +147,17 @@ def _junit_counts(path: Path) -> dict[str, object]:
     return totals
 
 
+def _pytest_command(work: Path) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        f"--junitxml={work / 'pytest.xml'}",
+        f"--basetemp={work / 'pytest-home'}",
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -213,16 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     junit = work / "pytest.xml"
-    tests = _run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            f"--junitxml={junit}",
-        ],
-        root,
-    )
+    tests = _run(_pytest_command(work), root)
     counts = _junit_counts(junit) if junit.is_file() else {}
     deterministic = (
         bool(builds.get("ps7", {}).get("files"))

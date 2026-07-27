@@ -32,3 +32,10 @@ def test_junit_counts_separate_ps7_ps51_and_shared(tmp_path):
     assert counts["ps7_cases"] == 1
     assert counts["ps51_cases"] == 1
     assert counts["shared_cases"] == 1
+
+
+def test_pytest_command_keeps_fake_homes_inside_acceptance_work(tmp_path):
+    command = _load_runner()._pytest_command(tmp_path)
+
+    assert command[-1] == f"--basetemp={tmp_path / 'pytest-home'}"
+    assert f"--junitxml={tmp_path / 'pytest.xml'}" in command
