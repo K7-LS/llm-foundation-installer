@@ -1,46 +1,88 @@
 # LLM Foundation Installer
 
-Offline, current-user, target-neutral installer engine for independently
-versioned LLM-base packages.
+Professional Windows installer and offline, current-user Foundation engine for
+three independently versioned native bases:
 
-The engine implements five commands:
+- Codex;
+- Claude Code;
+- OpenCode.
 
-```text
-plan
-install
-doctor
-inventory
-rollback
-```
+The WPF application is DPI-aware, uses a branded multi-resolution executable
+icon, detects installed clients, presents the exact plan before mutation,
+shows live progress, and runs `doctor` after every install. A failed `doctor`
+triggers automatic rollback. The application does not require administrator
+rights.
 
-It does not contain target names, provider rules, model defaults, network
-clients, release discovery, authentication, telemetry, feedback upload, or
-session upload. A target package declares:
+## Installation lifecycle
 
-- its exact client identity and accepted version;
-- replace-only files and exact discovery directories;
-- preserved paths that must never overlap the managed surface;
-- a strictly one-way sync policy;
-- every payload file, byte length, and SHA-256.
+1. Validate every embedded target package against release acceptance evidence.
+2. Detect the exact installed client version.
+3. Let the user select one or more ready targets.
+4. Build and display a deterministic Foundation plan.
+5. Create a complete backup of the managed surface.
+6. Apply the target atomically.
+7. Run `doctor`; rollback automatically if it fails.
+8. Write a local report under `~/.llm-foundation/reports/`.
 
-The target-native wrapper obtains trustworthy client-version evidence and
-passes `-ClientId` and `-ClientVersion` to the engine. The engine rejects a
-mismatch, downgrade, corrupt ZIP, extra file, path traversal, protected-path
-overlap, incompatible engine, incomplete managed surface, or reparse point
-before target-home mutation. Destructive operations use an OS-exclusive
-per-target lock. Rollback preflights a hash-bound snapshot and every backup
-object, stages the restore, and keeps a recovery journal until completion.
+The engine implements `plan`, `install`, `doctor`, `inventory`, and `rollback`.
+It rejects a client mismatch, downgrade, corrupt ZIP, extra file, path
+traversal, protected-path overlap, incompatible engine, incomplete managed
+surface, unsafe reparse point, or concurrent mutation before changing the
+target home.
+
+## Connection modes
+
+Connection setup is shared by the GUI, release check, and `$sync-base`:
+
+- **Direct** — clears inherited proxy variables.
+- **VPN** — also requires no proxy; absence of a proxy is not a blocker.
+- **Proxy** — HTTP, HTTPS, or SOCKS5 with either no authentication or
+  username/password authentication.
+
+Proxy credentials are encrypted with Windows DPAPI for the current user and
+are never stored in the JSON profile or written to logs. A network probe runs
+only when the user explicitly clicks the test button. Package installation
+itself is offline.
+
+See [the employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md) for the
+complete workflow, preserved data, connection troubleshooting, and release
+gates.
+
+## Trust and distribution
+
+A target package declares its exact client identity and accepted version,
+managed and preserved paths, one-way sync policy, and every payload SHA-256.
+An employee build additionally requires:
+
+- accepted packages for all three targets;
+- immutable stable release evidence and asset attestations;
+- a current-user Authenticode code-signing certificate;
+- a successful timestamped signature.
+
+An `unsigned-preview` manifest is intentionally marked
+`employee_distribution_allowed: false`. It is for local visual and synthetic
+acceptance only.
 
 ## Development
 
 ```powershell
 py -3.12 -m pytest -q
 py -3.12 .\tools\run-acceptance.py
-pwsh -NoProfile -File .\tools\build-engine.ps1 -OutputRoot .\dist\engine
+
+pwsh -NoProfile -File .\tools\build-gui.ps1 `
+  -OutputRoot .\dist\gui-preview
 ```
 
-Acceptance refuses a dirty Git worktree and writes commit/tree-bound evidence
-to `dist/foundation-acceptance.json`.
+An employee build is fail-closed:
 
-`FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a Codex canary,
+```powershell
+pwsh -NoProfile -File .\tools\build-gui.ps1 `
+  -OutputRoot .\dist\employee `
+  -PackageRoot <accepted-packages-root> `
+  -EmployeeRelease `
+  -SigningCertificateThumbprint <code-signing-thumbprint>
+```
+
+Acceptance refuses a dirty Git worktree and writes commit/tree-bound evidence.
+`FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a client canary,
 employee rollout, or full-program release.

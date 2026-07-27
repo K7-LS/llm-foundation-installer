@@ -27,7 +27,7 @@ def _package(
     path: Path,
     *,
     version: str = "1.0.0",
-    foundation_engine_version: str = "0.1.0",
+    foundation_engine_version: str = "0.2.0",
     wrong_hash: bool = False,
     traversal: bool = False,
     protected: bool = False,
@@ -36,6 +36,7 @@ def _package(
     empty_exact_directory: bool = False,
     nested_managed_root: bool = False,
     casefold_preserved: bool = False,
+    environment_set: list[dict[str, str]] | None = None,
 ) -> Path:
     entries = {
         ".codex/AGENTS.md": b"# candidate\n",
@@ -48,7 +49,7 @@ def _package(
         ".codex/base/components.lock.json": b'{"components":{}}\n',
         ".codex/base/cold/reference.md": b"# cold\n",
         ".codex/base/runtime/hooks/check.ps1": b"exit 0\n",
-        ".codex/base/foundation/0.1.0/VERSION": b"0.1.0\n",
+        ".codex/base/foundation/0.2.0/VERSION": b"0.2.0\n",
     }
     replace_files = [
         ".codex/AGENTS.md",
@@ -123,6 +124,10 @@ def _package(
             "consumer_push": reverse_policy,
             "consumer_session_upload": False,
             "credentials_included": False,
+        },
+        "environment": {
+            "scope": "current-user",
+            "set": environment_set or [],
         },
         "files": rows,
     }
@@ -214,6 +219,48 @@ def _seed_home(home: Path) -> dict[Path, bytes]:
     return sentinels
 
 
+def _write_acceptance_environment(
+    home: Path,
+    values: dict[str, str],
+) -> Path:
+    path = (
+        home
+        / ".llm-foundation"
+        / "acceptance-user-environment.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "values": [
+                    {"name": name, "value": value}
+                    for name, value in sorted(values.items())
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _read_acceptance_environment(home: Path) -> dict[str, str]:
+    path = (
+        home
+        / ".llm-foundation"
+        / "acceptance-user-environment.json"
+    )
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        row["name"]: row["value"]
+        for row in payload["values"]
+    }
+
+
 @pytest.mark.parametrize("executable", POWERSHELLS)
 def test_plan_install_doctor_inventory_and_rollback_preserve_user_data(
     engine_root, tmp_path, executable
@@ -271,6 +318,154 @@ def test_plan_install_doctor_inventory_and_rollback_preserve_user_data(
     assert not (home / ".agents" / "skills" / "alpha").exists()
     for path, payload in sentinels.items():
         assert path.read_bytes() == payload
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_current_user_environment_is_planned_checked_and_rolled_back(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"environment-{Path(executable).stem}"
+    home.mkdir()
+    _write_acceptance_environment(
+        home,
+        {"OPENCODE_DISABLE_CLAUDE_CODE": "previous"},
+    )
+    package = _package(
+        tmp_path / f"environment-{Path(executable).stem}.zip",
+        environment_set=[
+            {
+                "name": "OPENCODE_DISABLE_CLAUDE_CODE",
+                "value": "1",
+            }
+        ],
+    )
+
+    plan = _run(
+        executable,
+        engine_root,
+        "plan",
+        home,
+        package=package,
+    )
+    assert plan.returncode == 0, plan.stderr
+    assert _json(plan)["environment_actions"] == [
+        {
+            "name": "OPENCODE_DISABLE_CLAUDE_CODE",
+            "action": "UPDATE",
+            "value": "1",
+        }
+    ]
+
+    install = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+    )
+    assert install.returncode == 0, install.stderr
+    assert _read_acceptance_environment(home) == {
+        "OPENCODE_DISABLE_CLAUDE_CODE": "1"
+    }
+
+    doctor = _run(
+        executable,
+        engine_root,
+        "doctor",
+        home,
+        target="codex",
+    )
+    assert doctor.returncode == 0, doctor.stderr
+
+    _write_acceptance_environment(
+        home,
+        {"OPENCODE_DISABLE_CLAUDE_CODE": "drift"},
+    )
+    drift = _run(
+        executable,
+        engine_root,
+        "doctor",
+        home,
+        target="codex",
+    )
+    assert drift.returncode == 30
+    assert _json(drift)["code"] == "ACTIVE_DRIFT"
+
+    _write_acceptance_environment(
+        home,
+        {"OPENCODE_DISABLE_CLAUDE_CODE": "1"},
+    )
+    rollback = _run(
+        executable,
+        engine_root,
+        "rollback",
+        home,
+        target="codex",
+    )
+    assert rollback.returncode == 0, rollback.stderr
+    assert _read_acceptance_environment(home) == {
+        "OPENCODE_DISABLE_CLAUDE_CODE": "previous"
+    }
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_environment_allowlist_fails_closed_before_mutation(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"environment-reject-{Path(executable).stem}"
+    home.mkdir()
+    package = _package(
+        tmp_path / f"environment-reject-{Path(executable).stem}.zip",
+        environment_set=[{"name": "PATH", "value": "untrusted"}],
+    )
+
+    result = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+    )
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INVALID_PACKAGE"
+    assert not (home / ".codex" / "AGENTS.md").exists()
+    assert _read_acceptance_environment(home) == {}
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_environment_change_is_restored_after_install_failure(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"environment-failure-{Path(executable).stem}"
+    home.mkdir()
+    _write_acceptance_environment(
+        home,
+        {"OPENCODE_DISABLE_CLAUDE_CODE": "previous"},
+    )
+    package = _package(
+        tmp_path / f"environment-failure-{Path(executable).stem}.zip",
+        environment_set=[
+            {
+                "name": "OPENCODE_DISABLE_CLAUDE_CODE",
+                "value": "1",
+            }
+        ],
+    )
+
+    result = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        extra_env={"FOUNDATION_FAIL_AFTER": "17"},
+    )
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INSTALL_FAILED"
+    assert _read_acceptance_environment(home) == {
+        "OPENCODE_DISABLE_CLAUDE_CODE": "previous"
+    }
+    assert not (home / ".codex" / "AGENTS.md").exists()
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
@@ -476,7 +671,7 @@ def test_incompatible_engine_and_incomplete_managed_surface_fail_before_mutation
     marker.write_text("unchanged", encoding="utf-8")
     package = _package(
         tmp_path / f"coverage-{variant}-{Path(executable).stem}.zip",
-        foundation_engine_version="9.0.0" if variant == "engine" else "0.1.0",
+        foundation_engine_version="9.0.0" if variant == "engine" else "0.2.0",
         omit_replace_row=variant == "missing_replace",
         empty_exact_directory=variant == "empty_exact",
         nested_managed_root=variant == "nested_root",
@@ -802,7 +997,7 @@ def test_engine_bundle_is_deterministic_across_ps7_and_ps51(
     assert first == second
     assert set(first) == {"VERSION", "engine-manifest.json", "foundation.ps1"}
     manifest = json.loads(first["engine-manifest.json"])
-    assert manifest["engine_version"] == "0.1.0"
+    assert manifest["engine_version"] == "0.2.0"
     assert manifest["commands"] == [
         "doctor",
         "install",

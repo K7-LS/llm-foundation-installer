@@ -14,8 +14,24 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:EngineVersion = '0.1.0'
+$script:EngineVersion = '0.2.0'
 $script:ProtocolVersion = 1
+$script:BlockedUserEnvironment = @(
+    'ALL_PROXY',
+    'APPDATA',
+    'COMSPEC',
+    'HOME',
+    'HTTPS_PROXY',
+    'HTTP_PROXY',
+    'LOCALAPPDATA',
+    'NO_PROXY',
+    'PATH',
+    'PATHEXT',
+    'SYSTEMROOT',
+    'TEMP',
+    'TMP',
+    'USERPROFILE'
+)
 $script:ExitCode = @{
     INVALID_ARGUMENT = 2
     UNSUPPORTED_CLIENT = 10
@@ -417,6 +433,7 @@ function Assert-Manifest {
         'foundation_engine_version',
         'managed_surface',
         'sync_policy',
+        'environment',
         'files'
     ) 'package manifest'
     if ($Manifest.schema_version -ne 1 -or
@@ -518,6 +535,7 @@ function Assert-Manifest {
         [bool]$Manifest.sync_policy.credentials_included) {
         Throw-Foundation 'INVALID_PACKAGE' 'Package is not one-way'
     }
+    Assert-EnvironmentContract $Manifest.environment
 
     $FilePaths = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase
@@ -723,6 +741,243 @@ function Assert-ClientContract {
     }
 }
 
+function Assert-EnvironmentContract {
+    param([Parameter(Mandatory = $true)]$Contract)
+    Assert-ExactProperties $Contract @(
+        'scope',
+        'set'
+    ) 'environment contract'
+    if ([string]$Contract.scope -cne 'current-user') {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Only current-user environment changes are supported'
+        )
+    }
+    $Names = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    $Previous = $null
+    foreach ($Row in @($Contract.set)) {
+        Assert-ExactProperties $Row @('name', 'value') 'environment row'
+        $Name = [string]$Row.name
+        if ($Name -notmatch '^[A-Z][A-Z0-9_]{1,63}$' -or
+            $script:BlockedUserEnvironment -ccontains $Name -or
+            $Name -match '(^|_)(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)(_|$)' -or
+            -not $Names.Add($Name) -or
+            $Row.value -isnot [string] -or
+            ([string]$Row.value).Length -gt 512 -or
+            [string]$Row.value -match '[\x00-\x1f\x7f]' -or
+            ($null -ne $Previous -and
+                [StringComparer]::Ordinal.Compare($Previous, $Name) -ge 0)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Environment contract contains an unsafe or unsorted row'
+            )
+        }
+        $Previous = $Name
+    }
+}
+
+function Get-EnvironmentContractDigest {
+    param([Parameter(Mandatory = $true)]$Contract)
+    Assert-EnvironmentContract $Contract
+    $Builder = New-Object Text.StringBuilder
+    $null = $Builder.Append([string]$Contract.scope).Append("`n")
+    foreach ($Row in @($Contract.set)) {
+        $null = $Builder.Append([string]$Row.name).
+            Append("`0").
+            Append([string]$Row.value).
+            Append("`n")
+    }
+    return Get-BytesSha256 ([Text.Encoding]::UTF8.GetBytes(
+        $Builder.ToString()
+    ))
+}
+
+function Get-AcceptanceEnvironmentPath {
+    param([Parameter(Mandatory = $true)][string]$HomeRoot)
+    return Join-Path (
+        Join-Path $HomeRoot '.llm-foundation'
+    ) 'acceptance-user-environment.json'
+}
+
+function Read-AcceptanceEnvironment {
+    param([Parameter(Mandatory = $true)][string]$HomeRoot)
+    $Path = Get-AcceptanceEnvironmentPath $HomeRoot
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject][ordered]@{
+            schema_version = 1
+            values = @()
+        }
+    }
+    Assert-SafeAncestors $Path $HomeRoot
+    $State = Read-JsonFile $Path
+    Assert-ExactProperties $State @(
+        'schema_version',
+        'values'
+    ) 'acceptance environment state'
+    if ($State.schema_version -ne 1) {
+        Throw-Foundation 'ACTIVE_DRIFT' (
+            'Acceptance environment state schema differs'
+        )
+    }
+    $Names = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    $Previous = $null
+    foreach ($Row in @($State.values)) {
+        Assert-ExactProperties $Row @('name', 'value') (
+            'acceptance environment row'
+        )
+        $Name = [string]$Row.name
+        if ($Name -notmatch '^[A-Z][A-Z0-9_]{1,63}$' -or
+            -not $Names.Add($Name) -or
+            $Row.value -isnot [string] -or
+            ($null -ne $Previous -and
+                [StringComparer]::Ordinal.Compare($Previous, $Name) -ge 0)) {
+            Throw-Foundation 'ACTIVE_DRIFT' (
+                'Acceptance environment state is invalid'
+            )
+        }
+        $Previous = $Name
+    }
+    return $State
+}
+
+function Get-CurrentUserEnvironmentValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    if ($env:FOUNDATION_ACCEPTANCE_MODE -ceq '1') {
+        $State = Read-AcceptanceEnvironment $HomeRoot
+        foreach ($Row in @($State.values)) {
+            if ([string]$Row.name -ceq $Name) {
+                return [pscustomobject][ordered]@{
+                    exists = $true
+                    value = [string]$Row.value
+                }
+            }
+        }
+        return [pscustomobject][ordered]@{
+            exists = $false
+            value = $null
+        }
+    }
+    $Value = [Environment]::GetEnvironmentVariable(
+        $Name,
+        [EnvironmentVariableTarget]::User
+    )
+    return [pscustomobject][ordered]@{
+        exists = $null -ne $Value
+        value = $Value
+    }
+}
+
+function Set-CurrentUserEnvironmentValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()][string]$Value,
+        [Parameter(Mandatory = $true)][bool]$Exists,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    if ($env:FOUNDATION_ACCEPTANCE_MODE -ceq '1') {
+        $State = Read-AcceptanceEnvironment $HomeRoot
+        $Values = @(
+            foreach ($Row in @($State.values)) {
+                if ([string]$Row.name -cne $Name) {
+                    [pscustomobject][ordered]@{
+                        name = [string]$Row.name
+                        value = [string]$Row.value
+                    }
+                }
+            }
+        )
+        if ($Exists) {
+            $Values += [pscustomobject][ordered]@{
+                name = $Name
+                value = [string]$Value
+            }
+        }
+        $Payload = [pscustomobject][ordered]@{
+            schema_version = 1
+            values = @($Values | Sort-Object name)
+        }
+        $Path = Get-AcceptanceEnvironmentPath $HomeRoot
+        New-SafeDirectory (Split-Path -Parent $Path) $HomeRoot
+        Write-JsonFile $Payload $Path
+        return
+    }
+    try {
+        [Environment]::SetEnvironmentVariable(
+            $Name,
+            $(if ($Exists) { [string]$Value } else { $null }),
+            [EnvironmentVariableTarget]::User
+        )
+    } catch {
+        Throw-Foundation 'INSTALL_FAILED' (
+            "Unable to update current-user environment variable: $Name"
+        )
+    }
+}
+
+function Get-EnvironmentActions {
+    param(
+        [Parameter(Mandatory = $true)]$Contract,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    Assert-EnvironmentContract $Contract
+    return @(
+        foreach ($Row in @($Contract.set)) {
+            $Current = Get-CurrentUserEnvironmentValue (
+                [string]$Row.name
+            ) $HomeRoot
+            $Action = if (-not [bool]$Current.exists) {
+                'CREATE'
+            } elseif ([string]$Current.value -ceq [string]$Row.value) {
+                'UNCHANGED'
+            } else {
+                'UPDATE'
+            }
+            [pscustomobject][ordered]@{
+                name = [string]$Row.name
+                action = $Action
+                value = [string]$Row.value
+            }
+        }
+    )
+}
+
+function Apply-EnvironmentContract {
+    param(
+        [Parameter(Mandatory = $true)]$Contract,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    foreach ($Row in @($Contract.set)) {
+        Set-CurrentUserEnvironmentValue (
+            [string]$Row.name
+        ) ([string]$Row.value) $true $HomeRoot
+        Invoke-MutationCheckpoint
+    }
+}
+
+function Test-EnvironmentContract {
+    param(
+        [Parameter(Mandatory = $true)]$Contract,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    Assert-EnvironmentContract $Contract
+    foreach ($Row in @($Contract.set)) {
+        $Current = Get-CurrentUserEnvironmentValue (
+            [string]$Row.name
+        ) $HomeRoot
+        if (-not [bool]$Current.exists -or
+            [string]$Current.value -cne [string]$Row.value) {
+            Throw-Foundation 'ACTIVE_DRIFT' (
+                "Current-user environment differs: $($Row.name)"
+            )
+        }
+    }
+}
+
 function Get-FoundationPaths {
     param(
         [Parameter(Mandatory = $true)][string]$HomeRoot,
@@ -774,6 +1029,7 @@ function Assert-ActiveState {
         'foundation_engine_version',
         'package_sha256',
         'managed_surface',
+        'environment',
         'installed_files',
         'quarantined_unknown',
         'snapshot_path',
@@ -789,6 +1045,7 @@ function Assert-ActiveState {
         [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Active state is invalid'
     }
+    Assert-EnvironmentContract $State.environment
 }
 
 function Assert-PendingState {
@@ -802,7 +1059,8 @@ function Assert-PendingState {
         'snapshot_path',
         'snapshot_sha256',
         'release_version',
-        'managed_surface'
+        'managed_surface',
+        'environment'
     ) 'pending state'
     if ($State.schema_version -ne 1 -or
         [string]$State.target -cne $ExpectedTarget -or
@@ -811,6 +1069,7 @@ function Assert-PendingState {
         [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Pending state is invalid'
     }
+    Assert-EnvironmentContract $State.environment
 }
 
 function Assert-RollbackJournal {
@@ -823,7 +1082,8 @@ function Assert-RollbackJournal {
         'target',
         'snapshot_path',
         'snapshot_sha256',
-        'managed_surface'
+        'managed_surface',
+        'environment'
     ) 'rollback journal'
     if ($State.schema_version -ne 1 -or
         [string]$State.target -cne $ExpectedTarget -or
@@ -832,6 +1092,7 @@ function Assert-RollbackJournal {
         Throw-Foundation 'INVALID_PACKAGE' 'Rollback journal is invalid'
     }
     $null = Get-ManagedSurfaceDigest $State.managed_surface
+    Assert-EnvironmentContract $State.environment
 }
 
 function Enter-TargetLock {
@@ -1100,6 +1361,9 @@ function New-FoundationPlan {
         release_version = [string]$Manifest.version
         client = $Manifest.client
         actions = $Rows
+        environment_actions = @(
+            Get-EnvironmentActions $Manifest.environment $HomeRoot
+        )
         quarantined_unknown = @(
             Get-UnknownEntries $Manifest $HomeRoot
         )
@@ -1374,12 +1638,30 @@ function New-Snapshot {
         }
     }
     $PriorActive = Read-ActiveState $Paths -AllowMissing
+    $EnvironmentBefore = @(
+        foreach ($Row in @($Validated.manifest.environment.set)) {
+            $Current = Get-CurrentUserEnvironmentValue (
+                [string]$Row.name
+            ) $HomeRoot
+            [pscustomobject][ordered]@{
+                name = [string]$Row.name
+                existed = [bool]$Current.exists
+                value = if ([bool]$Current.exists) {
+                    [string]$Current.value
+                } else {
+                    $null
+                }
+            }
+        }
+    )
     $Snapshot = [pscustomobject][ordered]@{
-        schema_version = 2
+        schema_version = 3
         snapshot_id = $SnapshotId
         target = [string]$Validated.manifest.target
         release_version = [string]$Validated.manifest.version
         managed_surface = $Validated.manifest.managed_surface
+        environment = $Validated.manifest.environment
+        environment_before = $EnvironmentBefore
         existed = @($Existed | Sort-Object)
         backup_files = @($BackupFiles | Sort-Object path)
         prior_active = $PriorActive
@@ -1423,18 +1705,22 @@ function Get-ValidatedSnapshot {
         'target',
         'release_version',
         'managed_surface',
+        'environment',
+        'environment_before',
         'existed',
         'backup_files',
         'prior_active',
         'quarantined_unknown'
     ) 'snapshot'
-    if ($Snapshot.schema_version -ne 2 -or
+    if ($Snapshot.schema_version -ne 3 -or
         $Snapshot.snapshot_id -notmatch
             '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$' -or
         [string]$Snapshot.target -cne [string]$Paths.target -or
         $Snapshot.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
         (Get-ManagedSurfaceDigest $Snapshot.managed_surface) -cne
-            (Get-ManagedSurfaceDigest $Expected.managed_surface)) {
+            (Get-ManagedSurfaceDigest $Expected.managed_surface) -or
+        (Get-EnvironmentContractDigest $Snapshot.environment) -cne
+            (Get-EnvironmentContractDigest $Expected.environment)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot metadata is invalid'
     }
     $ExpectedRoot = [IO.Path]::GetFullPath(
@@ -1454,6 +1740,31 @@ function Get-ValidatedSnapshot {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot identity differs'
     }
     Assert-StringArray @($Snapshot.existed) 'snapshot existed paths'
+    $EnvironmentNames = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    foreach ($Row in @($Snapshot.environment_before)) {
+        Assert-ExactProperties $Row @(
+            'name',
+            'existed',
+            'value'
+        ) 'snapshot environment row'
+        $Name = [string]$Row.name
+        if (-not $EnvironmentNames.Add($Name) -or
+            @($Snapshot.environment.set).name -cnotcontains $Name -or
+            $Row.existed -isnot [bool] -or
+            ([bool]$Row.existed -and $Row.value -isnot [string]) -or
+            (-not [bool]$Row.existed -and $null -ne $Row.value)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Snapshot environment row is invalid'
+            )
+        }
+    }
+    if ($EnvironmentNames.Count -ne @($Snapshot.environment.set).Count) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Snapshot environment coverage differs'
+        )
+    }
     $ManagedValues = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase
     )
@@ -1641,6 +1952,7 @@ function Restore-Snapshot {
             snapshot_path = [string]$Prepared.snapshot_path
             snapshot_sha256 = [string]$Prepared.snapshot_sha256
             managed_surface = $Expected.managed_surface
+            environment = $Expected.environment
         }
         Write-JsonFile $Journal $Paths.rollback_journal
         foreach ($Root in @($Snapshot.managed_surface.exact_directories)) {
@@ -1666,6 +1978,12 @@ function Restore-Snapshot {
                 )
                 Copy-Atomic $Source $Destination $HomeRoot
             }
+            Invoke-RollbackCheckpoint
+        }
+        foreach ($Row in @($Snapshot.environment_before)) {
+            Set-CurrentUserEnvironmentValue (
+                [string]$Row.name
+            ) $Row.value ([bool]$Row.existed) $HomeRoot
             Invoke-RollbackCheckpoint
         }
         if ($null -ne $Snapshot.prior_active) {
@@ -1712,6 +2030,7 @@ function Test-InstalledState {
     )
     Assert-ClientContract $State.client $ActualClientId `
         $ActualClientVersion
+    Test-EnvironmentContract $State.environment $HomeRoot
     $ExpectedByRoot = @{}
     foreach ($Root in @($State.managed_surface.exact_directories)) {
         $ExpectedByRoot[[string]$Root] = New-Object (
@@ -1779,6 +2098,7 @@ function Test-InstalledState {
         target = [string]$State.target
         release_version = [string]$State.release_version
         installed_file_count = @($State.installed_files).Count
+        environment_variable_count = @($State.environment.set).Count
     }
 }
 
@@ -1805,6 +2125,7 @@ function Invoke-Install {
             snapshot_sha256 = [string]$Snapshot.metadata_sha256
             release_version = [string]$Validated.manifest.version
             managed_surface = $Validated.manifest.managed_surface
+            environment = $Validated.manifest.environment
         }
         Write-JsonFile $Pending $Paths.pending
         foreach ($Root in @(
@@ -1823,6 +2144,7 @@ function Invoke-Install {
             Copy-Atomic $Source $Destination $HomeRoot
             Invoke-MutationCheckpoint
         }
+        Apply-EnvironmentContract $Validated.manifest.environment $HomeRoot
         $Installed = @(
             foreach ($Row in @($Validated.manifest.files)) {
                 [pscustomobject][ordered]@{
@@ -1840,6 +2162,7 @@ function Invoke-Install {
             foundation_engine_version = [string]$Validated.manifest.foundation_engine_version
             package_sha256 = Get-FileSha256 $Validated.package_path
             managed_surface = $Validated.manifest.managed_surface
+            environment = $Validated.manifest.environment
             installed_files = $Installed
             quarantined_unknown = @($Plan.quarantined_unknown)
             snapshot_path = [string]$Snapshot.metadata_path
@@ -1854,6 +2177,7 @@ function Invoke-Install {
             target = [string]$State.target
             release_version = [string]$State.release_version
             installed_file_count = @($State.installed_files).Count
+            environment_variable_count = @($State.environment.set).Count
             quarantined_unknown = @($State.quarantined_unknown)
         }
     } catch {
@@ -1910,6 +2234,7 @@ function Invoke-Inventory {
         client = $State.client
         installed_file_count = @($State.installed_files).Count
         managed_surface = $State.managed_surface
+        environment = $State.environment
         quarantined_unknown = @($State.quarantined_unknown)
     }
 }
