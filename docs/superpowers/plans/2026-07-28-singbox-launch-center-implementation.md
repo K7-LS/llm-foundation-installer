@@ -484,8 +484,8 @@ git commit -m "test: verify SingBox lifecycle and privacy"
 - Create: `tests/test_launcher_canary.py`
 - Modify: `tools/installer_release.py`
 - Modify: `tests/test_installer_release.py`
-- Modify: `docs/EMPLOYEE-OPERATOR-GUIDE.md`
-- Modify: `docs/OWNER-OPERATOR-GUIDE.md`
+- Modify: `docs/ИНСТРУКЦИЯ-СОТРУДНИКУ.md`
+- Modify: `docs/ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md`
 - Modify: `README.md`
 
 **Interfaces:**

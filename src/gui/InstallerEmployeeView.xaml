@@ -83,7 +83,7 @@
           </Canvas>
         </Viewbox>
         <StackPanel Grid.Row="1" Margin="0,0,0,22">
-          <TextBlock Text="AI FOUNDATION" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#77CBB9" />
+          <TextBlock Text="РАБОЧАЯ СРЕДА ИИ" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#77CBB9" />
           <TextBlock Text="Установка среды" FontFamily="Bahnschrift SemiCondensed" FontSize="25" FontWeight="SemiBold" Foreground="#FFFFFF" Margin="0,5,0,0" />
           <TextBlock Text="Версия для сотрудников" FontSize="13" Foreground="#B8C8C8" Margin="0,5,0,0" />
         </StackPanel>
@@ -125,7 +125,7 @@
           </Grid>
         </StackPanel>
         <Border Grid.Row="3" BorderBrush="#365054" BorderThickness="1,1,0,0" Padding="0,15,0,0">
-          <TextBlock Text="K-7 · INTERNAL EMPLOYEE" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="10" />
+          <TextBlock Text="K-7 · ВЕРСИЯ ДЛЯ СОТРУДНИКОВ" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="10" />
         </Border>
       </Grid>
     </Border>
@@ -162,7 +162,7 @@
                 <TextBlock Text="OpenAI Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
                 <TextBlock Text="Разработка и автоматизация" Foreground="{StaticResource Muted}" Margin="0,3,0,0" />
               </StackPanel>
-              <CheckBox x:Name="CodexSelected" Grid.Column="1" Width="22" Height="22" IsEnabled="False" />
+              <CheckBox x:Name="CodexSelected" Grid.Column="1" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" FontWeight="SemiBold" />
             </Grid>
             <Border x:Name="CodexStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="8" Padding="10,7" Margin="0,15,0,0">
               <TextBlock x:Name="CodexStatus" Text="Пакет проверяется" Foreground="{StaticResource Warning}" FontSize="12" FontWeight="SemiBold" />
@@ -179,7 +179,7 @@
                 <TextBlock Text="OpenCode" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
                 <TextBlock Text="Быстрый CLI-инструмент" Foreground="{StaticResource Muted}" Margin="0,3,0,0" />
               </StackPanel>
-              <CheckBox x:Name="OpenCodeSelected" Grid.Column="1" Width="22" Height="22" IsEnabled="False" />
+              <CheckBox x:Name="OpenCodeSelected" Grid.Column="1" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" FontWeight="SemiBold" />
             </Grid>
             <Border x:Name="OpenCodeStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="8" Padding="10,7" Margin="0,15,0,0">
               <TextBlock x:Name="OpenCodeStatus" Text="Пакет проверяется" Foreground="{StaticResource Warning}" FontSize="12" FontWeight="SemiBold" />
@@ -203,7 +203,7 @@
               <TextBlock Text="Выберите рабочий маршрут" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-              <RadioButton x:Name="DirectMode" GroupName="ConnectionMode" Content="Direct" IsChecked="True" FontWeight="SemiBold" Margin="0,0,18,0" />
+              <RadioButton x:Name="DirectMode" GroupName="ConnectionMode" Content="Напрямую" IsChecked="True" FontWeight="SemiBold" Margin="0,0,18,0" />
               <RadioButton x:Name="VpnMode" GroupName="ConnectionMode" Content="VPN" FontWeight="SemiBold" Margin="0,0,18,0" />
               <RadioButton x:Name="ProxyMode" GroupName="ConnectionMode" Content="SingBox" FontWeight="SemiBold" />
             </StackPanel>
@@ -229,7 +229,7 @@
           </Grid>
           <Grid Grid.Row="3">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBlock x:Name="ConnectionStatus" Text="Direct · готов к локальной проверке" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+            <TextBlock x:Name="ConnectionStatus" Text="Напрямую · готово к локальной проверке" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
             <Button x:Name="TestConnection" Grid.Column="1" Content="Тест маршрута" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" />
             <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить" Style="{StaticResource SecondaryButton}" />
           </Grid>

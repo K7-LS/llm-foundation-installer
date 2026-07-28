@@ -33,10 +33,26 @@
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ListBoxItem">
-            <ContentPresenter />
+            <Border x:Name="SelectionFrame" BorderBrush="Transparent" BorderThickness="2" CornerRadius="9" Padding="3">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="SelectionFrame" Property="BorderBrush" Value="#77CBB9" />
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="SelectionFrame" Property="BorderBrush" Value="#30BCED" />
+                <Setter TargetName="SelectionFrame" Property="Background" Value="#10343A" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="SelectionFrame" Property="BorderBrush" Value="#FC4912" />
+              </Trigger>
+            </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -52,16 +68,16 @@
           <TextBlock Text="K7" Foreground="#071E22" FontFamily="Bahnschrift SemiCondensed" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Border>
         <StackPanel Margin="14,0,0,0">
-          <TextBlock Text="SIGNAL ROUTING CONSOLE / LAUNCH CENTER" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" />
+          <TextBlock Text="КОНСОЛЬ МАРШРУТИЗАЦИИ / ЦЕНТР ЗАПУСКА" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" />
           <TextBlock Text="Рабочий контур владельца" FontFamily="Bahnschrift SemiCondensed" FontSize="27" FontWeight="SemiBold" Margin="0,4,0,0" />
         </StackPanel>
       </StackPanel>
       <StackPanel Grid.Column="1" HorizontalAlignment="Right">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-          <Button x:Name="OpenGuideDashboard" Content="OPERATING GUIDE" Height="30" Padding="12,0" Margin="0,0,9,0" Background="#10343A" Foreground="#EAF3F2" BorderBrush="#285057" BorderThickness="1" FontFamily="Cascadia Mono" FontSize="9" />
-          <Border Background="#FC4912" CornerRadius="3" Padding="10,5"><TextBlock Text="OWNER CONTROLLED" Foreground="#FFFFFF" FontFamily="Cascadia Mono" FontSize="10" FontWeight="Bold" /></Border>
+          <Button x:Name="OpenGuideDashboard" Content="ИНСТРУКЦИЯ" Height="30" Padding="12,0" Margin="0,0,9,0" Background="#10343A" Foreground="#EAF3F2" BorderBrush="#285057" BorderThickness="1" FontFamily="Cascadia Mono" FontSize="9" />
+          <Border Background="#FC4912" CornerRadius="3" Padding="10,5"><TextBlock Text="ПОД КОНТРОЛЕМ ВЛАДЕЛЬЦА" Foreground="#FFFFFF" FontFamily="Cascadia Mono" FontSize="10" FontWeight="Bold" /></Border>
         </StackPanel>
-        <TextBlock Text="DISTRIBUTION DISALLOWED" FontFamily="Cascadia Mono" FontSize="9" Foreground="#FC7A4D" HorizontalAlignment="Right" Margin="0,5,0,0" />
+        <TextBlock Text="РАСПРОСТРАНЕНИЕ ЗАПРЕЩЕНО" FontFamily="Cascadia Mono" FontSize="9" Foreground="#FC7A4D" HorizontalAlignment="Right" Margin="0,5,0,0" />
       </StackPanel>
     </Grid>
 
@@ -70,26 +86,26 @@
       <Border Grid.Column="0" Style="{StaticResource PanelCard}">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-          <TextBlock Text="CLIENT MATRIX" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" />
-          <ListBox x:Name="LaunchTargetList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectedIndex="0" Margin="0,14,0,0">
+          <TextBlock Text="ВЫБОР КЛИЕНТА" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" />
+          <ListBox x:Name="LaunchTargetList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectedIndex="0" Margin="0,14,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBoxItem Tag="codex-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
               <Border Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="13">
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
             <ListBoxItem Tag="claude-code" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
               <Border Background="#241F1C" BorderBrush="#FC4912" BorderThickness="1" CornerRadius="6" Padding="13">
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / OWNER CANDIDATE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="OWNER ONLY" Foreground="#FC7A4D" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / ВЛАДЕЛЕЦ" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ТОЛЬКО ВЛАДЕЛЬЦУ" Foreground="#FC7A4D" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
-            <ListBoxItem Tag="opencode-desktop" Style="{StaticResource ClientListItem}" Padding="0">
+            <ListBoxItem Tag="opencode-cli" Style="{StaticResource ClientListItem}" Padding="0">
               <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="13">
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#77CBB9" /><TextBlock Text="OpenCode CLI" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#77CBB9" /><TextBlock Text="OpenCode CLI" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
           </ListBox>
           <Border Grid.Row="2" Background="#40251F" BorderBrush="#784332" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,14,0,0">
-            <TextBlock Text="Owner-only user-initiated launch is allowed; provider readiness remains NOT_PASS and distribution stays disallowed." Foreground="#FCB69C" FontSize="11" TextWrapping="Wrap" />
+            <TextBlock Text="Запуск Claude разрешён только владельцу и только по его действию. Готовность провайдера остаётся NOT_PASS, распространение запрещено." Foreground="#FCB69C" FontSize="11" TextWrapping="Wrap" />
           </Border>
         </Grid>
       </Border>
@@ -101,9 +117,9 @@
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-              <StackPanel><TextBlock Text="ROUTE PROFILE / SELECTED" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="Selected client → Local relay → Upstream" FontFamily="Bahnschrift SemiCondensed" FontSize="21" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+              <StackPanel><TextBlock Text="ПРОФИЛЬ МАРШРУТА / ВЫБРАНО" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="Выбранный клиент → Локальный шлюз → Провайдер" FontFamily="Bahnschrift SemiCondensed" FontSize="21" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <RadioButton x:Name="RouteDirect" GroupName="Route" Content="DIRECT" IsChecked="True" Style="{StaticResource Route}" />
+                <RadioButton x:Name="RouteDirect" GroupName="Route" Content="НАПРЯМУЮ" IsChecked="True" Style="{StaticResource Route}" />
                 <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource Route}" />
                 <RadioButton x:Name="RouteHttp" GroupName="Route" Content="HTTP" Style="{StaticResource Route}" />
                 <RadioButton x:Name="RouteHttps" GroupName="Route" Content="HTTPS" Style="{StaticResource Route}" Margin="0" />
@@ -111,11 +127,11 @@
             </Grid>
             <Grid Grid.Row="1" Margin="0,24,0,18">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="01 / Selected client" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="CODEX" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+              <Border Grid.Column="0" Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="01 / Выбранный клиент" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock x:Name="SelectedClientName" Text="CODEX" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
               <Path Grid.Column="1" Data="M2,9 L36,9 M29,3 L36,9 L29,15" Stroke="#30BCED" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              <Border Grid.Column="2" Background="#10343A" BorderBrush="#77CBB9" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="02 / Local relay" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" /><TextBlock Text="BYPASS" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+              <Border Grid.Column="2" Background="#10343A" BorderBrush="#77CBB9" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="02 / Локальный шлюз" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" /><TextBlock x:Name="SelectedRouteName" Text="НАПРЯМУЮ" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
               <Path Grid.Column="3" Data="M2,9 L36,9 M29,3 L36,9 L29,15" Stroke="#77CBB9" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              <Border Grid.Column="4" Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="03 / Upstream" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" /><TextBlock Text="OPENAI" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+              <Border Grid.Column="4" Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="03 / Провайдер" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" /><TextBlock x:Name="SelectedProviderName" Text="OPENAI" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
             </Grid>
             <Border Grid.Row="2" Height="5" Background="#17383D" CornerRadius="2">
               <Grid><Border Width="240" Background="#30BCED" HorizontalAlignment="Left" CornerRadius="2" /><Border Width="180" Background="#77CBB9" HorizontalAlignment="Center" CornerRadius="2" /></Grid>
@@ -125,17 +141,17 @@
 
         <Grid Grid.Row="1" Margin="0,16,0,0">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-          <Border Grid.Column="0" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="ROUTE STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RouteStatus" Text="DIRECT / READY" FontFamily="Cascadia Mono" FontSize="13" Foreground="#30BCED" Margin="0,7,0,0" /><TextBlock Text="No proxy mutation" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
-          <Border Grid.Column="2" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="EVIDENCE STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="EvidenceStatus" Text="PACKAGE PASS" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Bound to local manifest" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
-          <Border Grid.Column="4" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="ROLLBACK STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RollbackStatus" Text="AVAILABLE" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Previous state retained" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+          <Border Grid.Column="0" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="СОСТОЯНИЕ МАРШРУТА" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RouteStatus" Text="НАПРЯМУЮ / ГОТОВО" FontFamily="Cascadia Mono" FontSize="13" Foreground="#30BCED" Margin="0,7,0,0" /><TextBlock Text="Прокси не изменяется" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+          <Border Grid.Column="2" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="СОСТОЯНИЕ ПРОВЕРКИ" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="EvidenceStatus" Text="ПАКЕТ ПРОВЕРЕН" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Связан с локальным манифестом" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+          <Border Grid.Column="4" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="ВОССТАНОВЛЕНИЕ" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RollbackStatus" Text="ДОСТУПНО" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Предыдущее состояние сохранено" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
         </Grid>
       </Grid>
     </Grid>
 
     <Grid Grid.Row="2">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-      <TextBlock Text="NO AUTOMATIC NETWORK · NO REGION BYPASS · USER-INITIATED LAUNCH" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" VerticalAlignment="Center" />
-      <Button x:Name="LaunchSelected" Grid.Column="1" Content="LAUNCH SELECTED  →" Height="48" Padding="24,0" Background="#30BCED" Foreground="#071E22" BorderThickness="0" FontFamily="Bahnschrift SemiCondensed" FontSize="17" FontWeight="SemiBold" />
+      <TextBlock Text="БЕЗ АВТОМАТИЧЕСКОЙ СЕТИ · БЕЗ ОБХОДА РЕГИОНА · ЗАПУСК ТОЛЬКО ПОЛЬЗОВАТЕЛЕМ" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" VerticalAlignment="Center" />
+      <Button x:Name="LaunchSelected" Grid.Column="1" Content="Запустить Codex →" Height="48" Padding="24,0" Background="#30BCED" Foreground="#071E22" BorderThickness="0" FontFamily="Bahnschrift SemiCondensed" FontSize="17" FontWeight="SemiBold" />
     </Grid>
   </Grid>
 </UserControl>

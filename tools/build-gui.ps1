@@ -1562,6 +1562,7 @@ $CompilerArguments = @(
     '/optimize+',
     '/checked+',
     '/deterministic+',
+    '/codepage:65001',
     '/utf8output',
     "/out:$Executable",
     "/win32manifest:$ApplicationManifest",

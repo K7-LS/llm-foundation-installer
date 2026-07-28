@@ -562,8 +562,8 @@ git commit -m "feat: build deterministic dual-product editions"
 **Files:**
 
 - Modify: `README.md`
-- Modify: `docs/EMPLOYEE-OPERATOR-GUIDE.md`
-- Create: `docs/OWNER-OPERATOR-GUIDE.md`
+- Modify: `docs/ИНСТРУКЦИЯ-СОТРУДНИКУ.md`
+- Create: `docs/ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md`
 - Modify: `tests/test_editions.py`
 - Modify: `tests/test_gui.py`
 

@@ -247,10 +247,10 @@ def test_owner_views_use_signal_console_contract(view_name: str) -> None:
         "#FC4912",
         "#77CBB9",
         "#30BCED",
-        "OWNER CONTROLLED",
-        "Selected client",
-        "Local relay",
-        "Upstream",
+        "ПОД КОНТРОЛЕМ ВЛАДЕЛЬЦА",
+        "Выбранный клиент",
+        "Локальный шлюз",
+        "Провайдер",
         "Claude",
     ):
         assert token in value
@@ -263,9 +263,9 @@ def test_owner_launch_center_labels_claude_as_owner_only_candidate() -> None:
         REPOSITORY / "src" / "gui" / "LaunchCenterOwnerView.xaml"
     ).read_text(encoding="utf-8")
 
-    assert "CLAUDE / OWNER CANDIDATE" in value
-    assert 'Text="OWNER ONLY"' in value
-    assert "provider readiness remains NOT_PASS" in value
+    assert "CLAUDE / ВЛАДЕЛЕЦ" in value
+    assert 'Text="ТОЛЬКО ВЛАДЕЛЬЦУ"' in value
+    assert "Готовность провайдера остаётся NOT_PASS" in value
     assert 'Text="BLOCKED"' not in value
 
 
@@ -334,6 +334,126 @@ def test_launch_center_selection_does_not_paint_default_listbox_chrome() -> None
 
 
 @pytest.mark.parametrize(
+    (
+        "edition",
+        "command",
+        "target_id",
+        "button_label",
+        "client_display",
+        "provider_display",
+    ),
+    [
+        (
+            "Employee",
+            "--ui-selection-json",
+            "opencode-cli",
+            "Запустить OpenCode →",
+            "OPENCODE CLI",
+            None,
+        ),
+        (
+            "Owner",
+            "--ui-guide-selection-json",
+            "claude-code",
+            "Запустить Claude →",
+            "CLAUDE",
+            "ANTHROPIC",
+        ),
+    ],
+)
+def test_launch_center_selection_is_real_visible_and_target_specific(
+    tmp_path: Path,
+    edition: str,
+    command: str,
+    target_id: str,
+    button_label: str,
+    client_display: str,
+    provider_display: str | None,
+) -> None:
+    built = _run_build(
+        tmp_path,
+        edition=edition,
+        product_role="LaunchCenter",
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    output = tmp_path / f"{edition}-LaunchCenter"
+    executable = output / "LLMFoundationInstaller.exe"
+    result = subprocess.run(
+        [str(executable), command, target_id],
+        cwd=output,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    state = json.loads(result.stdout)
+    assert state == {
+        "selected_target": target_id,
+        "button_content": button_label,
+        "button_enabled": True,
+        "selection_visual": "VISIBLE",
+        "client_display": client_display,
+        "provider_display": provider_display,
+        "route_display": "НАПРЯМУЮ",
+    }
+
+
+def test_user_facing_views_are_russian_and_expose_selected_state() -> None:
+    forbidden_phrases = (
+        "OPERATING GUIDE",
+        "OWNER CONTROLLED",
+        "DISTRIBUTION DISALLOWED",
+        "CLIENT MATRIX",
+        "LAUNCH SELECTED",
+        "SELECT CLIENT",
+        "ROUTE STATE",
+        "EVIDENCE STATE",
+        "ROLLBACK STATE",
+        "Awaiting evidence",
+        "Provider gate blocked",
+        "REVIEW PLAN / INSTALL",
+        "Required packages and gates are being evaluated.",
+    )
+    for view in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+        "LaunchCenterEmployeeView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ):
+        xaml = (REPOSITORY / "src" / "gui" / view).read_text(
+            encoding="utf-8"
+        )
+        for phrase in forbidden_phrases:
+            assert phrase not in xaml, f"{view}: {phrase}"
+
+    for view in (
+        "LaunchCenterEmployeeView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ):
+        xaml = (REPOSITORY / "src" / "gui" / view).read_text(
+            encoding="utf-8"
+        )
+        assert 'x:Name="SelectionFrame"' in xaml
+        assert '<Trigger Property="IsSelected" Value="True">' in xaml
+        assert 'Tag="opencode-cli"' in xaml
+
+
+def test_operator_dashboard_can_return_a_real_llm_selection() -> None:
+    source = (
+        REPOSITORY / "src" / "gui" / "OperatorGuideDashboard.cs"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "ApplyHostSelection",
+        "Выбрать Codex",
+        "Выбрать Claude",
+        "Выбрать OpenCode",
+        "Вернуться к выбору",
+    ):
+        assert marker in source
+
+
+@pytest.mark.parametrize(
     ("edition", "product_role"),
     [
         ("Employee", "Installer"),
@@ -355,17 +475,17 @@ def test_each_product_renders_its_embedded_guide_dashboard(
 
 def test_role_specific_operator_guides_match_edition_boundaries() -> None:
     employee = (
-        REPOSITORY / "docs" / "EMPLOYEE-OPERATOR-GUIDE.md"
+        REPOSITORY / "docs" / "ИНСТРУКЦИЯ-СОТРУДНИКУ.md"
     ).read_text(encoding="utf-8")
     owner = (
-        REPOSITORY / "docs" / "OWNER-OPERATOR-GUIDE.md"
+        REPOSITORY / "docs" / "ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md"
     ).read_text(encoding="utf-8")
     employee_normalized = " ".join(employee.split())
 
     for marker in (
         "Codex",
         "OpenCode",
-        "Direct",
+        "Напрямую",
         "VPN",
         "SingBox HTTP",
         "SingBox HTTPS",
@@ -393,7 +513,7 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
         "перераспространение запрещено",
         "build-edition.ps1",
         "RuntimeArchive",
-        "OPERATING GUIDE",
+        "Интерактивная инструкция",
     ):
         assert marker in owner
 
