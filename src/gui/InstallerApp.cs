@@ -48,6 +48,7 @@ namespace LlmFoundationInstaller
 
     internal sealed class TrustedPackage
     {
+        public string trust_level { get; set; }
         public string target { get; set; }
         public string client_id { get; set; }
         public string supported_version { get; set; }
@@ -56,6 +57,10 @@ namespace LlmFoundationInstaller
         public TrustedFile acceptance_evidence { get; set; }
         public TrustedFile release_verification { get; set; }
         public TrustedFile package_acceptance { get; set; }
+        public TrustedFile candidate_acceptance { get; set; }
+        public TrustedFile live_canary { get; set; }
+        public TrustedFile components_lock { get; set; }
+        public TrustedFile non_releasable { get; set; }
     }
 
     internal sealed class ProviderEligibilityRecord
@@ -211,7 +216,11 @@ namespace LlmFoundationInstaller
                         package,
                         definition[0],
                         definition[2]
-                    ) ? "accepted" : "tampered");
+                    ) ? (String.Equals(
+                        package.trust_level,
+                        "owner_candidate",
+                        StringComparison.Ordinal
+                    ) ? "owner_candidate" : "accepted") : "tampered");
                 if (state == "accepted" &&
                     definition[0] == "claude" &&
                     eligibilityState != "PASS")
@@ -441,11 +450,60 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            return ValidateFile(bundleRoot, package.asset) &&
-                ValidateFile(bundleRoot, package.release_manifest) &&
-                ValidateFile(bundleRoot, package.acceptance_evidence) &&
-                ValidateFile(bundleRoot, package.release_verification) &&
-                ValidateFile(bundleRoot, package.package_acceptance);
+            if (!ValidateFile(bundleRoot, package.asset) ||
+                !ValidateFile(bundleRoot, package.release_manifest))
+            {
+                return false;
+            }
+            if (String.Equals(
+                    package.trust_level,
+                    "accepted",
+                    StringComparison.Ordinal))
+            {
+                return ValidateFile(
+                        bundleRoot,
+                        package.acceptance_evidence
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.release_verification
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.package_acceptance
+                    );
+            }
+            if (String.Equals(
+                    package.trust_level,
+                    "owner_candidate",
+                    StringComparison.Ordinal))
+            {
+                EditionProfile edition =
+                    EditionProfile.LoadEmbedded();
+                return edition.owner_controlled &&
+                    String.Equals(
+                        target,
+                        "claude",
+                        StringComparison.Ordinal
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.candidate_acceptance
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.live_canary
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.components_lock
+                    ) &&
+                    ValidateFile(
+                        bundleRoot,
+                        package.non_releasable
+                    );
+            }
+            return false;
         }
 
         private static bool ValidateFile(string bundleRoot, TrustedFile record)

@@ -66,6 +66,7 @@ def _build_gui_bundle(
     client_sources_lock: Path | None = None,
     allow_local_test_sources: bool = False,
     foundation_package_root: Path | None = None,
+    owner_candidate_root: Path | None = None,
     edition: str = "Owner",
     product_role: str = "Installer",
 ) -> Path:
@@ -94,6 +95,10 @@ def _build_gui_bundle(
     if foundation_package_root is not None:
         arguments.extend(
             ["-FoundationPackageRoot", str(foundation_package_root)]
+        )
+    if owner_candidate_root is not None:
+        arguments.extend(
+            ["-OwnerCandidateRoot", str(owner_candidate_root)]
         )
     if provider_eligibility_evidence is not None:
         arguments.extend(
@@ -589,6 +594,101 @@ def _accepted_package(
             "release_attestation": True,
         },
     )
+    return package_root
+
+
+def _owner_claude_candidate(root: Path) -> Path:
+    package_root = _accepted_package(root, "claude")
+    foundation = root / "foundation"
+    asset = package_root / "claude-base-1.0.0.zip"
+    release = package_root / "release-manifest.json"
+    release_value = json.loads(release.read_text(encoding="utf-8"))
+    release_value["channel"] = "candidate"
+    release_value["tag"] = "claude-v1.0.0"
+
+    components = package_root / "components.lock.json"
+    _write_json(
+        components,
+        {
+            "schema_version": 1,
+            "target": "claude",
+            "source": release_value["source"],
+        },
+    )
+    release_value["components_lock_sha256"] = _sha256(components)
+
+    candidate = package_root / "candidate-acceptance.json"
+    binding_keys = (
+        "target",
+        "version",
+        "tag",
+        "client",
+        "asset",
+        "package_manifest_sha256",
+        "components_lock_sha256",
+        "source",
+        "foundation_engine_version",
+        "foundation_engine_manifest_sha256",
+    )
+    candidate_value = {
+        "schema_version": 1,
+        "target": "claude",
+        "CANDIDATE_OFFLINE": "PASS",
+        "CLIENT_BINARY_ACCEPTANCE": "PASS",
+        "FULL_RELEASE_CLAUDE": "NOT_PASS",
+        "NON_RELEASABLE": True,
+        "PROGRAM_RELEASE": "2/3",
+        "client": release_value["client"],
+        "asset": {
+            "name": asset.name,
+            "sha256": _sha256(asset),
+            "bytes": asset.stat().st_size,
+        },
+        "release_binding": {
+            key: release_value[key] for key in binding_keys
+        },
+        "foundation": {
+            "version": "0.2.1",
+            "evidence_sha256": _sha256(
+                foundation / "acceptance-evidence.json"
+            ),
+        },
+    }
+    candidate_value["evidence_body_sha256"] = _evidence_body_sha256(
+        candidate_value
+    )
+    _write_json(candidate, candidate_value)
+    release_value["acceptance_evidence_sha256"] = _sha256(candidate)
+    _write_json(release, release_value)
+
+    canary = package_root / "claude-live-canary.json"
+    canary_value = {
+        "schema_version": 1,
+        "target": "claude",
+        "version": "1.0.0",
+        "CLAUDE_CANARY": "PASS",
+        "model_requests": 0,
+        "credentials_included": False,
+        "personal_data_included": False,
+        "release_binding": candidate_value["release_binding"],
+    }
+    canary_value["evidence_body_sha256"] = _evidence_body_sha256(
+        canary_value
+    )
+    _write_json(canary, canary_value)
+    (package_root / "NON_RELEASABLE.txt").write_text(
+        "OFFLINE-ACCEPTED CANDIDATE; NOT A STABLE RELEASE\n"
+        "Client contract: 1.0.0-test\n"
+        "Stable promotion and employee distribution are forbidden.\n",
+        encoding="utf-8",
+    )
+
+    for obsolete in (
+        "acceptance-evidence.json",
+        "release-verification.json",
+        "package-acceptance.json",
+    ):
+        (package_root / obsolete).unlink()
     return package_root
 
 
@@ -4149,6 +4249,126 @@ def test_owner_candidate_is_installable_only_in_owner_edition():
     assert "IsInstallableTarget" in source
     assert "edition.owner_controlled" in source
     assert 'row.package_state == "owner_candidate"' in source
+
+
+def test_owner_internal_build_carries_nonreleasable_claude_candidate(
+    tmp_path: Path,
+) -> None:
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source, "codex")
+    _accepted_package(package_source, "opencode")
+    candidate = _owner_claude_candidate(
+        tmp_path / "owner-candidate-source"
+    )
+
+    bundle = _build_gui_bundle(
+        tmp_path / "owner-bundle",
+        package_root=package_source,
+        owner_candidate_root=candidate,
+        distribution_mode="InternalUnsigned",
+        edition="Owner",
+    )
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["embedded_target_count"] == 3
+    assert manifest["owner_claude_state"] == "OWNER_CANDIDATE"
+    assert manifest["distribution_allowed"] is False
+    assert manifest["employee_distribution_allowed"] is False
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "NOT_PASS"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/3"
+    assert (
+        manifest["owner_candidate"]["target"] == "claude"
+    )
+    assert (
+        manifest["owner_candidate"]["FULL_RELEASE_CLAUDE"]
+        == "NOT_PASS"
+    )
+    assert (
+        bundle / "packages" / "claude" / "NON_RELEASABLE.txt"
+    ).is_file()
+
+    catalog = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--catalog-json",
+        ],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert catalog.returncode == 0, catalog.stdout + catalog.stderr
+    states = {
+        row["id"]: row["package_state"]
+        for row in json.loads(catalog.stdout)["targets"]
+    }
+    assert states == {
+        "codex": "accepted",
+        "claude": "owner_candidate",
+        "opencode": "accepted",
+    }
+
+
+def test_owner_candidate_input_is_owner_only_and_hash_bound(
+    tmp_path: Path,
+) -> None:
+    candidate = _owner_claude_candidate(tmp_path / "candidate-source")
+    employee_output = tmp_path / "employee"
+    employee = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-Edition",
+            "Employee",
+            "-ProductRole",
+            "Installer",
+            "-OutputRoot",
+            str(employee_output),
+            "-OwnerCandidateRoot",
+            str(candidate),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert employee.returncode != 0
+    assert "only valid for Owner edition" in (
+        employee.stdout + employee.stderr
+    )
+
+    (candidate / "claude-base-1.0.0.zip").write_bytes(b"tampered")
+    owner_output = tmp_path / "owner"
+    owner = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
+            "-Edition",
+            "Owner",
+            "-ProductRole",
+            "Installer",
+            "-OutputRoot",
+            str(owner_output),
+            "-OwnerCandidateRoot",
+            str(candidate),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert owner.returncode != 0
+    assert "Owner candidate" in owner.stdout + owner.stderr
 
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():

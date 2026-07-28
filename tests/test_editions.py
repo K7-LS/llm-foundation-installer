@@ -457,6 +457,7 @@ def test_deterministic_edition_bundle_binds_both_products(
     assert manifest["edition_id"] == "Employee"
     assert manifest["theme_id"] == "K7Signal"
     assert manifest["distribution_mode"] == "Preview"
+    assert manifest["version"] == "0.3.0"
     assert manifest["targets"] == ["codex", "opencode"]
     assert {
         role: value["file"]
@@ -469,6 +470,16 @@ def test_deterministic_edition_bundle_binds_both_products(
         assert manifest["products"][role]["sha256"] == hashlib.sha256(
             first_executable.read_bytes()
         ).hexdigest()
+        self_test = subprocess.run(
+            [str(first_executable), "--self-test-json"],
+            cwd=first,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+        assert json.loads(self_test.stdout)["version"] == "0.3.0"
     assert (first / "bundle-manifest.json").read_bytes() == (
         second / "bundle-manifest.json"
     ).read_bytes()

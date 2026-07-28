@@ -9,6 +9,7 @@ param(
     [string]$DistributionMode = 'Preview',
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
+    [string]$OwnerCandidateRoot,
     [string]$ProviderEligibilityEvidence,
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
@@ -141,6 +142,7 @@ function Invoke-ProductBuild {
     foreach ($Pair in @(
         @('PackageRoot', $PackageRoot),
         @('FoundationPackageRoot', $FoundationPackageRoot),
+        @('OwnerCandidateRoot', $OwnerCandidateRoot),
         @('ProviderEligibilityEvidence', $ProviderEligibilityEvidence),
         @('ClientSourcesLock', $ClientSourcesLock),
         @('RuntimeSourcesLock', $RuntimeSourcesLock),
@@ -209,7 +211,9 @@ try {
     if ((@($InstallerManifest.targets) -join ',') -cne
         (@($LaunchCenterManifest.targets) -join ',') -or
         [string]$InstallerManifest.theme_id -cne
-            [string]$LaunchCenterManifest.theme_id) {
+            [string]$LaunchCenterManifest.theme_id -or
+        [string]$InstallerManifest.version -cne
+            [string]$LaunchCenterManifest.version) {
         throw 'Child product contracts differ'
     }
 
@@ -237,6 +241,7 @@ try {
         schema_version = 1
         app_id = 'k7-ai-edition-bundle'
         edition_id = $Edition
+        version = [string]$InstallerManifest.version
         theme_id = [string]$InstallerManifest.theme_id
         owner_controlled = [bool]$InstallerManifest.owner_controlled
         distribution_allowed = [bool](

@@ -10,6 +10,7 @@ param(
     [string]$ProductRole,
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
+    [string]$OwnerCandidateRoot,
     [string]$ProviderEligibilityEvidence,
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
@@ -732,6 +733,7 @@ function Read-AcceptedPackages {
 
         $AcceptanceHash = Get-Sha256 $AcceptancePath
         $Rows += [ordered]@{
+            trust_level = 'accepted'
             target = $Target
             client_id = [string]$Acceptance.client.id
             supported_version = [string]$Acceptance.client.supported_version
@@ -780,6 +782,214 @@ function Read-AcceptedPackages {
         }
     }
     return $Rows
+}
+
+function Read-OwnerCandidate {
+    param([string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        return $null
+    }
+    $Directory = Get-Item -LiteralPath $Root -Force
+    if (-not $Directory.PSIsContainer -or
+        ($Directory.Attributes -band
+            [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Owner candidate directory is unsafe'
+    }
+    $RequiredFiles = @(
+        'candidate-acceptance.json',
+        'claude-live-canary.json',
+        'components.lock.json',
+        'NON_RELEASABLE.txt',
+        'release-manifest.json'
+    )
+    $ActualFiles = @(
+        Get-ChildItem -LiteralPath $Directory.FullName -File |
+            Select-Object -ExpandProperty Name |
+            Sort-Object
+    )
+    $ZipFiles = @(
+        $ActualFiles | Where-Object {
+            $_ -match '^claude-base-[0-9]+\.[0-9]+\.[0-9]+\.zip$'
+        }
+    )
+    if ($ActualFiles.Count -ne 6 -or $ZipFiles.Count -ne 1 -or
+        @($RequiredFiles | Where-Object {
+            $ActualFiles -cnotcontains $_
+        }).Count -ne 0) {
+        throw 'Owner candidate file inventory differs'
+    }
+    foreach ($Name in $ActualFiles) {
+        $Path = Join-Path $Directory.FullName $Name
+        if (((Get-Item -LiteralPath $Path -Force).Attributes -band
+                [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Owner candidate cannot contain reparse points'
+        }
+    }
+    $CandidatePath = Join-Path $Directory.FullName (
+        'candidate-acceptance.json'
+    )
+    $ReleasePath = Join-Path $Directory.FullName 'release-manifest.json'
+    $CanaryPath = Join-Path $Directory.FullName 'claude-live-canary.json'
+    $ComponentsPath = Join-Path $Directory.FullName 'components.lock.json'
+    $MarkerPath = Join-Path $Directory.FullName 'NON_RELEASABLE.txt'
+    try {
+        $Candidate = Get-Content -LiteralPath $CandidatePath -Raw |
+            ConvertFrom-Json
+        $Release = Get-Content -LiteralPath $ReleasePath -Raw |
+            ConvertFrom-Json
+        $Canary = Get-Content -LiteralPath $CanaryPath -Raw |
+            ConvertFrom-Json
+        $Components = Get-Content -LiteralPath $ComponentsPath -Raw |
+            ConvertFrom-Json
+    } catch {
+        throw 'Owner candidate JSON is invalid'
+    }
+    $AssetPath = Assert-FileBinding $Directory.FullName `
+        $Candidate.asset 'Owner candidate asset'
+    $MarkerText = [IO.File]::ReadAllText($MarkerPath)
+    $CandidateClient = if (
+        $null -ne $Candidate.PSObject.Properties['client']
+    ) {
+        $Candidate.client
+    } else {
+        $Candidate.release_binding.client
+    }
+    if ([int]$Candidate.schema_version -ne 1 -or
+        [string]$Candidate.target -cne 'claude' -or
+        [string]$Candidate.CANDIDATE_OFFLINE -cne 'PASS' -or
+        [string]$Candidate.CLIENT_BINARY_ACCEPTANCE -cne 'PASS' -or
+        [string]$Candidate.FULL_RELEASE_CLAUDE -cne 'NOT_PASS' -or
+        $Candidate.NON_RELEASABLE -isnot [bool] -or
+        [bool]$Candidate.NON_RELEASABLE -ne $true -or
+        [string]$CandidateClient.id -cne 'claude-code' -or
+        [string]::IsNullOrWhiteSpace(
+            [string]$CandidateClient.supported_version
+        ) -or
+        [string]$Candidate.evidence_body_sha256 -notmatch (
+            '^[a-f0-9]{64}$'
+        ) -or
+        [string]$Candidate.asset.name -cne $ZipFiles[0]) {
+        throw 'Owner candidate acceptance contract is invalid'
+    }
+    if ([int]$Release.schema_version -ne 1 -or
+        [string]$Release.target -cne 'claude' -or
+        [string]$Release.channel -cne 'candidate' -or
+        [string]$Release.client.id -cne 'claude-code' -or
+        [string]$Release.client.supported_version -cne (
+            [string]$CandidateClient.supported_version
+        ) -or
+        [string]$Release.asset.name -cne (
+            [string]$Candidate.asset.name
+        ) -or
+        [string]$Release.asset.sha256 -cne (
+            [string]$Candidate.asset.sha256
+        ) -or
+        [long]$Release.asset.bytes -ne (
+            [long]$Candidate.asset.bytes
+        ) -or
+        [string]$Release.acceptance_evidence_sha256 -cne (
+            Get-Sha256 $CandidatePath
+        ) -or
+        [string]$Release.components_lock_sha256 -cne (
+            Get-Sha256 $ComponentsPath
+        ) -or
+        [bool]$Release.requires.immutable_release -ne $true -or
+        [bool]$Release.requires.release_attestation -ne $true) {
+        throw 'Owner candidate release manifest is invalid'
+    }
+    Assert-ReleaseBinding $Candidate $Release
+    Assert-ReleaseBinding $Canary $Release
+    if ([int]$Canary.schema_version -ne 1 -or
+        [string]$Canary.target -cne 'claude' -or
+        [string]$Canary.CLAUDE_CANARY -cne 'PASS' -or
+        [long]$Canary.model_requests -ne 0 -or
+        $Canary.credentials_included -isnot [bool] -or
+        [bool]$Canary.credentials_included -ne $false -or
+        $Canary.personal_data_included -isnot [bool] -or
+        [bool]$Canary.personal_data_included -ne $false -or
+        [string]$Canary.evidence_body_sha256 -notmatch (
+            '^[a-f0-9]{64}$'
+        ) -or
+        [int]$Components.schema_version -ne 1 -or
+        [string]$Components.target -cne 'claude' -or
+        $MarkerText -notmatch 'NOT A STABLE RELEASE' -or
+        $MarkerText -notmatch 'employee distribution are forbidden') {
+        throw 'Owner candidate evidence is invalid'
+    }
+    return [ordered]@{
+        trust_level = 'owner_candidate'
+        target = 'claude'
+        client_id = 'claude-code'
+        supported_version = (
+            [string]$CandidateClient.supported_version
+        )
+        foundation_engine_manifest_sha256 = [string](
+            $Release.foundation_engine_manifest_sha256
+        )
+        asset = [ordered]@{
+            relative_path = 'packages/claude/' + (
+                [string]$Candidate.asset.name
+            )
+            resource_name = 'TargetPackage.claude.asset'
+            sha256 = [string]$Candidate.asset.sha256
+            bytes = [long]$Candidate.asset.bytes
+        }
+        release_manifest = [ordered]@{
+            relative_path = 'packages/claude/release-manifest.json'
+            resource_name = 'TargetPackage.claude.release_manifest'
+            sha256 = Get-Sha256 $ReleasePath
+            bytes = (Get-Item -LiteralPath $ReleasePath).Length
+        }
+        candidate_acceptance = [ordered]@{
+            relative_path = 'packages/claude/candidate-acceptance.json'
+            resource_name = 'TargetPackage.claude.candidate_acceptance'
+            sha256 = Get-Sha256 $CandidatePath
+            bytes = (Get-Item -LiteralPath $CandidatePath).Length
+        }
+        live_canary = [ordered]@{
+            relative_path = 'packages/claude/claude-live-canary.json'
+            resource_name = 'TargetPackage.claude.live_canary'
+            sha256 = Get-Sha256 $CanaryPath
+            bytes = (Get-Item -LiteralPath $CanaryPath).Length
+        }
+        components_lock = [ordered]@{
+            relative_path = 'packages/claude/components.lock.json'
+            resource_name = 'TargetPackage.claude.components_lock'
+            sha256 = Get-Sha256 $ComponentsPath
+            bytes = (Get-Item -LiteralPath $ComponentsPath).Length
+        }
+        non_releasable = [ordered]@{
+            relative_path = 'packages/claude/NON_RELEASABLE.txt'
+            resource_name = 'TargetPackage.claude.non_releasable'
+            sha256 = Get-Sha256 $MarkerPath
+            bytes = (Get-Item -LiteralPath $MarkerPath).Length
+        }
+        source_directory = $Directory.FullName
+    }
+}
+
+function Get-PackageRecords {
+    param([Parameter(Mandatory = $true)]$Package)
+    if ([string]$Package.trust_level -ceq 'accepted') {
+        return @(
+            $Package.asset,
+            $Package.release_manifest,
+            $Package.acceptance_evidence,
+            $Package.release_verification,
+            $Package.package_acceptance
+        )
+    }
+    if ([string]$Package.trust_level -ceq 'owner_candidate') {
+        return @(
+            $Package.asset,
+            $Package.release_manifest,
+            $Package.candidate_acceptance,
+            $Package.live_canary,
+            $Package.components_lock,
+            $Package.non_releasable
+        )
+    }
+    throw 'Package trust level is invalid'
 }
 
 function Export-AcceptedFoundationEngine {
@@ -942,10 +1152,18 @@ $References = @(
 )
 
 $AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
+$OwnerCandidate = Read-OwnerCandidate $OwnerCandidateRoot
 $AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
 $ProviderEligibility = Read-ProviderEligibilityEvidence `
     $ProviderEligibilityEvidence
 $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
+$AllPackages = @(
+    $AcceptedPackages
+    if ($null -ne $OwnerCandidate) {
+        $OwnerCandidate
+    }
+)
+$AvailableTargets = @($AllPackages.target | Sort-Object)
 $IncludedTargets = if ($Edition -ceq 'Employee') {
     @('codex', 'opencode')
 }
@@ -1112,6 +1330,13 @@ if ($Edition -ceq 'Employee' -and
     $null -ne $ProviderEligibility) {
     throw 'Employee edition cannot include provider eligibility evidence'
 }
+if ($Edition -cne 'Owner' -and $null -ne $OwnerCandidate) {
+    throw 'OwnerCandidateRoot is only valid for Owner edition'
+}
+if ($null -ne $OwnerCandidate -and
+    $AcceptedTargets -ccontains 'claude') {
+    throw 'Owner candidate duplicates an accepted Claude package'
+}
 if ($Edition -ceq 'Employee' -and
     @($AcceptedTargets | Where-Object {
         $IncludedTargets -cnotcontains $_
@@ -1119,7 +1344,7 @@ if ($Edition -ceq 'Employee' -and
     throw 'Employee target set differs from the edition contract'
 }
 if ($IsPackagedRelease) {
-    if (($AcceptedTargets -join ',') -cne ($IncludedTargets -join ',')) {
+    if (($AvailableTargets -join ',') -cne ($IncludedTargets -join ',')) {
         throw "$Edition target set differs from the edition contract"
     }
     if ($null -eq $AcceptedFoundation) {
@@ -1133,7 +1358,7 @@ if ($IsPackagedRelease) {
             'engine-manifest.json'
         ].Value
     )
-    foreach ($Package in $AcceptedPackages) {
+    foreach ($Package in $AllPackages) {
         if ([string]$Package.foundation_engine_manifest_sha256 -cne (
                 [string]$FoundationManifestRecord.sha256
             )) {
@@ -1252,16 +1477,33 @@ $TrustedIndex = [ordered]@{
     schema_version = 1
     provider_eligibility = $TrustedProviderEligibility
     packages = @(
-        $AcceptedPackages | ForEach-Object {
-            [ordered]@{
-                target = $_.target
-                client_id = $_.client_id
-                supported_version = $_.supported_version
-                asset = $_.asset
-                release_manifest = $_.release_manifest
-                acceptance_evidence = $_.acceptance_evidence
-                release_verification = $_.release_verification
-                package_acceptance = $_.package_acceptance
+        $AllPackages | ForEach-Object {
+            if ([string]$_.trust_level -ceq 'accepted') {
+                [ordered]@{
+                    trust_level = 'accepted'
+                    target = $_.target
+                    client_id = $_.client_id
+                    supported_version = $_.supported_version
+                    asset = $_.asset
+                    release_manifest = $_.release_manifest
+                    acceptance_evidence = $_.acceptance_evidence
+                    release_verification = $_.release_verification
+                    package_acceptance = $_.package_acceptance
+                }
+            }
+            else {
+                [ordered]@{
+                    trust_level = 'owner_candidate'
+                    target = $_.target
+                    client_id = $_.client_id
+                    supported_version = $_.supported_version
+                    asset = $_.asset
+                    release_manifest = $_.release_manifest
+                    candidate_acceptance = $_.candidate_acceptance
+                    live_canary = $_.live_canary
+                    components_lock = $_.components_lock
+                    non_releasable = $_.non_releasable
+                }
             }
         }
     )
@@ -1340,14 +1582,8 @@ $CompilerArguments += @(
     }
 )
 $CompilerArguments += @(
-    foreach ($Package in $AcceptedPackages) {
-        foreach ($Record in @(
-            $Package.asset,
-            $Package.release_manifest,
-            $Package.acceptance_evidence,
-            $Package.release_verification,
-            $Package.package_acceptance
-        )) {
+    foreach ($Package in $AllPackages) {
+        foreach ($Record in @(Get-PackageRecords $Package)) {
             $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
             $SourcePath = Join-Path $Package.source_directory $Name
             "/resource:$SourcePath,$($Record.resource_name)"
@@ -1422,16 +1658,10 @@ if ($IsPublicSigned) {
     $SignatureState = 'valid-authenticode'
 }
 
-foreach ($Package in $AcceptedPackages) {
+foreach ($Package in $AllPackages) {
     $Destination = Join-Path $OutputRoot "packages\$($Package.target)"
     [IO.Directory]::CreateDirectory($Destination) | Out-Null
-    foreach ($Record in @(
-        $Package.asset,
-        $Package.release_manifest,
-        $Package.acceptance_evidence,
-        $Package.release_verification,
-        $Package.package_acceptance
-    )) {
+    foreach ($Record in @(Get-PackageRecords $Package)) {
         $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
         Copy-Item -LiteralPath (
             Join-Path $Package.source_directory $Name
@@ -1505,7 +1735,7 @@ $RequiredReady = @(
     }
 ).Count -eq 0
 $EditionTargetSetReady = (
-    ($AcceptedTargets -join ',') -ceq ($IncludedTargets -join ',')
+    ($AvailableTargets -join ',') -ceq ($IncludedTargets -join ',')
 )
 $EmployeeInternalReady = (
     $Edition -ceq 'Employee' -and
@@ -1605,7 +1835,7 @@ $Manifest = [ordered]@{
         'PublicSigned' { 'public_signed' }
     }
     embedded_foundation = $true
-    embedded_target_count = $AcceptedPackages.Count
+    embedded_target_count = $AllPackages.Count
     signature = $SignatureState
     employee_release = (
         $Edition -ceq 'Employee' -and $IsPackagedRelease
@@ -1678,20 +1908,32 @@ $Manifest = [ordered]@{
     }
 }
 if ($Edition -ceq 'Owner') {
-    $Manifest['owner_claude_state'] = if ($ProviderReady) {
+    $Manifest['owner_claude_state'] = if (
+        $null -ne $OwnerCandidate
+    ) {
+        'OWNER_CANDIDATE'
+    } elseif ($ProviderReady) {
         'PROVIDER_READY'
     } else {
         'OWNER_CANDIDATE'
     }
+    if ($null -ne $OwnerCandidate) {
+        $Manifest['owner_candidate'] = [ordered]@{
+            target = 'claude'
+            trust_level = 'owner_candidate'
+            NON_RELEASABLE = $true
+            FULL_RELEASE_CLAUDE = 'NOT_PASS'
+            asset = $OwnerCandidate.asset
+            candidate_acceptance = (
+                $OwnerCandidate.candidate_acceptance
+            )
+            live_canary = $OwnerCandidate.live_canary
+            non_releasable_record = $OwnerCandidate.non_releasable
+        }
+    }
 }
-foreach ($Package in $AcceptedPackages) {
-    foreach ($Record in @(
-        $Package.asset,
-        $Package.release_manifest,
-        $Package.acceptance_evidence,
-        $Package.release_verification,
-        $Package.package_acceptance
-    )) {
+foreach ($Package in $AllPackages) {
+    foreach ($Record in @(Get-PackageRecords $Package)) {
         $Relative = [string]$Record.relative_path
         $Manifest.artifacts[$Relative] = [ordered]@{
             sha256 = [string]$Record.sha256

@@ -151,6 +151,7 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
   -DistributionMode InternalUnsigned `
   -PackageRoot <accepted-owner-packages> `
   -FoundationPackageRoot <accepted-foundation-package> `
+  -OwnerCandidateRoot <claude-owner-candidate> `
   -ClientSourcesLock .\client-sources.lock.json `
   -RuntimeSourcesLock .\runtime-sources.lock.json `
   -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
