@@ -1057,6 +1057,11 @@ namespace LlmFoundationInstaller
                         loadConnectionState
                     );
                 }
+                OperatorGuideDashboard.Bind(
+                    view,
+                    bundleRoot,
+                    loadConnectionState
+                );
                 return view;
             }
         }
@@ -3165,6 +3170,21 @@ namespace LlmFoundationInstaller
                         false
                     );
                     InstallerView.RenderPreview(preview, args[1], 1440, 900);
+                    previewApp.Shutdown();
+                    return 0;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--render-guide-preview")
+                {
+                    Application previewApp = new Application();
+                    UserControl preview =
+                        OperatorGuideDashboard.Create(bundleRoot);
+                    InstallerView.RenderPreview(
+                        preview,
+                        args[1],
+                        1440,
+                        900
+                    );
                     previewApp.Shutdown();
                     return 0;
                 }

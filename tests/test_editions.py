@@ -96,6 +96,31 @@ def _render_preview(
     return preview
 
 
+def _render_guide_preview(
+    tmp_path: Path,
+    edition: str,
+    product_role: str,
+) -> Path:
+    built = _run_build(
+        tmp_path,
+        edition=edition,
+        product_role=product_role,
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    output = tmp_path / f"{edition}-{product_role}"
+    executable = output / "LLMFoundationInstaller.exe"
+    preview = output / "guide-preview.png"
+    result = subprocess.run(
+        [str(executable), "--render-guide-preview", str(preview)],
+        cwd=output,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return preview
+
+
 @pytest.mark.parametrize(
     (
         "edition",
@@ -251,6 +276,115 @@ def test_each_edition_product_renders_its_own_preview(
     payload = preview.read_bytes()
     assert payload.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", payload[16:24]) == (1440, 900)
+
+
+def test_all_products_expose_embedded_interactive_operator_dashboard() -> None:
+    dashboard = (
+        REPOSITORY / "src" / "gui" / "OperatorGuideDashboard.cs"
+    )
+    assert dashboard.is_file()
+    source = dashboard.read_text(encoding="utf-8")
+    for marker in (
+        "01 / СТАРТ",
+        "02 / МАРШРУТЫ",
+        "03 / БЕЗОПАСНОСТЬ",
+        "04 / ВОССТАНОВЛЕНИЕ",
+        "distribution_allowed=false",
+        "Codex + OpenCode",
+        "Codex + Claude + OpenCode",
+    ):
+        assert marker in source
+
+    build_source = BUILD_SCRIPT.read_text(encoding="utf-8")
+    assert "OperatorGuideDashboard.cs" in build_source
+    for view in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+        "LaunchCenterEmployeeView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ):
+        xaml = (REPOSITORY / "src" / "gui" / view).read_text(
+            encoding="utf-8"
+        )
+        assert 'x:Name="OpenGuideDashboard"' in xaml
+
+
+def test_launch_center_selection_does_not_paint_default_listbox_chrome() -> None:
+    for view in (
+        "LaunchCenterEmployeeView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ):
+        xaml = (REPOSITORY / "src" / "gui" / view).read_text(
+            encoding="utf-8"
+        )
+        assert 'x:Key="ClientListItem"' in xaml
+        assert '<ControlTemplate TargetType="ListBoxItem">' in xaml
+        assert 'Style="{StaticResource ClientListItem}"' in xaml
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role"),
+    [
+        ("Employee", "Installer"),
+        ("Employee", "LaunchCenter"),
+        ("Owner", "Installer"),
+        ("Owner", "LaunchCenter"),
+    ],
+)
+def test_each_product_renders_its_embedded_guide_dashboard(
+    tmp_path: Path,
+    edition: str,
+    product_role: str,
+) -> None:
+    preview = _render_guide_preview(tmp_path, edition, product_role)
+    payload = preview.read_bytes()
+    assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", payload[16:24]) == (1440, 900)
+
+
+def test_role_specific_operator_guides_match_edition_boundaries() -> None:
+    employee = (
+        REPOSITORY / "docs" / "EMPLOYEE-OPERATOR-GUIDE.md"
+    ).read_text(encoding="utf-8")
+    owner = (
+        REPOSITORY / "docs" / "OWNER-OPERATOR-GUIDE.md"
+    ).read_text(encoding="utf-8")
+    employee_normalized = " ".join(employee.split())
+
+    for marker in (
+        "Codex",
+        "OpenCode",
+        "Direct",
+        "VPN",
+        "SingBox HTTP",
+        "SingBox HTTPS",
+        "InternalUnsigned",
+        "SmartScreen",
+        "build-edition.ps1",
+        "RuntimeArchive",
+        "Инструкция",
+    ):
+        assert marker in employee
+    assert "Claude" not in employee
+    assert (
+        "транспорт не подтверждает право использования сервиса"
+        in employee_normalized
+    )
+
+    for marker in (
+        "Codex",
+        "Claude",
+        "OpenCode",
+        "distribution_allowed=false",
+        "OWNER_CANDIDATE",
+        "PROVIDER_READY",
+        "FULL_RELEASE_CLAUDE: NOT_PASS",
+        "перераспространение запрещено",
+        "build-edition.ps1",
+        "RuntimeArchive",
+        "OPERATING GUIDE",
+    ):
+        assert marker in owner
 
 
 def _build_edition(

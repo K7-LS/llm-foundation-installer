@@ -1,169 +1,100 @@
-# LLM Foundation Installer — руководство оператора
+# K-7 AI Foundation — инструкция сотрудника
 
-## Назначение
+## Что входит
 
-Установщик обслуживает три независимые рабочие среды:
+Employee edition содержит только:
 
 - Codex Desktop и Codex CLI;
-- Claude Code;
-- OpenCode Desktop и CLI.
+- OpenCode CLI.
 
-EXE содержит проверенный Foundation engine и принятые пакеты баз. Если
-официального клиента нет, установщик загружает его только по записи из
-`client-sources.lock.json`, проверяет SHA-256 и издателя, а затем выполняет
-установку от имени текущего пользователя. Права администратора не требуются.
+В комплекте два приложения:
 
-Установщик не запрашивает, не читает и не переносит LLM-логины, OAuth-токены,
-API-ключи или cookies. Авторизация выполняется интерактивно внутри самих
-клиентов после установки.
+- `K7-AI-Foundation-Employee-InternalUnsigned.exe` — установка и
+  восстановление баз;
+- `K7-AI-Launch-Center-Employee-InternalUnsigned.exe` — ежедневный запуск
+  клиента через выбранный маршрут.
 
-## Семь этапов на экране
+Оба EXE работают от текущего пользователя, не требуют прав администратора и
+не читают логины, OAuth-токены, API-ключи, cookies или историю клиентов.
 
-1. **Система** — Windows, архитектура, пакеты баз и текущие клиенты.
-2. **Соединение** — Direct, VPN или Proxy.
-3. **Клиенты** — загрузка, SHA-256, подпись и издатель.
-4. **План баз** — точный список изменений управляемой поверхности.
-5. **Установка** — backup, атомарное применение, `doctor`, rollback.
-6. **Авторизация** — вход только в Codex, Claude и OpenCode.
-7. **Готово** — локальный отчёт, `$sync-base` и команды восстановления.
+## Живая инструкция
 
-У каждой базы независимый результат. Если одна база заблокирована, остальные
-могут продолжить установку.
+В правом верхнем углу Installer и Launch Center есть кнопка
+**«Инструкция»**. Она открывает встроенный интерактивный дашборд:
 
-## Правила версий клиентов
+1. **Старт** — короткий сценарий для текущего приложения.
+2. **Маршруты** — различия Direct, VPN, SingBox HTTP и SingBox HTTPS.
+3. **Безопасность** — границы доступа и проверки пакетов.
+4. **Восстановление** — `doctor`, отчёты и rollback.
 
-- Точная принятая версия не изменяется.
-- Отсутствующая или более старая версия может быть установлена.
-- Более новая либо отличающаяся версия не понижается автоматически:
-  блокируется только соответствующая база.
-- Клиенты, установленные этим EXE, не удаляются при rollback базы.
-- Пользовательская авторизация также не удаляется при rollback.
+Дашборд берёт редакцию, роль продукта и состояние bundle из самого EXE. Для
+его открытия не выполняются model calls, загрузки или входы в аккаунт.
 
-Codex Desktop открывается по точному Microsoft Store Product ID
-`9PLM9XGG6VKS`. После установки проверяются:
+## Установка
 
-```text
-Name          OpenAI.Codex
-Publisher     CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B
-Architecture  X64
-SignatureKind Store
-```
+1. Поместите рядом Installer, Launch Center и
+   `sing-box-1.13.14-windows-amd64.zip`.
+2. Сверьте SHA-256 всех файлов с `bundle-manifest.json`.
+3. Запустите Installer обычным пользователем.
+4. Оставьте выбранными Codex и OpenCode.
+5. Выберите маршрут и нажмите **«Установить выбранное»**.
+6. Войдите в каждый сервис только в открывшемся официальном клиенте.
+7. После успешного `doctor` используйте Launch Center для ежедневной работы.
 
-Поиск `winget search Codex` не используется: он может выбрать одноимённое
-стороннее приложение.
+`InternalUnsigned` может вызвать предупреждение Windows
+**Unknown Publisher** или SmartScreen. Это ожидаемо для внутреннего
+неподписанного EXE. Предупреждение не заменяет проверку SHA-256 и не означает,
+что файл стал публично доверенным.
 
-Codex CLI `0.146.0-alpha.3.1` устанавливается release-specific скриптом
-`install.ps1` из официального тега OpenAI
-`rust-v0.146.0-alpha.3.1`. Его SHA-256:
-`397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f`.
-Корневой `chatgpt.com/codex/install.ps1` для этой версии не используется:
-его текущая проверка формата версии отклоняет суффикс `alpha.3.1`. Скрипт
-релиза сначала скачивается в staging, проходит SHA-256 и AST-проверку, и
-только затем запускается с `-Release 0.146.0-alpha.3.1`.
+## Маршруты Launch Center
 
-## Режимы соединения
+- **Direct** — прямое соединение; унаследованные proxy-переменные очищаются
+  только у запускаемого процесса.
+- **VPN** — используется уже включённая системная VPN-маршрутизация.
+- **SingBox HTTP** — локальный HTTP relay только для запускаемого процесса.
+- **SingBox HTTPS** — локальный CONNECT/HTTPS relay только для запускаемого
+  процесса.
 
-### Direct
-
-Прямой доступ. Для дочернего процесса очищаются унаследованные
-`HTTP_PROXY`, `HTTPS_PROXY` и `ALL_PROXY`; задаётся `NO_PROXY=*`.
-
-### VPN
-
-Самостоятельный режим на системной VPN-маршрутизации. Отсутствие proxy
-полностью допустимо и не является предупреждением или блокером. Устаревшие
-proxy-переменные дочернему процессу не передаются.
-
-### Proxy
-
-Поддерживаются:
-
-- HTTP;
-- HTTPS;
-- SOCKS5 с удалённым DNS (`socks5h`);
-- без авторизации;
-- username/password.
-
-Профиль без секрета хранится в
-`%USERPROFILE%\.llm-foundation\connection.json`. Пароль хранится отдельно и
-защищён Windows DPAPI текущего пользователя. Секрет передаётся процессу
-загрузки только во временном окружении и не попадает в argv, manifest,
-evidence или отчёт. `curl -v` с реальными учётными данными запрещён.
-
-Загрузка идёт во временный `.part`. Только после проверки размера, SHA-256,
-подписи и издателя файл атомарно попадает в staging. Прерванный или подменённый
-файл не запускается.
-
-## Граница допустимого использования провайдеров
-
-Режим соединения — только транспорт. Он не подтверждает право использования
-конкретного сервиса в текущем регионе и не меняет правила провайдера.
-
-Для Claude оператор обязан проверить актуальный
-[список поддерживаемых стран и регионов](https://www.anthropic.com/supported-countries)
-и применимые [Consumer Terms](https://www.anthropic.com/legal/consumer-terms).
-VPN или Proxy не должен использоваться для обхода регионального ограничения,
-блокировки аккаунта, продуктового контроля или защитного механизма.
-
-Каждому сотруднику требуется отдельная допустимая учётная запись. Общие логины,
-пароли, API-ключи и аккаунты не выдаются. Автоматизированный или без участия
-человека доступ допустим только в явно разрешённом провайдером контуре.
-
-Установщик не определяет геолокацию, не отправляет сведения об аккаунте и не
-может установить причину safeguard-блокировки. Для заблокированного аккаунта
-используется официальный appeal/review, а не технический обход.
-
-### Provider eligibility evidence
-
-Перед employee-сборкой оператор создаёт обезличенное подтверждение:
-
-```powershell
-pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
-  -OutputPath .\provider-eligibility-evidence.json `
-  -ConfirmEmployeeLocationEligibility `
-  -ConfirmOrganizationEligibility `
-  -ConfirmIndividualAccounts `
-  -ConfirmNoRegionOrBanBypass `
-  -ConfirmNoUnattendedConsumerAutomation
-```
-
-`ProviderEligibilityEvidence` действует не более 7 суток. Файл содержит только
-контрольные отметки, UTC-время и канонические ссылки — без ФИО, страны, IP,
-email или account ID. Он встраивается в EXE и связывается SHA-256 с bundle.
-Просроченный, изменённый или неполный evidence блокирует только Claude.
-
-## Что сохраняется
-
-Foundation изменяет только объявленную target-пакетом поверхность. Не
-затрагиваются:
-
-- авторизация, OAuth и API-ключи;
-- сессии, история и архивы;
-- memories, SQLite и state;
-- проекты и рабочие папки;
-- browser/computer-use state;
-- внешние imports;
-- пользовательские данные вне управляемой поверхности.
-
-Неизвестные старые agents/skills резервируются и выводятся из активного
-discovery, но не удаляются безвозвратно. Rollback возвращает предыдущую
-управляемую поверхность побайтно.
-
-## Одностороннее обновление
+При первом SingBox-запуске Launch Center извлекает runtime из лежащего рядом
+архива, проверяет pinned SHA-256 и устанавливает его в:
 
 ```text
-hub → immutable release → verify → plan → install → doctor → consumer
+%USERPROFILE%\.llm-foundation\runtimes\sing-box\1.13.14\
 ```
 
-Сотрудник явно запускает `$sync-base`; `/sync-base` остаётся текстовым
-алиасом. Consumer не отправляет на hub feedback, session-report, телеметрию,
-рабочие документы, локальные изменения или учётные данные. TTL-проверка
-обновления выполняется не чаще одного раза в сутки и молчит, если новой
-стабильной версии нет.
+Повреждённый или неожиданно изменённый runtime не перезаписывается
+автоматически: маршрут блокируется с диагностическим кодом.
 
-## Диагностика
+Режим соединения — только транспорт. Этот транспорт не подтверждает право
+использования сервиса, не меняет правила провайдера и не должен применяться
+для обхода региональных ограничений, блокировки аккаунта или safeguard
+policy. Каждый сотрудник использует отдельную допустимую учётную запись.
 
-Foundation поддерживает:
+## Ежедневный запуск
+
+1. Откройте AI Launch Center.
+2. Выберите Codex или OpenCode.
+3. Выберите Direct, VPN, SingBox HTTP или SingBox HTTPS.
+4. Нажмите **«Запустить»**.
+
+Launch Center разрешает только точную цель, принятую edition contract:
+
+- Store-приложение проверяется по AppX identity и manifest;
+- CLI проверяется по локальной managed-command записи и SHA-256;
+- подмена пути, файла или runtime блокирует запуск;
+- AppX через process-local SingBox не запускается, потому что безопасно
+  передать ему локальное proxy-окружение невозможно; используйте Direct или
+  системный VPN.
+
+## Диагностика и rollback
+
+Локальные отчёты:
+
+```text
+%USERPROFILE%\.llm-foundation\reports\
+```
+
+Команды Foundation:
 
 ```text
 plan
@@ -173,147 +104,39 @@ inventory
 rollback
 ```
 
-Локальные отчёты находятся в:
+Rollback возвращает только управляемую поверхность базы. Он не удаляет
+проекты, историю, авторизацию, cookies, memories и данные клиента.
 
-```text
-%USERPROFILE%\.llm-foundation\reports\
-```
+## Сборка Employee edition
 
-В отчёте отдельно указаны состояние каждой базы, версия клиента, результат
-`doctor`, сохранённые данные и незавершённые шаги. В отчёте нет секретов.
-
-## Сборка для сотрудников
-
-Режим задаётся явно:
-
-```text
--DistributionMode Preview | InternalUnsigned | PublicSigned
-```
-
-### Preview
-
-Диагностика и synthetic-проверки. Распространение сотрудникам запрещено.
-
-### InternalUnsigned
-
-Допустимый внутренний employee-релиз после трёх target PASS, provider evidence,
-client source lock, отдельного immutable Foundation 0.2.1, hub-canary и чистого
-пилота. Сертификат не требуется.
-Windows может показать `Unknown Publisher` или SmartScreen — это ожидаемое
-предупреждение, а не утверждение о доверенной подписи.
-
-На release-машине требуются Python 3.12, PowerShell 7, Windows PowerShell 5.1
-и Microsoft Visual Studio Build Tools с Roslyn/MSBuild. Сборка намеренно
-отказывается от legacy Framework `csc.exe`: без Roslyn нельзя доказать
-побайтовую повторяемость EXE.
+Непредварительная сборка требует accepted package roots и точный runtime
+archive:
 
 ```powershell
-pwsh -NoProfile -File .\tools\build-gui.ps1 `
-  -OutputRoot .\dist\employee `
-  -PackageRoot <accepted-packages-root> `
-  -FoundationPackageRoot <accepted-foundation-0.2.1-root> `
-  -ProviderEligibilityEvidence .\provider-eligibility-evidence.json `
-  -DistributionMode InternalUnsigned
+pwsh -NoProfile -File .\tools\build-edition.ps1 `
+  -OutputRoot .\dist\employee-internal `
+  -Edition Employee `
+  -DistributionMode InternalUnsigned `
+  -PackageRoot <accepted-codex-opencode-packages> `
+  -FoundationPackageRoot <accepted-foundation-package> `
+  -ClientSourcesLock .\client-sources.lock.json `
+  -RuntimeSourcesLock .\runtime-sources.lock.json `
+  -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
 ```
 
-В `accepted-foundation-0.2.1-root` обязательны:
+Результат содержит два EXE, runtime archive и общий
+`bundle-manifest.json`. Сборщик проверяет SHA-256 runtime до копирования и
+после него.
 
-- `foundation-engine-0.2.1.zip`;
-- `release-manifest.json`;
-- `acceptance-evidence.json` с `FOUNDATION_SYNTHETIC: PASS`;
-- `release-verification.json` после `gh release verify` и
-  `gh release verify-asset`;
-- `package-acceptance.json`.
+## Перед выдачей сотруднику
 
-Employee-сборка извлекает engine именно из этого ZIP и сверяет каждый байт.
-Локальная пересборка `src/foundation.ps1` разрешена только для `Preview`.
-Каждый из трёх target manifests обязан содержать SHA-256 того же
-`engine-manifest.json`; несовпадение блокирует сборку.
+- Codex и OpenCode package acceptance — PASS.
+- Foundation package acceptance — PASS.
+- Runtime archive совпадает с `runtime-sources.lock.json`.
+- Полный Windows test suite — PASS.
+- Четыре финальных preview проверены визуально.
+- Чистый Windows x64 pilot пройден теми же байтами.
+- Remote release immutable, а каждый asset повторно проверен после публикации.
 
-В manifest должны быть:
-
-```json
-{
-  "distribution_mode": "internal_unsigned",
-  "signature": "unsigned-internal",
-  "employee_release": true,
-  "employee_distribution_allowed": true,
-  "public_distribution_allowed": false,
-  "windows_warning_expected": true
-}
-```
-
-### PublicSigned
-
-Дополнительно требует валидную timestamped Authenticode-подпись. Этот режим
-реализован, но текущим решением владельца имеет статус
-`PUBLIC_SIGNED_RELEASE: DEFERRED_BY_OWNER`.
-
-## Пилот и выпуск
-
-До массовой установки один чистый Windows x64 ПК сотрудника без admin должен
-пройти:
-
-- реальный Direct/VPN/Proxy-сценарий;
-- Codex Desktop и точный CLI;
-- Claude Code;
-- OpenCode Desktop/CLI и OpenAI `/connect` OAuth;
-- simple-chat без tool/reviewer;
-- discovery 16 агентов и 37 навыков;
-- `$sync-base`;
-- rollback и сохранение пользовательских данных.
-
-Пилот выполняется теми же байтами, которые загружены в Draft Release. При
-ошибке draft не публикуется; создаётся новый release candidate. Stable release
-публикуется без пересборки и после публикации проверяется `gh release verify`
-и `gh release verify-asset`.
-
-### Контролируемая последовательность
-
-1. Запустить commit-bound `run-acceptance.py` на чистом worktree.
-2. Подготовить и опубликовать `foundation-engine-v0.2.1`; создать локальный
-   post-publication `package-acceptance.json`.
-3. Выполнить минимальные provider-гейты трёх target-баз и опубликовать их
-   immutable releases.
-4. Собрать `InternalUnsigned` только из четырёх принятых package roots.
-5. Выполнить zero-model hub canary:
-
-   ```powershell
-   py -3.12 .\tools\hub_canary.py `
-     --execute-approved-hub-canary `
-     --bundle .\dist\employee `
-     --home <isolated-canary-home> `
-     --output .\dist\hub-canary.json
-   ```
-
-6. Создать draft assets без пересборки EXE:
-
-   ```powershell
-   py -3.12 .\tools\installer_release.py `
-     --bundle .\dist\employee `
-     --hub-canary .\dist\hub-canary.json `
-     --output .\dist\installer-draft-0.3.0
-   ```
-
-7. На чистом ПК пройти чек-лист и создать обезличенное evidence через
-   `pilot_evidence.py`. Скрипт требует отдельное подтверждение каждого пункта,
-   чистой Windows x64 и отсутствия admin; он не записывает имя ПК, ФИО, IP,
-   email или идентификатор аккаунта.
-8. Выполнить `pilot_release.py`. Меняются только post-pilot metadata/evidence;
-   EXE остаётся побайтно тем же, что прошёл hub canary и пилот.
-9. Опубликовать stable assets как immutable `installer-v0.3.0`.
-10. Запустить:
-
-   ```powershell
-   py -3.12 .\tools\installer_release_verifier.py `
-     --stable-root .\dist\installer-stable-0.3.0 `
-     --output .\dist\installer-v0.3.0-release-verification.json
-   ```
-
-   Verifier требует `draft=false`, `prerelease=false`, `immutable=true`,
-   точный remote asset inventory и отдельный successful attestation для
-   каждого опубликованного файла.
-
-Неподписанный internal EXE нельзя выдавать как публично доверенный подписанный
-продукт. `InternalUnsigned` предназначен только для контролируемого внутреннего
-распространения.
+`Preview` не является employee-релизом. `InternalUnsigned` разрешён только для
+контролируемого внутреннего распространения после всех перечисленных гейтов.

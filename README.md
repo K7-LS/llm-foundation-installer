@@ -201,5 +201,10 @@ py -3.12 .\tools\installer_release_verifier.py `
 `FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a provider
 canary, clean-PC pilot, or final employee release.
 
-See [the employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md) for the
-complete operating and release procedure.
+Role-specific operation and release procedures:
+
+- [Employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md)
+- [Owner operating guide](docs/OWNER-OPERATOR-GUIDE.md)
+
+Both products also contain an embedded interactive operator dashboard opened
+with **Инструкция** (Employee) or **OPERATING GUIDE** (Owner).

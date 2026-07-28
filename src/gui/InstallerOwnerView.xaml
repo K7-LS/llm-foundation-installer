@@ -96,7 +96,10 @@
           <TextBlock Text="Управляемый контур клиентов" FontFamily="Bahnschrift SemiCondensed" FontSize="27" FontWeight="SemiBold" Margin="0,5,0,0" />
           <TextBlock Text="Локальная установка. Provider gates остаются независимыми от наличия пакета." Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
         </StackPanel>
-        <Button x:Name="RefreshEnvironment" Grid.Column="1" Content="RESCAN" Style="{StaticResource SecondaryButton}" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button x:Name="OpenGuideDashboard" Content="OPERATING GUIDE" Style="{StaticResource SecondaryButton}" Margin="0,0,9,0" />
+          <Button x:Name="RefreshEnvironment" Content="RESCAN" Style="{StaticResource SecondaryButton}" />
+        </StackPanel>
       </Grid>
 
       <Grid Grid.Row="1" Margin="0,20,0,14">

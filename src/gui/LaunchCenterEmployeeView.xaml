@@ -28,6 +28,18 @@
       <Setter Property="CornerRadius" Value="11" />
       <Setter Property="Padding" Value="15" />
     </Style>
+    <Style x:Key="ClientListItem" TargetType="ListBoxItem">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <ContentPresenter />
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </UserControl.Resources>
 
   <Grid>
@@ -69,9 +81,12 @@
           <TextBlock Text="ГОТОВО К РАБОТЕ / 01" FontFamily="Cascadia Mono" FontSize="11" Foreground="{StaticResource Muted}" />
           <TextBlock Text="Что запускаем сегодня?" FontFamily="Bahnschrift SemiCondensed" FontSize="31" FontWeight="SemiBold" Margin="0,5,0,0" />
         </StackPanel>
-        <Border Grid.Column="1" Background="#E3F4F0" CornerRadius="18" Padding="14,7" VerticalAlignment="Top">
-          <TextBlock Text="● LOCAL READY" Foreground="#146B5A" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" />
-        </Border>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+          <Button x:Name="OpenGuideDashboard" Content="Инструкция" Height="34" Padding="14,0" Margin="0,0,9,0" Background="#FFFFFF" Foreground="#071E22" BorderBrush="#D7DFDE" BorderThickness="1" FontWeight="SemiBold" />
+          <Border Background="#E3F4F0" CornerRadius="18" Padding="14,7">
+            <TextBlock Text="● LOCAL READY" Foreground="#146B5A" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" />
+          </Border>
+        </StackPanel>
       </Grid>
 
       <Grid Grid.Row="1" Margin="0,30,0,24">
@@ -79,7 +94,7 @@
         <StackPanel Grid.Column="0">
           <TextBlock Text="ВЫБЕРИТЕ КЛИЕНТ" FontFamily="Cascadia Mono" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,10" />
           <ListBox x:Name="LaunchTargetList" Background="Transparent" BorderThickness="0" SelectedIndex="0">
-            <ListBoxItem Tag="codex-desktop" Padding="0" Margin="0,0,0,12">
+            <ListBoxItem Tag="codex-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
               <Border Background="#FFFFFF" BorderBrush="#30BCED" BorderThickness="2" CornerRadius="14" Padding="20">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -89,7 +104,7 @@
                 </Grid>
               </Border>
             </ListBoxItem>
-            <ListBoxItem Tag="opencode-desktop" Padding="0">
+            <ListBoxItem Tag="opencode-desktop" Style="{StaticResource ClientListItem}" Padding="0">
               <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="20">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

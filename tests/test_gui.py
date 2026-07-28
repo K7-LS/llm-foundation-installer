@@ -4152,18 +4152,24 @@ def test_owner_candidate_is_installable_only_in_owner_edition():
 
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
-    guide = (
+    employee = (
         REPOSITORY_ROOT / "docs" / "EMPLOYEE-OPERATOR-GUIDE.md"
     ).read_text(encoding="utf-8").lower()
-    guide = " ".join(guide.split())
-    assert "https://www.anthropic.com/supported-countries" in guide
-    assert "не подтверждает право использования" in guide
-    assert "не должен использоваться для обхода" in guide
-    assert "отдельная допустимая учётная запись" in guide
-    assert "автоматизированный или без участия человека доступ" in guide
-    assert "new-provider-eligibility-evidence.ps1" in guide
-    assert "providereligibilityevidence" in guide
-    assert "7 суток" in guide
+    owner = (
+        REPOSITORY_ROOT / "docs" / "OWNER-OPERATOR-GUIDE.md"
+    ).read_text(encoding="utf-8").lower()
+    employee = " ".join(employee.split())
+    owner = " ".join(owner.split())
+    assert "не подтверждает право использования" in employee
+    assert "не должен применяться для обхода" in employee
+    assert "отдельную допустимую учётную запись" in employee
+    assert "https://www.anthropic.com/supported-countries" in owner
+    assert "https://www.anthropic.com/legal/consumer-terms" in owner
+    assert "region bypass" in owner
+    assert "автоматизированный или без участия человека" in owner
+    assert "new-provider-eligibility-evidence.ps1" in owner
+    assert "providereligibilityevidence" in owner
+    assert "7 суток" in owner
 
 
 def test_installer_ui_makes_provider_policy_boundary_visible():
