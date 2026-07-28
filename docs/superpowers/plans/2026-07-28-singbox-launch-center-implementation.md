@@ -370,7 +370,8 @@ git commit -m "feat: add recoverable Windows proxy lease"
 For each edition and exact launch target, assert Direct/VPN avoid sing-box;
 HTTP/HTTPS start the fake verified runtime; process-local environment is used
 when supported; a system proxy lease is acquired only by an explicit adapter.
-Assert OpenCode Desktop starts the managed Desktop EXE in every route.
+Assert the visible OpenCode choice starts the managed CLI target in every
+supported route and never attempts a desktop application.
 
 - [ ] **Step 2: Run route matrix and confirm RED**
 
@@ -517,7 +518,7 @@ evidence_body_sha256
 ```
 
 Reject PII keys, credential-like fields, mismatched artifact hashes,
-`model_requests != 0`, false cleanup and missing OpenCode Desktop visual
+`model_requests != 0`, false cleanup and missing OpenCode CLI visual
 confirmation.
 
 - [ ] **Step 2: Implement default-offline canary generation**

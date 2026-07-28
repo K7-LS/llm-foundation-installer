@@ -361,9 +361,10 @@ assert "claude-code" not in employee_center["targets"]
 assert "claude-code" in owner_center["targets"]
 ```
 
-Create managed Desktop and CLI fixtures and assert resolving
-`opencode-desktop` returns the exact registered, hash-verified Desktop EXE and
-never `cmd.exe` or `opencode` from `PATH`.
+The internal catalog may retain both exact adapters for compatibility tests,
+but the visible Employee and Owner choice resolves OpenCode only to
+`opencode-cli`. Assert that the UI never substitutes the dormant desktop
+adapter or an unverified `opencode` from `PATH`.
 
 - [ ] **Step 2: Run product-role tests and confirm RED**
 

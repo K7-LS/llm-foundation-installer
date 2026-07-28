@@ -44,6 +44,12 @@ def _confirmations() -> dict[str, bool]:
     return {name: True for name in pilot_release.REQUIRED_PILOT_CHECKS}
 
 
+def test_employee_pilot_requires_only_the_supported_opencode_cli():
+    assert "opencode_cli" in pilot_release.REQUIRED_PILOT_CHECKS
+    assert "opencode_oauth" in pilot_release.REQUIRED_PILOT_CHECKS
+    assert "opencode_desktop" not in pilot_release.REQUIRED_PILOT_CHECKS
+
+
 def test_pilot_evidence_is_pii_free_and_binds_every_executable_and_runtime(
     tmp_path: Path,
 ):
