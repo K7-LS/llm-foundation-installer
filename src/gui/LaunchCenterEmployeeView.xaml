@@ -79,7 +79,7 @@
         <StackPanel Grid.Column="0">
           <TextBlock Text="ВЫБЕРИТЕ КЛИЕНТ" FontFamily="Cascadia Mono" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,10" />
           <ListBox x:Name="LaunchTargetList" Background="Transparent" BorderThickness="0" SelectedIndex="0">
-            <ListBoxItem Padding="0" Margin="0,0,0,12">
+            <ListBoxItem Tag="codex-desktop" Padding="0" Margin="0,0,0,12">
               <Border Background="#FFFFFF" BorderBrush="#30BCED" BorderThickness="2" CornerRadius="14" Padding="20">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -89,7 +89,7 @@
                 </Grid>
               </Border>
             </ListBoxItem>
-            <ListBoxItem Padding="0">
+            <ListBoxItem Tag="opencode-desktop" Padding="0">
               <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="20">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

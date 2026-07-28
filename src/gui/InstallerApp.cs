@@ -1049,6 +1049,14 @@ namespace LlmFoundationInstaller
                         loadConnectionState
                     );
                 }
+                else
+                {
+                    LaunchCenterActions.Bind(
+                        view,
+                        bundleRoot,
+                        loadConnectionState
+                    );
+                }
                 return view;
             }
         }
@@ -1256,6 +1264,143 @@ namespace LlmFoundationInstaller
             {
                 encoder.Save(stream);
             }
+        }
+    }
+
+    internal static class LaunchCenterActions
+    {
+        public static void Bind(
+            UserControl view,
+            string bundleRoot,
+            bool interactive
+        )
+        {
+            if (!interactive)
+            {
+                return;
+            }
+            ListBox targetList = view.FindName(
+                "LaunchTargetList"
+            ) as ListBox;
+            Button launch = view.FindName("LaunchSelected") as Button;
+            TextBlock routeStatus = view.FindName(
+                "RouteStatus"
+            ) as TextBlock;
+            TextBlock evidenceStatus = view.FindName(
+                "EvidenceStatus"
+            ) as TextBlock;
+            TextBlock rollbackStatus = view.FindName(
+                "RollbackStatus"
+            ) as TextBlock;
+            RadioButton direct = view.FindName(
+                "RouteDirect"
+            ) as RadioButton;
+            RadioButton vpn = view.FindName("RouteVpn") as RadioButton;
+            RadioButton http = view.FindName(
+                "RouteHttp"
+            ) as RadioButton;
+            RadioButton https = view.FindName(
+                "RouteHttps"
+            ) as RadioButton;
+            if (targetList == null || launch == null)
+            {
+                return;
+            }
+            Action refreshLabel = delegate
+            {
+                ListBoxItem selected =
+                    targetList.SelectedItem as ListBoxItem;
+                string targetId = selected == null
+                    ? null
+                    : selected.Tag as string;
+                launch.IsEnabled = !String.IsNullOrWhiteSpace(targetId);
+                launch.Content = String.IsNullOrWhiteSpace(targetId)
+                    ? "SELECT CLIENT"
+                    : "LAUNCH SELECTED  →";
+            };
+            targetList.SelectionChanged += delegate
+            {
+                refreshLabel();
+            };
+            launch.Click += async delegate
+            {
+                ListBoxItem selected =
+                    targetList.SelectedItem as ListBoxItem;
+                string targetId = selected == null
+                    ? null
+                    : selected.Tag as string;
+                if (String.IsNullOrWhiteSpace(targetId))
+                {
+                    return;
+                }
+                string route = direct != null &&
+                    direct.IsChecked == true
+                    ? "Direct"
+                    : (vpn != null && vpn.IsChecked == true
+                        ? "VPN"
+                        : (http != null && http.IsChecked == true
+                            ? "SingBoxHttp"
+                            : (https != null &&
+                                https.IsChecked == true
+                                ? "SingBoxHttps"
+                                : "Direct")));
+                EditionProfile edition = EditionProfile.LoadEmbedded();
+                string home = Environment.GetFolderPath(
+                    Environment.SpecialFolder.UserProfile
+                );
+                LaunchTargetResolution resolution =
+                    LaunchTargetResolver.Resolve(
+                        edition,
+                        bundleRoot,
+                        home,
+                        targetId
+                    );
+                if (resolution.status != "RESOLVED")
+                {
+                    if (evidenceStatus != null)
+                    {
+                        evidenceStatus.Text = resolution.reason;
+                        evidenceStatus.Foreground = new SolidColorBrush(
+                            Color.FromRgb(252, 122, 77)
+                        );
+                    }
+                    return;
+                }
+                launch.IsEnabled = false;
+                if (routeStatus != null)
+                {
+                    routeStatus.Text = route + " / STARTING";
+                }
+                LauncherSessionResult result = await Task.Run(
+                    () => ClientLauncher.StartAndWait(
+                        resolution,
+                        route
+                    )
+                );
+                if (routeStatus != null)
+                {
+                    routeStatus.Text = result.transport + " / " +
+                        result.status;
+                }
+                if (evidenceStatus != null)
+                {
+                    evidenceStatus.Text = result.reason ??
+                        "EXACT CLIENT VERIFIED";
+                    evidenceStatus.Foreground = new SolidColorBrush(
+                        result.status == "PASS"
+                            ? Color.FromRgb(119, 203, 185)
+                            : Color.FromRgb(252, 122, 77)
+                    );
+                }
+                if (rollbackStatus != null)
+                {
+                    rollbackStatus.Text = result.cleanup_verified
+                        ? "CLEANUP VERIFIED"
+                        : "CLEANUP UNPROVEN";
+                }
+                refreshLabel();
+            };
+            refreshLabel();
         }
     }
 
@@ -2630,6 +2775,36 @@ namespace LlmFoundationInstaller
                         resolution
                     ));
                     return resolution.status == "RESOLVED" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--launch-target-json")
+                {
+                    LaunchTargetResolution resolution =
+                        LaunchTargetResolver.Resolve(
+                            edition,
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    LauncherSessionResult launched =
+                        ClientLauncher.StartAndWait(
+                            resolution,
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        launched
+                    ));
+                    return launched.status == "PASS" ? 0 : 20;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--resolve-sibling-json")
+                {
+                    SiblingProductResolution sibling =
+                        ProductHandoff.Resolve(edition, args[1]);
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        sibling
+                    ));
+                    return sibling.status == "RESOLVED" ? 0 : 20;
                 }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {

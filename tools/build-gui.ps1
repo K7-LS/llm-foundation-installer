@@ -1205,6 +1205,7 @@ $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
 $EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
 $EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
 $LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
+$ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1276,6 +1277,7 @@ $CompilerArguments += @(
     $EditionSource,
     $EditionThemeSource,
     $LaunchTargetSource,
+    $ClientLauncherSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )

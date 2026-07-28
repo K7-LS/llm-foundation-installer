@@ -57,17 +57,17 @@
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
           <TextBlock Text="CLIENT MATRIX" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" />
           <ListBox x:Name="LaunchTargetList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectedIndex="0" Margin="0,14,0,0">
-            <ListBoxItem Padding="0" Margin="0,0,0,9">
+            <ListBoxItem Tag="codex-desktop" Padding="0" Margin="0,0,0,9">
               <Border Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="13">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
-            <ListBoxItem Padding="0" Margin="0,0,0,9">
+            <ListBoxItem Tag="claude-code" Padding="0" Margin="0,0,0,9">
               <Border Background="#241F1C" BorderBrush="#FC4912" BorderThickness="1" CornerRadius="6" Padding="13">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / GUARDED" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="BLOCKED" Foreground="#FC7A4D" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
-            <ListBoxItem Padding="0">
+            <ListBoxItem Tag="opencode-desktop" Padding="0">
               <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="13">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#77CBB9" /><TextBlock Text="OpenCode CLI" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
