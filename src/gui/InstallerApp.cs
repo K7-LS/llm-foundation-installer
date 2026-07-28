@@ -2575,6 +2575,15 @@ namespace LlmFoundationInstaller
             try
             {
                 string bundleRoot = AppDomain.CurrentDomain.BaseDirectory;
+                EditionProfile edition = EditionProfile.LoadEmbedded();
+                if (args.Length == 1 &&
+                    args[0] == "--describe-edition")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        edition
+                    ));
+                    return 0;
+                }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {
                     return RunSelfTest(bundleRoot);

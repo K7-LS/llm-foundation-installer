@@ -2,6 +2,12 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Employee', 'Owner')]
+    [string]$Edition,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Installer', 'LaunchCenter')]
+    [string]$ProductRole,
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
     [string]$ProviderEligibilityEvidence,
@@ -1079,6 +1085,36 @@ if (-not $IsPublicSigned -and
     )
 }
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
+$EditionContract = if ($Edition -ceq 'Employee') {
+    [ordered]@{
+        edition_id = 'Employee'
+        display_name = 'K-7 AI Foundation Employee'
+        distribution_allowed = $true
+        included_target_ids = @('codex', 'opencode')
+        required_target_ids = @('codex', 'opencode')
+        theme_id = 'K7Signal'
+        owner_controlled = $false
+        product_role = $ProductRole
+    }
+}
+else {
+    [ordered]@{
+        edition_id = 'Owner'
+        display_name = 'K-7 AI Foundation Owner'
+        distribution_allowed = $false
+        included_target_ids = @('claude', 'codex', 'opencode')
+        required_target_ids = @('codex', 'opencode')
+        theme_id = 'SignalConsole'
+        owner_controlled = $true
+        product_role = $ProductRole
+    }
+}
+$EditionResource = Join-Path $OutputRoot '.edition-profile.json'
+[IO.File]::WriteAllText(
+    $EditionResource,
+    ((ConvertTo-Json $EditionContract -Depth 4 -Compress) + "`n"),
+    $Utf8NoBom
+)
 $EngineRoot = Join-Path $OutputRoot 'engine'
 if ($IsEmployeeRelease) {
     Export-AcceptedFoundationEngine $AcceptedFoundation $EngineRoot
@@ -1135,6 +1171,7 @@ $TrustedResource = Join-Path $OutputRoot '.trusted-packages.json'
 
 $Executable = Join-Path $OutputRoot 'LLMFoundationInstaller.exe'
 $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
+$EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1158,6 +1195,7 @@ $CompilerArguments = @(
     "/win32manifest:$ApplicationManifest",
     "/win32icon:$ApplicationIcon",
     "/resource:$View,InstallerView.xaml",
+    "/resource:$EditionResource,EditionProfile.json",
     "/resource:$TrustedResource,TrustedPackages.json",
     "/resource:$ClientSourcesLock,ClientSources.lock.json",
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
@@ -1189,6 +1227,7 @@ if ($null -ne $ProviderEligibility) {
 $CompilerArguments += $References | ForEach-Object { "/reference:$_" }
 $CompilerArguments += @(
     $Source,
+    $EditionSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )
@@ -1199,7 +1238,11 @@ if ($LASTEXITCODE -ne 0 -or
     throw 'GUI compilation failed'
 }
 
-Remove-Item -LiteralPath @($TrustedResource, $ApplicationIcon) -Force
+Remove-Item -LiteralPath @(
+    $TrustedResource,
+    $EditionResource,
+    $ApplicationIcon
+) -Force
 
 $SignatureState = if ($DistributionMode -ceq 'InternalUnsigned') {
     'unsigned-internal'
