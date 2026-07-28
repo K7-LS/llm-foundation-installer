@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "source_kind": "owner_supplied_behavior_reference",
+  "received_date": "2026-07-28",
+  "executed_during_intake": false,
+  "files": {
+    "Start-AI-SingBox-HTTPS.ps1": {
+      "bytes": 36565,
+      "sha256": "5b5a10ae706e479f08c79377abc204e682f73494ee83e98117af7a7ba91f661d",
+      "contains_credentials": false
+    },
+    "Start-AI-SingBox-HTTP.ps1": {
+      "bytes": 36413,
+      "sha256": "4687c15cafb749e8c9a25c93ee2fa7ed3fd9d27a6cc260d79f05ce040281e0d9",
+      "contains_credentials": false
+    },
+    "Test-AI-SingBox-Launchers.ps1": {
+      "bytes": 5787,
+      "sha256": "ceba3cb018c937125573eae8448a7639c6aff5b90e42e19ccc4a6d599e116bf2",
+      "contains_credentials": false
+    },
+    "AI-SINGBOX-LAUNCHERS-HANDOFF.md": {
+      "bytes": 9647,
+      "sha256": "ee102e8fa61ad3840674bf8c440204550b917f0119b5ff408c33e5ff09b6d654",
+      "contains_credentials": false
+    }
+  }
+}
