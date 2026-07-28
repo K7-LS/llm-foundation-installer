@@ -1,0 +1,126 @@
+<UserControl
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    FontFamily="Segoe UI"
+    Background="#071E22"
+    SnapsToDevicePixels="True"
+    UseLayoutRounding="True">
+  <UserControl.Resources>
+    <SolidColorBrush x:Key="Ink" Color="#071E22" />
+    <SolidColorBrush x:Key="Orange" Color="#FC4912" />
+    <SolidColorBrush x:Key="Mint" Color="#77CBB9" />
+    <SolidColorBrush x:Key="Blue" Color="#30BCED" />
+    <SolidColorBrush x:Key="Panel" Color="#0C292E" />
+    <SolidColorBrush x:Key="Panel2" Color="#10343A" />
+    <SolidColorBrush x:Key="Line" Color="#285057" />
+    <SolidColorBrush x:Key="Text" Color="#EAF3F2" />
+    <SolidColorBrush x:Key="Muted" Color="#91AAAD" />
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Text}" /></Style>
+    <Style x:Key="PanelCard" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Panel}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style x:Key="Route" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{StaticResource Text}" />
+      <Setter Property="FontFamily" Value="Cascadia Mono" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Margin" Value="0,0,18,0" />
+    </Style>
+  </UserControl.Resources>
+
+  <Grid Margin="24">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel Orientation="Horizontal">
+        <Border Width="48" Height="48" CornerRadius="6" Background="#30BCED">
+          <TextBlock Text="K7" Foreground="#071E22" FontFamily="Bahnschrift SemiCondensed" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <StackPanel Margin="14,0,0,0">
+          <TextBlock Text="SIGNAL ROUTING CONSOLE / LAUNCH CENTER" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" />
+          <TextBlock Text="Рабочий контур владельца" FontFamily="Bahnschrift SemiCondensed" FontSize="27" FontWeight="SemiBold" Margin="0,4,0,0" />
+        </StackPanel>
+      </StackPanel>
+      <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+        <Border Background="#FC4912" CornerRadius="3" Padding="10,5"><TextBlock Text="OWNER CONTROLLED" Foreground="#FFFFFF" FontFamily="Cascadia Mono" FontSize="10" FontWeight="Bold" /></Border>
+        <TextBlock Text="DISTRIBUTION DISALLOWED" FontFamily="Cascadia Mono" FontSize="9" Foreground="#FC7A4D" HorizontalAlignment="Right" Margin="0,5,0,0" />
+      </StackPanel>
+    </Grid>
+
+    <Grid Grid.Row="1" Margin="0,24,0,20">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="310" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource PanelCard}">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <TextBlock Text="CLIENT MATRIX" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" />
+          <ListBox x:Name="LaunchTargetList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectedIndex="0" Margin="0,14,0,0">
+            <ListBoxItem Padding="0" Margin="0,0,0,9">
+              <Border Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="13">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Padding="0" Margin="0,0,0,9">
+              <Border Background="#241F1C" BorderBrush="#FC4912" BorderThickness="1" CornerRadius="6" Padding="13">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / GUARDED" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="BLOCKED" Foreground="#FC7A4D" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Padding="0">
+              <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="13">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#77CBB9" /><TextBlock Text="OpenCode CLI" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="READY" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
+          </ListBox>
+          <Border Grid.Row="2" Background="#40251F" BorderBrush="#784332" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,14,0,0">
+            <TextBlock Text="Claude package may exist locally; launch remains blocked until current provider evidence passes." Foreground="#FCB69C" FontSize="11" TextWrapping="Wrap" />
+          </Border>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Border Style="{StaticResource PanelCard}">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel><TextBlock Text="ROUTE PROFILE / SELECTED" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="Selected client → Local relay → Upstream" FontFamily="Bahnschrift SemiCondensed" FontSize="21" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <RadioButton x:Name="RouteDirect" GroupName="Route" Content="DIRECT" IsChecked="True" Style="{StaticResource Route}" />
+                <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource Route}" />
+                <RadioButton x:Name="RouteHttp" GroupName="Route" Content="HTTP" Style="{StaticResource Route}" />
+                <RadioButton x:Name="RouteHttps" GroupName="Route" Content="HTTPS" Style="{StaticResource Route}" Margin="0" />
+              </StackPanel>
+            </Grid>
+            <Grid Grid.Row="1" Margin="0,24,0,18">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Border Grid.Column="0" Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="01 / Selected client" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="CODEX" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+              <Path Grid.Column="1" Data="M2,9 L36,9 M29,3 L36,9 L29,15" Stroke="#30BCED" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Border Grid.Column="2" Background="#10343A" BorderBrush="#77CBB9" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="02 / Local relay" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" /><TextBlock Text="BYPASS" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+              <Path Grid.Column="3" Data="M2,9 L36,9 M29,3 L36,9 L29,15" Stroke="#77CBB9" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Border Grid.Column="4" Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="03 / Upstream" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" /><TextBlock Text="OPENAI" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>
+            </Grid>
+            <Border Grid.Row="2" Height="5" Background="#17383D" CornerRadius="2">
+              <Grid><Border Width="240" Background="#30BCED" HorizontalAlignment="Left" CornerRadius="2" /><Border Width="180" Background="#77CBB9" HorizontalAlignment="Center" CornerRadius="2" /></Grid>
+            </Border>
+          </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,16,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+          <Border Grid.Column="0" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="ROUTE STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RouteStatus" Text="DIRECT / READY" FontFamily="Cascadia Mono" FontSize="13" Foreground="#30BCED" Margin="0,7,0,0" /><TextBlock Text="No proxy mutation" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+          <Border Grid.Column="2" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="EVIDENCE STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="EvidenceStatus" Text="PACKAGE PASS" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Bound to local manifest" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+          <Border Grid.Column="4" Style="{StaticResource PanelCard}"><StackPanel><TextBlock Text="ROLLBACK STATE" FontFamily="Cascadia Mono" FontSize="9" Foreground="#91AAAD" /><TextBlock x:Name="RollbackStatus" Text="AVAILABLE" FontFamily="Cascadia Mono" FontSize="13" Foreground="#77CBB9" Margin="0,7,0,0" /><TextBlock Text="Previous state retained" Foreground="#91AAAD" Margin="0,4,0,0" /></StackPanel></Border>
+        </Grid>
+      </Grid>
+    </Grid>
+
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <TextBlock Text="NO AUTOMATIC NETWORK · NO REGION BYPASS · USER-INITIATED LAUNCH" FontFamily="Cascadia Mono" FontSize="10" Foreground="#91AAAD" VerticalAlignment="Center" />
+      <Button x:Name="LaunchSelected" Grid.Column="1" Content="LAUNCH SELECTED  →" Height="48" Padding="24,0" Background="#30BCED" Foreground="#071E22" BorderThickness="0" FontFamily="Bahnschrift SemiCondensed" FontSize="17" FontWeight="SemiBold" />
+    </Grid>
+  </Grid>
+</UserControl>

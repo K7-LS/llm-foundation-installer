@@ -1020,25 +1020,35 @@ namespace LlmFoundationInstaller
             bool loadConnectionState = true
         )
         {
+            EditionProfile edition = EditionProfile.LoadEmbedded();
+            string viewResource = EditionTheme.ViewResource(edition);
             Stream resource = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("InstallerView.xaml");
+                .GetManifestResourceStream(viewResource);
             if (resource == null)
             {
-                throw new InvalidOperationException("Installer UI resource is missing");
+                throw new InvalidOperationException(
+                    "Product UI resource is missing: " + viewResource
+                );
             }
             using (resource)
             {
                 UserControl view = (UserControl)XamlReader.Load(resource);
-                ApplyCatalog(
-                    view,
-                    ProductCatalog.Inspect(bundleRoot, loadConnectionState)
-                );
-                ConnectionUi.Bind(view, loadConnectionState);
-                InstallerActions.Bind(
-                    view,
-                    bundleRoot,
-                    loadConnectionState
-                );
+                if (edition.product_role == "Installer")
+                {
+                    ApplyCatalog(
+                        view,
+                        ProductCatalog.Inspect(
+                            bundleRoot,
+                            loadConnectionState
+                        )
+                    );
+                    ConnectionUi.Bind(view, loadConnectionState);
+                    InstallerActions.Bind(
+                        view,
+                        bundleRoot,
+                        loadConnectionState
+                    );
+                }
                 return view;
             }
         }
@@ -2865,13 +2875,13 @@ namespace LlmFoundationInstaller
                 application.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 Window window = new Window
                 {
-                    Title = "LLM Foundation Installer",
+                    Title = EditionTheme.WindowTitle(edition),
                     Width = 1280,
                     Height = 800,
                     MinWidth = 1100,
                     MinHeight = 720,
                     WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                    Background = new SolidColorBrush(Color.FromRgb(244, 247, 251)),
+                    Background = EditionTheme.WindowBackground(edition),
                     Content = InstallerView.Create(bundleRoot)
                 };
                 application.Run(window);

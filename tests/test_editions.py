@@ -1,5 +1,6 @@
 import json
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 
@@ -66,6 +67,31 @@ def _describe_edition(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout)
+
+
+def _render_preview(
+    tmp_path: Path,
+    edition: str,
+    product_role: str,
+) -> Path:
+    built = _run_build(
+        tmp_path,
+        edition=edition,
+        product_role=product_role,
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    output = tmp_path / f"{edition}-{product_role}"
+    executable = output / "LLMFoundationInstaller.exe"
+    preview = output / "preview.png"
+    result = subprocess.run(
+        [str(executable), "--render-preview", str(preview)],
+        cwd=output,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return preview
 
 
 @pytest.mark.parametrize(
@@ -150,3 +176,76 @@ def test_build_rejects_missing_or_unknown_contract(
         f"{edition or 'missing'}-{product_role or 'missing'}"
     )
     assert not list(output.glob("*.exe"))
+
+
+@pytest.mark.parametrize(
+    "view_name",
+    [
+        "InstallerEmployeeView.xaml",
+        "LaunchCenterEmployeeView.xaml",
+    ],
+)
+def test_employee_views_use_exact_k7_visual_contract(view_name: str) -> None:
+    value = (REPOSITORY / "src" / "gui" / view_name).read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        "#071E22",
+        "#FC4912",
+        "#77CBB9",
+        "#30BCED",
+        "Bahnschrift SemiCondensed",
+        "Segoe UI",
+        "Cascadia Mono",
+        "M144.91,200h-50l-32.38-48.57",
+        "7.62-7.06",
+    ):
+        assert token in value
+    assert "Claude" not in value
+
+
+@pytest.mark.parametrize(
+    "view_name",
+    [
+        "InstallerOwnerView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ],
+)
+def test_owner_views_use_signal_console_contract(view_name: str) -> None:
+    value = (REPOSITORY / "src" / "gui" / view_name).read_text(
+        encoding="utf-8"
+    )
+    for token in (
+        "#071E22",
+        "#FC4912",
+        "#77CBB9",
+        "#30BCED",
+        "OWNER CONTROLLED",
+        "Selected client",
+        "Local relay",
+        "Upstream",
+        "Claude",
+    ):
+        assert token in value
+    assert "Neon" not in value
+    assert "Cyberpunk" not in value
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role"),
+    [
+        ("Employee", "Installer"),
+        ("Employee", "LaunchCenter"),
+        ("Owner", "Installer"),
+        ("Owner", "LaunchCenter"),
+    ],
+)
+def test_each_edition_product_renders_its_own_preview(
+    tmp_path: Path,
+    edition: str,
+    product_role: str,
+) -> None:
+    preview = _render_preview(tmp_path, edition, product_role)
+    payload = preview.read_bytes()
+    assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", payload[16:24]) == (1440, 900)

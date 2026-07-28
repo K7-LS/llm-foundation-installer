@@ -1,0 +1,163 @@
+<UserControl
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    FontFamily="Segoe UI"
+    Background="#071E22"
+    SnapsToDevicePixels="True"
+    UseLayoutRounding="True">
+  <UserControl.Resources>
+    <SolidColorBrush x:Key="Ink" Color="#071E22" />
+    <SolidColorBrush x:Key="Orange" Color="#FC4912" />
+    <SolidColorBrush x:Key="Mint" Color="#77CBB9" />
+    <SolidColorBrush x:Key="Blue" Color="#30BCED" />
+    <SolidColorBrush x:Key="Panel" Color="#0C292E" />
+    <SolidColorBrush x:Key="Panel2" Color="#10343A" />
+    <SolidColorBrush x:Key="Line" Color="#285057" />
+    <SolidColorBrush x:Key="Text" Color="#EAF3F2" />
+    <SolidColorBrush x:Key="Muted" Color="#91AAAD" />
+    <SolidColorBrush x:Key="Positive" Color="#77CBB9" />
+    <SolidColorBrush x:Key="PositiveSoft" Color="#143C3A" />
+    <SolidColorBrush x:Key="Warning" Color="#FC7A4D" />
+    <SolidColorBrush x:Key="WarningSoft" Color="#40251F" />
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Text}" /></Style>
+    <Style x:Key="Mono" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="Cascadia Mono" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Foreground" Value="{StaticResource Blue}" />
+    </Style>
+    <Style x:Key="Card" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Panel}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button">
+      <Setter Property="Height" Value="46" />
+      <Setter Property="Padding" Value="22,0" />
+      <Setter Property="Background" Value="{StaticResource Blue}" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style x:Key="SecondaryButton" TargetType="Button">
+      <Setter Property="Height" Value="38" />
+      <Setter Property="Padding" Value="15,0" />
+      <Setter Property="Background" Value="{StaticResource Panel2}" />
+      <Setter Property="Foreground" Value="{StaticResource Text}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+  </UserControl.Resources>
+
+  <Grid Margin="24">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="256" /><ColumnDefinition Width="22" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="20">
+      <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <StackPanel>
+          <TextBlock Text="K-7 / SIGNAL ROUTING" Style="{StaticResource Mono}" />
+          <TextBlock Text="Foundation" FontFamily="Bahnschrift SemiCondensed" FontSize="30" FontWeight="SemiBold" Margin="0,7,0,0" />
+          <Border Background="#FC4912" CornerRadius="3" Padding="8,4" HorizontalAlignment="Left" Margin="0,10,0,0">
+            <TextBlock Text="OWNER CONTROLLED" FontFamily="Cascadia Mono" FontSize="10" FontWeight="Bold" Foreground="#FFFFFF" />
+          </Border>
+        </StackPanel>
+        <Border Grid.Row="1" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,1" Padding="0,16" Margin="0,19,0,18">
+          <StackPanel>
+            <TextBlock Text="ACTIVE TOPOLOGY" Style="{StaticResource Mono}" Foreground="{StaticResource Mint}" />
+            <TextBlock Text="Selected client" FontSize="13" Margin="0,10,0,0" />
+            <Border Width="2" Height="13" Background="#30BCED" HorizontalAlignment="Left" Margin="6,3,0,3" />
+            <TextBlock Text="Local relay" FontSize="13" />
+            <Border Width="2" Height="13" Background="#77CBB9" HorizontalAlignment="Left" Margin="6,3,0,3" />
+            <TextBlock Text="Upstream" FontSize="13" />
+          </StackPanel>
+        </Border>
+        <StackPanel Grid.Row="2">
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step1Badge" Width="25" Height="25" CornerRadius="4" Background="#30BCED"><TextBlock x:Name="Step1Number" Text="01" Foreground="#071E22" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step1Title" Grid.Column="1" Text="SYSTEM SCAN" VerticalAlignment="Center" /></Grid>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step2Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step2Number" Text="02" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step2Title" Grid.Column="1" Text="ROUTE PROFILE" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step3Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step3Number" Text="03" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step3Title" Grid.Column="1" Text="CLIENT SET" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step4Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step4Number" Text="04" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step4Title" Grid.Column="1" Text="CHANGE PLAN" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step5Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step5Number" Text="05" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step5Title" Grid.Column="1" Text="INSTALL" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step6Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step6Number" Text="06" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step6Title" Grid.Column="1" Text="AUTH" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="Step7Badge" Width="25" Height="25" CornerRadius="4" BorderBrush="#3A636A" BorderThickness="1"><TextBlock x:Name="Step7Number" Text="07" Foreground="#91AAAD" FontFamily="Cascadia Mono" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="Step7Title" Grid.Column="1" Text="VERIFIED" Foreground="#B6C8CA" VerticalAlignment="Center" /></Grid>
+        </StackPanel>
+        <TextBlock Grid.Row="3" Text="DISTRIBUTION: DISALLOWED" FontFamily="Cascadia Mono" FontSize="10" Foreground="#FC7A4D" Margin="0,16,0,0" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="2">
+      <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="INSTALLATION CONSOLE / OWNER BUILD" Style="{StaticResource Mono}" />
+          <TextBlock Text="Управляемый контур клиентов" FontFamily="Bahnschrift SemiCondensed" FontSize="27" FontWeight="SemiBold" Margin="0,5,0,0" />
+          <TextBlock Text="Локальная установка. Provider gates остаются независимыми от наличия пакета." Foreground="{StaticResource Muted}" Margin="0,4,0,0" />
+        </StackPanel>
+        <Button x:Name="RefreshEnvironment" Grid.Column="1" Content="RESCAN" Style="{StaticResource SecondaryButton}" />
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="0,20,0,14">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+        <Border Grid.Column="0" Style="{StaticResource Card}">
+          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX / PRIMARY" Style="{StaticResource Mono}" /><TextBlock Text="OpenAI Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="19" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel><CheckBox x:Name="CodexSelected" Grid.Column="1" IsEnabled="False" /></Grid><Border x:Name="CodexStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="5" Padding="8,6" Margin="0,12,0,0"><TextBlock x:Name="CodexStatus" Text="Awaiting evidence" Foreground="{StaticResource Warning}" FontSize="11" /></Border></Grid>
+        </Border>
+        <Border Grid.Column="2" Style="{StaticResource Card}" BorderBrush="#FC4912">
+          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / GUARDED" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontFamily="Bahnschrift SemiCondensed" FontSize="19" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel><CheckBox x:Name="ClaudeSelected" Grid.Column="1" IsEnabled="False" /></Grid><Border x:Name="ClaudeStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="5" Padding="8,6" Margin="0,12,0,0"><TextBlock x:Name="ClaudeStatus" Text="Provider gate blocked" Foreground="{StaticResource Warning}" FontSize="11" /></Border></Grid>
+        </Border>
+        <Border Grid.Column="4" Style="{StaticResource Card}">
+          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE / CLI" Style="{StaticResource Mono}" Foreground="{StaticResource Mint}" /><TextBlock Text="OpenCode" FontFamily="Bahnschrift SemiCondensed" FontSize="19" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel><CheckBox x:Name="OpenCodeSelected" Grid.Column="1" IsEnabled="False" /></Grid><Border x:Name="OpenCodeStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="5" Padding="8,6" Margin="0,12,0,0"><TextBlock x:Name="OpenCodeStatus" Text="Awaiting evidence" Foreground="{StaticResource Warning}" FontSize="11" /></Border></Grid>
+        </Border>
+      </Grid>
+
+      <Border Grid.Row="2" Style="{StaticResource Card}">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel><TextBlock Text="ROUTE MATRIX / SAFE MODE" Style="{StaticResource Mono}" /><TextBlock Text="Local relay configuration" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <RadioButton x:Name="DirectMode" GroupName="ConnectionMode" Content="DIRECT" IsChecked="True" Foreground="{StaticResource Text}" Margin="0,0,16,0" />
+              <RadioButton x:Name="VpnMode" GroupName="ConnectionMode" Content="VPN" Foreground="{StaticResource Text}" Margin="0,0,16,0" />
+              <RadioButton x:Name="ProxyMode" GroupName="ConnectionMode" Content="SINGBOX" Foreground="{StaticResource Text}" />
+            </StackPanel>
+          </Grid>
+          <Grid Grid.Row="1" Margin="0,18,0,16">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="#10343A" CornerRadius="6" Padding="13"><TextBlock Text="Selected client" FontFamily="Cascadia Mono" FontSize="11" HorizontalAlignment="Center" /></Border>
+            <Path Grid.Column="1" Data="M0,5 L20,5 M15,1 L20,5 L15,9" Stroke="#30BCED" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Border Grid.Column="2" Background="#10343A" CornerRadius="6" Padding="13"><TextBlock Text="Local relay" FontFamily="Cascadia Mono" FontSize="11" HorizontalAlignment="Center" /></Border>
+            <Path Grid.Column="3" Data="M0,5 L20,5 M15,1 L20,5 L15,9" Stroke="#77CBB9" StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Border Grid.Column="4" Background="#10343A" CornerRadius="6" Padding="13"><TextBlock Text="Upstream" FontFamily="Cascadia Mono" FontSize="11" HorizontalAlignment="Center" /></Border>
+          </Grid>
+          <Grid x:Name="ProxySettings" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,13">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="95" /><ColumnDefinition Width="*" /><ColumnDefinition Width="85" /><ColumnDefinition Width="105" /><ColumnDefinition Width="125" /><ColumnDefinition Width="125" /></Grid.ColumnDefinitions>
+            <ComboBox x:Name="ProxyType" Grid.Column="0" Height="34" SelectedIndex="0" Margin="0,0,7,0"><ComboBoxItem Content="HTTP" /><ComboBoxItem Content="HTTPS" /></ComboBox>
+            <TextBox x:Name="ProxyHost" Grid.Column="1" Height="34" Padding="8,5" Margin="0,0,7,0" ToolTip="Host" />
+            <TextBox x:Name="ProxyPort" Grid.Column="2" Height="34" Padding="8,5" Margin="0,0,7,0" ToolTip="Port" />
+            <ComboBox x:Name="ProxyAuth" Grid.Column="3" Height="34" SelectedIndex="0" Margin="0,0,7,0"><ComboBoxItem Content="NONE" /><ComboBoxItem Content="BASIC" /></ComboBox>
+            <TextBox x:Name="ProxyUsername" Grid.Column="4" Height="34" Padding="8,5" Margin="0,0,7,0" IsEnabled="False" ToolTip="User" />
+            <PasswordBox x:Name="ProxyPassword" Grid.Column="5" Height="34" Padding="8,5" IsEnabled="False" ToolTip="Secret" />
+          </Grid>
+          <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <TextBlock x:Name="ConnectionStatus" Text="DIRECT / local state only" Foreground="{StaticResource Muted}" VerticalAlignment="Center" FontFamily="Cascadia Mono" FontSize="11" />
+            <Button x:Name="TestConnection" Grid.Column="1" Content="PROBE" Style="{StaticResource SecondaryButton}" Margin="0,0,9,0" />
+            <Button x:Name="SaveConnection" Grid.Column="2" Content="SAVE PROFILE" Style="{StaticResource SecondaryButton}" />
+          </Grid>
+        </Grid>
+      </Border>
+
+      <Grid Grid.Row="3" Margin="0,16,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <StackPanel>
+          <Border x:Name="StatusBanner" Background="{StaticResource WarningSoft}" BorderBrush="#6C392D" BorderThickness="1" CornerRadius="5" Padding="11,8"><TextBlock x:Name="StatusText" Text="Required packages and gates are being evaluated." Foreground="{StaticResource Warning}" /></Border>
+          <ProgressBar x:Name="InstallProgress" Height="4" Minimum="0" Maximum="100" Value="0" Margin="0,7,0,0" Foreground="{StaticResource Blue}" />
+        </StackPanel>
+        <Button x:Name="PrimaryAction" Grid.Column="1" Content="REVIEW PLAN / INSTALL" Style="{StaticResource PrimaryButton}" Margin="16,0,0,0" IsEnabled="False" />
+      </Grid>
+    </Grid>
+  </Grid>
+</UserControl>

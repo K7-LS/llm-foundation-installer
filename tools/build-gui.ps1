@@ -1203,6 +1203,7 @@ $TrustedResource = Join-Path $OutputRoot '.trusted-packages.json'
 $Executable = Join-Path $OutputRoot 'LLMFoundationInstaller.exe'
 $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
 $EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
+$EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1211,7 +1212,14 @@ $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
 $ClientSourcesHash = Get-Sha256 $EffectiveClientSourcesPath
-$View = Join-Path $RepositoryRoot 'src\gui\InstallerView.xaml'
+$Views = @(
+    'InstallerEmployeeView.xaml',
+    'InstallerOwnerView.xaml',
+    'LaunchCenterEmployeeView.xaml',
+    'LaunchCenterOwnerView.xaml'
+) | ForEach-Object {
+    Join-Path $RepositoryRoot "src\gui\$_"
+}
 $ApplicationManifest = Join-Path $RepositoryRoot 'src\gui\app.manifest'
 $ApplicationIcon = Join-Path $OutputRoot '.installer.ico'
 & (Join-Path $RepositoryRoot 'tools\build-icon.ps1') `
@@ -1227,7 +1235,6 @@ $CompilerArguments = @(
     "/out:$Executable",
     "/win32manifest:$ApplicationManifest",
     "/win32icon:$ApplicationIcon",
-    "/resource:$View,InstallerView.xaml",
     "/resource:$EditionResource,EditionProfile.json",
     "/resource:$TrustedResource,TrustedPackages.json",
     "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
@@ -1235,6 +1242,11 @@ $CompilerArguments = @(
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
     "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
+)
+$CompilerArguments += @(
+    foreach ($View in $Views) {
+        "/resource:$View,$([IO.Path]::GetFileName($View))"
+    }
 )
 $CompilerArguments += @(
     foreach ($Package in $AcceptedPackages) {
@@ -1261,6 +1273,7 @@ $CompilerArguments += $References | ForEach-Object { "/reference:$_" }
 $CompilerArguments += @(
     $Source,
     $EditionSource,
+    $EditionThemeSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )
