@@ -929,7 +929,14 @@ $AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
 $ProviderEligibility = Read-ProviderEligibilityEvidence `
     $ProviderEligibilityEvidence
 $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
-$IsEmployeeRelease = $DistributionMode -cne 'Preview'
+$IncludedTargets = if ($Edition -ceq 'Employee') {
+    @('codex', 'opencode')
+}
+else {
+    @('claude', 'codex', 'opencode')
+}
+$RequiredTargets = @('codex', 'opencode')
+$IsPackagedRelease = $DistributionMode -cne 'Preview'
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
 try {
@@ -1033,21 +1040,23 @@ if ($ClientSourcesOfficialOnly) {
         throw 'Official client source inventory is incomplete'
     }
 }
-if ($IsEmployeeRelease) {
-    if (($AcceptedTargets -join ',') -cne 'claude,codex,opencode') {
-        throw (
-            'Employee release requires accepted Codex, Claude, and ' +
-            'OpenCode packages'
-        )
-    }
-    if ($null -eq $ProviderEligibility) {
-        throw (
-            'Employee release requires current provider eligibility evidence'
-        )
+if ($Edition -ceq 'Employee' -and
+    $null -ne $ProviderEligibility) {
+    throw 'Employee edition cannot include provider eligibility evidence'
+}
+if ($Edition -ceq 'Employee' -and
+    @($AcceptedTargets | Where-Object {
+        $IncludedTargets -cnotcontains $_
+    }).Count -ne 0) {
+    throw 'Employee target set differs from the edition contract'
+}
+if ($IsPackagedRelease) {
+    if (($AcceptedTargets -join ',') -cne ($IncludedTargets -join ',')) {
+        throw "$Edition target set differs from the edition contract"
     }
     if ($null -eq $AcceptedFoundation) {
         throw (
-            'Employee release requires an accepted immutable Foundation ' +
+            "$Edition release requires an accepted immutable Foundation " +
             'package'
         )
     }
@@ -1068,15 +1077,8 @@ if ($IsEmployeeRelease) {
     }
     if ($IsPublicSigned -and
         [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
-        throw 'Employee release requires a code-signing certificate'
+        throw "$Edition release requires a code-signing certificate"
     }
-}
-elseif ($AcceptedTargets -ccontains 'claude' -and
-    $null -eq $ProviderEligibility) {
-    throw (
-        'Accepted Claude package requires current provider eligibility ' +
-        'evidence'
-    )
 }
 if (-not $IsPublicSigned -and
     -not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
@@ -1115,8 +1117,37 @@ $EditionResource = Join-Path $OutputRoot '.edition-profile.json'
     ((ConvertTo-Json $EditionContract -Depth 4 -Compress) + "`n"),
     $Utf8NoBom
 )
+$EffectiveClientSourcesPath = Join-Path (
+    $OutputRoot
+) 'client-sources.lock.json'
+if ($Edition -ceq 'Owner' -or $ClientSourcesTestOnly) {
+    Copy-Item -LiteralPath $ClientSourcesLock -Destination (
+        $EffectiveClientSourcesPath
+    )
+}
+else {
+    $EffectiveClientSources = [ordered]@{
+        schema_version = [int]$ClientSources.schema_version
+        official_only = [bool]$ClientSources.official_only
+        test_only = [bool]$ClientSources.test_only
+        platform = $ClientSources.platform
+        clients = @(
+            $ClientSources.clients | Where-Object {
+                $IncludedTargets -ccontains [string]$_.target
+            }
+        )
+    }
+    if (@($EffectiveClientSources.clients).Count -lt 1) {
+        throw 'Edition client source inventory is empty'
+    }
+    [IO.File]::WriteAllText(
+        $EffectiveClientSourcesPath,
+        ((ConvertTo-Json $EffectiveClientSources -Depth 8) + "`n"),
+        $Utf8NoBom
+    )
+}
 $EngineRoot = Join-Path $OutputRoot 'engine'
-if ($IsEmployeeRelease) {
+if ($IsPackagedRelease) {
     Export-AcceptedFoundationEngine $AcceptedFoundation $EngineRoot
 }
 else {
@@ -1176,8 +1207,10 @@ $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\ClientBootstrap.cs'
-$ClientSourcesBytes = (Get-Item -LiteralPath $ClientSourcesLock).Length
-$ClientSourcesHash = Get-Sha256 $ClientSourcesLock
+$ClientSourcesBytes = (
+    Get-Item -LiteralPath $EffectiveClientSourcesPath
+).Length
+$ClientSourcesHash = Get-Sha256 $EffectiveClientSourcesPath
 $View = Join-Path $RepositoryRoot 'src\gui\InstallerView.xaml'
 $ApplicationManifest = Join-Path $RepositoryRoot 'src\gui\app.manifest'
 $ApplicationIcon = Join-Path $OutputRoot '.installer.ico'
@@ -1197,7 +1230,7 @@ $CompilerArguments = @(
     "/resource:$View,InstallerView.xaml",
     "/resource:$EditionResource,EditionProfile.json",
     "/resource:$TrustedResource,TrustedPackages.json",
-    "/resource:$ClientSourcesLock,ClientSources.lock.json",
+    "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
@@ -1311,9 +1344,6 @@ if ($null -ne $AcceptedFoundation) {
         ) -Destination (Join-Path $FoundationDestination $Name)
     }
 }
-Copy-Item -LiteralPath $ClientSourcesLock -Destination (
-    Join-Path $OutputRoot 'client-sources.lock.json'
-)
 $ProviderEligibilityManifest = [ordered]@{
     status = 'NOT_PROVIDED'
 }
@@ -1329,7 +1359,7 @@ if ($null -ne $ProviderEligibility) {
         contains_personal_data = $false
     }
 }
-$FoundationReleaseManifest = if ($IsEmployeeRelease) {
+$FoundationReleaseManifest = if ($IsPackagedRelease) {
     [ordered]@{
         package_acceptance = 'PASS'
         engine_version = [string]$AcceptedFoundation.engine_version
@@ -1355,9 +1385,104 @@ else {
     $Encoding
 )
 
+$ProviderReady = (
+    $null -ne $ProviderEligibility -and
+    [string]$ProviderEligibility.status -ceq 'PASS'
+)
+$RequiredReady = @(
+    $RequiredTargets | Where-Object {
+        $AcceptedTargets -cnotcontains $_
+    }
+).Count -eq 0
+$EditionTargetSetReady = (
+    ($AcceptedTargets -join ',') -ceq ($IncludedTargets -join ',')
+)
+$EmployeeInternalReady = (
+    $Edition -ceq 'Employee' -and
+    $DistributionMode -ceq 'InternalUnsigned' -and
+    $EditionTargetSetReady -and
+    $null -ne $AcceptedFoundation
+)
+$PublicSignedReady = (
+    $Edition -ceq 'Employee' -and
+    $DistributionMode -ceq 'PublicSigned' -and
+    $SignatureState -ceq 'valid-authenticode' -and
+    $RequiredReady
+)
+$Verdicts = if ($Edition -ceq 'Employee') {
+    [ordered]@{
+        FULL_RELEASE_CODEX = if (
+            $AcceptedTargets -ccontains 'codex'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        FULL_RELEASE_OPENCODE = if (
+            $AcceptedTargets -ccontains 'opencode'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        PROGRAM_RELEASE = if ($RequiredReady) {
+            '2/2'
+        } else {
+            "$(@(
+                $RequiredTargets | Where-Object {
+                    $AcceptedTargets -ccontains $_
+                }
+            ).Count)/2"
+        }
+        EMPLOYEE_INSTALLER_INTERNAL = if ($EmployeeInternalReady) {
+            'PASS'
+        } else {
+            'NOT_PASS'
+        }
+        PUBLIC_SIGNED_RELEASE = if (
+            $DistributionMode -ceq 'InternalUnsigned'
+        ) {
+            'DEFERRED_BY_OWNER'
+        } elseif ($PublicSignedReady) {
+            'PASS'
+        } else {
+            'NOT_PASS'
+        }
+    }
+}
+else {
+    [ordered]@{
+        FULL_RELEASE_CODEX = if (
+            $AcceptedTargets -ccontains 'codex'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        FULL_RELEASE_CLAUDE = if (
+            $AcceptedTargets -ccontains 'claude' -and
+            $ProviderReady
+        ) { 'PASS' } else { 'NOT_PASS' }
+        FULL_RELEASE_OPENCODE = if (
+            $AcceptedTargets -ccontains 'opencode'
+        ) { 'PASS' } else { 'NOT_PASS' }
+        PROGRAM_RELEASE = if (
+            $EditionTargetSetReady -and $ProviderReady
+        ) {
+            '3/3'
+        } elseif ($RequiredReady) {
+            '2/3'
+        } else {
+            "$(@(
+                $RequiredTargets | Where-Object {
+                    $AcceptedTargets -ccontains $_
+                }
+            ).Count)/3"
+        }
+        OWNER_INSTALLER_INTERNAL = if (
+            $DistributionMode -ceq 'InternalUnsigned' -and
+            $EditionTargetSetReady -and
+            $null -ne $AcceptedFoundation
+        ) { 'OWNER_CANDIDATE' } else { 'NOT_PASS' }
+        PUBLIC_SIGNED_RELEASE = 'NOT_APPLICABLE'
+    }
+}
 $Manifest = [ordered]@{
     schema_version = 1
     app_id = 'llm-foundation-installer'
+    edition_id = $Edition
+    product_role = $ProductRole
+    theme_id = [string]$EditionContract.theme_id
+    owner_controlled = [bool]$EditionContract.owner_controlled
+    distribution_allowed = [bool]$EditionContract.distribution_allowed
     version = $Version
     network = 'user-initiated-only'
     automatic_network = $false
@@ -1372,53 +1497,15 @@ $Manifest = [ordered]@{
     embedded_foundation = $true
     embedded_target_count = $AcceptedPackages.Count
     signature = $SignatureState
-    employee_release = [bool]$IsEmployeeRelease
-    employee_distribution_allowed = (
-        [bool]$IsEmployeeRelease -and
-        $null -ne $ProviderEligibility -and
-        [string]$ProviderEligibility.status -ceq 'PASS'
+    employee_release = (
+        $Edition -ceq 'Employee' -and $IsPackagedRelease
     )
-    public_distribution_allowed = (
-        [bool]$IsPublicSigned -and
-        $SignatureState -ceq 'valid-authenticode' -and
-        $null -ne $ProviderEligibility -and
-        [string]$ProviderEligibility.status -ceq 'PASS'
-    )
+    employee_distribution_allowed = [bool]$EmployeeInternalReady
+    public_distribution_allowed = [bool]$PublicSignedReady
     windows_warning_expected = (
         $DistributionMode -ceq 'InternalUnsigned'
     )
-    verdicts = [ordered]@{
-        FULL_RELEASE_CODEX = if (
-            $AcceptedTargets -ccontains 'codex'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        FULL_RELEASE_CLAUDE = if (
-            $AcceptedTargets -ccontains 'claude'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        FULL_RELEASE_OPENCODE = if (
-            $AcceptedTargets -ccontains 'opencode'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        PROGRAM_RELEASE = if (
-            ($AcceptedTargets -join ',') -ceq 'claude,codex,opencode'
-        ) { '3/3' } else { "$($AcceptedTargets.Count)/3" }
-        EMPLOYEE_INSTALLER_INTERNAL = if (
-            $DistributionMode -ceq 'InternalUnsigned' -and
-            ($AcceptedTargets -join ',') -ceq 'claude,codex,opencode' -and
-            $null -ne $ProviderEligibility -and
-            [string]$ProviderEligibility.status -ceq 'PASS'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        PUBLIC_SIGNED_RELEASE = if (
-            $DistributionMode -ceq 'InternalUnsigned'
-        ) {
-            'DEFERRED_BY_OWNER'
-        } elseif (
-            $DistributionMode -ceq 'PublicSigned' -and
-            $SignatureState -ceq 'valid-authenticode'
-        ) {
-            'PASS'
-        } else {
-            'NOT_PASS'
-        }
-    }
+    verdicts = $Verdicts
     provider_eligibility = $ProviderEligibilityManifest
     foundation_release = $FoundationReleaseManifest
     client_sources = [ordered]@{
@@ -1430,7 +1517,7 @@ $Manifest = [ordered]@{
         sha256 = $ClientSourcesHash
         bytes = $ClientSourcesBytes
     }
-    targets = @('codex', 'claude', 'opencode')
+    targets = $IncludedTargets
     artifacts = [ordered]@{
         'LLMFoundationInstaller.exe' = [ordered]@{
             sha256 = Get-Sha256 $Executable
@@ -1466,6 +1553,13 @@ $Manifest = [ordered]@{
             sha256 = $ClientSourcesHash
             bytes = $ClientSourcesBytes
         }
+    }
+}
+if ($Edition -ceq 'Owner') {
+    $Manifest['owner_claude_state'] = if ($ProviderReady) {
+        'PROVIDER_READY'
+    } else {
+        'OWNER_CANDIDATE'
     }
 }
 foreach ($Package in $AcceptedPackages) {

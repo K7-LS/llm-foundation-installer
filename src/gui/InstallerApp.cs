@@ -190,6 +190,7 @@ namespace LlmFoundationInstaller
             bool detectClients = false
         )
         {
+            EditionProfile edition = EditionProfile.LoadEmbedded();
             ProviderEligibilityRecord eligibility;
             Dictionary<string, TrustedPackage> trusted =
                 LoadTrustedPackages(out eligibility);
@@ -198,7 +199,9 @@ namespace LlmFoundationInstaller
                 eligibility
             );
             List<TargetRow> targets = new List<TargetRow>();
-            foreach (string[] definition in Definitions)
+            foreach (string[] definition in Definitions.Where(
+                value => edition.Includes(value[0])
+            ))
             {
                 TrustedPackage package;
                 string state = !trusted.TryGetValue(definition[0], out package)
@@ -213,7 +216,9 @@ namespace LlmFoundationInstaller
                     definition[0] == "claude" &&
                     eligibilityState != "PASS")
                 {
-                    state = "policy_blocked";
+                    state = edition.owner_controlled
+                        ? "owner_candidate"
+                        : "policy_blocked";
                 }
                 string detected = null;
                 string clientState = "not_checked";
@@ -245,8 +250,11 @@ namespace LlmFoundationInstaller
                 });
             }
 
-            bool enabled = targets.Any(row =>
-                row.package_state == "accepted"
+            bool enabled = edition.required_target_ids.All(
+                required => targets.Any(
+                    row => row.id == required &&
+                        row.package_state == "accepted"
+                )
             );
             return new CatalogResult
             {
@@ -254,18 +262,17 @@ namespace LlmFoundationInstaller
                 install_enabled = enabled,
                 reason = enabled
                     ? "Accepted target package is available"
-                    : (targets.Any(
-                        row => row.package_state == "policy_blocked"
-                    )
-                        ? "Claude provider eligibility evidence is missing, invalid, or expired"
-                        : "No accepted target packages are bundled"),
+                    : "Required edition packages are missing or changed",
                 provider_eligibility = eligibilityState
             };
         }
 
         public static string[] TargetIds()
         {
-            return Definitions.Select(row => row[0]).ToArray();
+            EditionProfile edition = EditionProfile.LoadEmbedded();
+            return Definitions.Where(
+                row => edition.Includes(row[0])
+            ).Select(row => row[0]).ToArray();
         }
 
         public static bool TryGetAcceptedPackage(
@@ -275,6 +282,11 @@ namespace LlmFoundationInstaller
         )
         {
             package = null;
+            EditionProfile edition = EditionProfile.LoadEmbedded();
+            if (!edition.Includes(target))
+            {
+                return false;
+            }
             string[] definition = Definitions.FirstOrDefault(
                 row => String.Equals(
                     row[0],
@@ -296,12 +308,7 @@ namespace LlmFoundationInstaller
                     candidate,
                     definition[0],
                     definition[2]
-                ) ||
-                (target == "claude" &&
-                    ProviderEligibilityState(
-                        bundleRoot,
-                        eligibility
-                    ) != "PASS"))
+                ))
             {
                 return false;
             }
@@ -1067,14 +1074,16 @@ namespace LlmFoundationInstaller
                                         row.supported_version)))
                         : (row.package_state == "tampered"
                             ? "Пакет повреждён · установка запрещена"
-                            : (row.package_state == "policy_blocked"
+                            : (row.package_state == "owner_candidate"
+                                ? "Owner candidate · provider gate blocked"
+                                : (row.package_state == "policy_blocked"
                                 ? "Допуск провайдера истёк или недействителен"
                                 : (row.client_state == "present_unbound"
                                     ? "Клиент " + row.detected_version +
                                         " найден · пакет не включён"
                                     : (row.client_state == "missing"
                                         ? "Пакет не включён · клиент не найден"
-                                        : "Пакет не включён в эту сборку"))));
+                                        : "Пакет не включён в эту сборку")))));
                     bool ready = row.package_state == "accepted" &&
                         (row.client_state == "ready" ||
                             row.client_state == "not_checked");
@@ -1086,9 +1095,11 @@ namespace LlmFoundationInstaller
                     status.ToolTip = row.package_state == "accepted"
                         ? "Пакет проверен. Поддерживаемая версия клиента: " +
                             row.supported_version
-                        : (row.package_state == "policy_blocked"
+                        : (row.package_state == "owner_candidate"
+                            ? "Пакет можно установить владельцу, но запуск Claude остаётся заблокирован до действующего provider marker."
+                            : (row.package_state == "policy_blocked"
                             ? "Повторите проверку Supported Regions Policy и соберите новый подписанный installer."
-                            : null);
+                            : null));
                     if (badge != null)
                     {
                         badge.Background = new SolidColorBrush(
@@ -1100,7 +1111,8 @@ namespace LlmFoundationInstaller
                 }
                 if (selected != null)
                 {
-                    bool eligible = row.package_state == "accepted";
+                    bool eligible = row.package_state == "accepted" ||
+                        row.package_state == "owner_candidate";
                     selected.IsEnabled = eligible;
                     selected.IsChecked = eligible;
                 }

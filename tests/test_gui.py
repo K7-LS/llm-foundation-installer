@@ -66,6 +66,8 @@ def _build_gui_bundle(
     client_sources_lock: Path | None = None,
     allow_local_test_sources: bool = False,
     foundation_package_root: Path | None = None,
+    edition: str = "Owner",
+    product_role: str = "Installer",
 ) -> Path:
     arguments = [
         POWERSHELL,
@@ -74,7 +76,10 @@ def _build_gui_bundle(
         "Bypass",
         "-File",
         str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
-        *DEFAULT_GUI_CONTRACT_ARGUMENTS,
+        "-Edition",
+        edition,
+        "-ProductRole",
+        product_role,
         "-OutputRoot",
         str(output),
     ]
@@ -2460,7 +2465,9 @@ def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: 
     ]
     assert all(row["package_state"] == "missing" for row in payload["targets"])
     assert payload["install_enabled"] is False
-    assert payload["reason"] == "No accepted target packages are bundled"
+    assert payload["reason"] == (
+        "Required edition packages are missing or changed"
+    )
 
 
 def test_gui_preflight_checks_clients_without_claiming_missing_packages(
@@ -2599,8 +2606,10 @@ def test_gui_accepts_only_build_verified_hash_bound_package(tmp_path: Path):
         "claude": "missing",
         "opencode": "missing",
     }
-    assert payload["install_enabled"] is True
-    assert payload["reason"] == "Accepted target package is available"
+    assert payload["install_enabled"] is False
+    assert payload["reason"] == (
+        "Required edition packages are missing or changed"
+    )
 
     copied_asset = bundle / "packages" / "codex" / next(
         path.name for path in accepted.glob("*.zip")
@@ -2623,7 +2632,9 @@ def test_gui_accepts_only_build_verified_hash_bound_package(tmp_path: Path):
     }
     assert tampered_states["codex"] == "tampered"
     assert tampered_payload["install_enabled"] is False
-    assert tampered_payload["reason"] == "No accepted target packages are bundled"
+    assert tampered_payload["reason"] == (
+        "Required edition packages are missing or changed"
+    )
 
 
 def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
@@ -2649,8 +2660,10 @@ def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
     codex = next(row for row in payload["targets"] if row["id"] == "codex")
     assert codex["package_state"] == "accepted"
     assert codex["client_state"] == "missing"
-    assert payload["install_enabled"] is True
-    assert payload["reason"] == "Accepted target package is available"
+    assert payload["install_enabled"] is False
+    assert payload["reason"] == (
+        "Required edition packages are missing or changed"
+    )
 
 
 def test_gui_accepts_native_codex_flat_release_evidence(tmp_path: Path):
@@ -2754,35 +2767,28 @@ def test_gui_build_rejects_codex_evidence_bound_to_another_release(
     ).lower()
 
 
-def test_gui_rejects_accepted_claude_package_without_provider_evidence(
+def test_owner_preview_marks_claude_candidate_without_provider_evidence(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
     _accepted_package(package_source, "claude")
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        package_root=package_source,
+    )
     result = subprocess.run(
-        [
-            POWERSHELL,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
-            *DEFAULT_GUI_CONTRACT_ARGUMENTS,
-            "-OutputRoot",
-            str(tmp_path / "bundle"),
-            "-PackageRoot",
-            str(package_source),
-        ],
-        cwd=REPOSITORY_ROOT,
+        [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
+        cwd=bundle,
         capture_output=True,
         text=True,
         encoding="utf-8",
-        check=False,
+        timeout=30,
     )
-    assert result.returncode != 0
-    assert "accepted claude package requires current provider eligibility" in (
-        result.stdout + result.stderr
-    ).lower()
+    assert result.returncode == 0, result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    states = {row["id"]: row["package_state"] for row in value["targets"]}
+    assert states["claude"] == "owner_candidate"
+    assert value["provider_eligibility"] == "NOT_PROVIDED"
 
 
 def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
@@ -2835,15 +2841,15 @@ def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
         row["id"]: row["package_state"]
         for row in blocked_payload["targets"]
     }
-    assert blocked_states["claude"] == "policy_blocked"
+    assert blocked_states["claude"] == "owner_candidate"
     assert blocked_payload["provider_eligibility"] == "INVALID_OR_EXPIRED"
     assert blocked_payload["install_enabled"] is False
     assert blocked_payload["reason"] == (
-        "Claude provider eligibility evidence is missing, invalid, or expired"
+        "Required edition packages are missing or changed"
     )
 
 
-def test_employee_distribution_requires_all_targets(
+def test_owner_distribution_requires_all_targets(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
@@ -2872,19 +2878,62 @@ def test_employee_distribution_requires_all_targets(
         check=False,
     )
     assert result.returncode != 0
-    assert "requires accepted codex, claude, and opencode" in (
+    assert "owner target set differs from the edition contract" in (
         result.stdout + result.stderr
     ).lower()
 
 
-def test_employee_distribution_requires_provider_eligibility(
+def test_employee_edition_has_exact_two_target_contract(
     tmp_path: Path,
-):
+) -> None:
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "opencode"):
+        _accepted_package(package_source, target)
+
+    bundle = _build_gui_bundle(
+        tmp_path / "employee",
+        package_root=package_source,
+        distribution_mode="InternalUnsigned",
+        edition="Employee",
+    )
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    source_lock = json.loads(
+        (bundle / "client-sources.lock.json").read_text(encoding="utf-8")
+    )
+    assert manifest["edition_id"] == "Employee"
+    assert manifest["targets"] == ["codex", "opencode"]
+    assert manifest["employee_distribution_allowed"] is True
+    assert manifest["owner_controlled"] is False
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
+    assert manifest["verdicts"]["EMPLOYEE_INSTALLER_INTERNAL"] == "PASS"
+    assert "claude" not in json.dumps(manifest, sort_keys=True).lower()
+    assert "claude" not in json.dumps(source_lock, sort_keys=True).lower()
+
+    catalog = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert catalog.returncode == 0, catalog.stdout + catalog.stderr
+    catalog_value = json.loads(catalog.stdout)
+    assert [row["id"] for row in catalog_value["targets"]] == [
+        "codex",
+        "opencode",
+    ]
+    assert catalog_value["install_enabled"] is True
+
+
+def test_employee_edition_rejects_extra_claude_target(
+    tmp_path: Path,
+) -> None:
     package_source = tmp_path / "package-source"
     for target in ("codex", "claude", "opencode"):
         _accepted_package(package_source, target)
-
-    missing = subprocess.run(
+    result = subprocess.run(
         [
             POWERSHELL,
             "-NoProfile",
@@ -2892,24 +2941,90 @@ def test_employee_distribution_requires_provider_eligibility(
             "Bypass",
             "-File",
             str(REPOSITORY_ROOT / "tools" / "build-gui.ps1"),
-            *DEFAULT_GUI_CONTRACT_ARGUMENTS,
+            "-Edition",
+            "Employee",
+            "-ProductRole",
+            "Installer",
             "-OutputRoot",
-            str(tmp_path / "missing-evidence"),
+            str(tmp_path / "employee-extra"),
             "-PackageRoot",
             str(package_source),
             "-DistributionMode",
             "InternalUnsigned",
         ],
         cwd=REPOSITORY_ROOT,
-        capture_output=True,
         text=True,
-        encoding="utf-8",
-        check=False,
+        capture_output=True,
     )
-    assert missing.returncode != 0
-    assert "requires current provider eligibility evidence" in (
-        missing.stdout + missing.stderr
+    assert result.returncode != 0
+    assert "employee target set differs" in (
+        result.stdout + result.stderr
     ).lower()
+
+
+def test_owner_edition_keeps_claude_provider_gate_visible(
+    tmp_path: Path,
+) -> None:
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+
+    bundle = _build_gui_bundle(
+        tmp_path / "owner",
+        package_root=package_source,
+        distribution_mode="InternalUnsigned",
+        edition="Owner",
+    )
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["edition_id"] == "Owner"
+    assert manifest["targets"] == ["claude", "codex", "opencode"]
+    assert manifest["employee_distribution_allowed"] is False
+    assert manifest["owner_controlled"] is True
+    assert manifest["owner_claude_state"] == "OWNER_CANDIDATE"
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "NOT_PASS"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/3"
+
+    catalog = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert catalog.returncode == 0, catalog.stdout + catalog.stderr
+    catalog_value = json.loads(catalog.stdout)
+    states = {
+        row["id"]: row["package_state"]
+        for row in catalog_value["targets"]
+    }
+    assert states == {
+        "codex": "accepted",
+        "claude": "owner_candidate",
+        "opencode": "accepted",
+    }
+    assert catalog_value["install_enabled"] is True
+    assert catalog_value["provider_eligibility"] == "NOT_PROVIDED"
+
+
+def test_owner_provider_evidence_promotes_claude_without_distribution(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+
+    candidate = _build_gui_bundle(
+        tmp_path / "missing-evidence",
+        package_root=package_source,
+        distribution_mode="InternalUnsigned",
+    )
+    candidate_manifest = json.loads(
+        (candidate / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert candidate_manifest["owner_claude_state"] == "OWNER_CANDIDATE"
+    assert candidate_manifest["employee_distribution_allowed"] is False
 
     evidence = _provider_eligibility_evidence(
         tmp_path / "provider-eligibility-evidence.json"
@@ -2925,9 +3040,11 @@ def test_employee_distribution_requires_provider_eligibility(
     )
     assert manifest["distribution_mode"] == "internal_unsigned"
     assert manifest["signature"] == "unsigned-internal"
-    assert manifest["employee_release"] is True
-    assert manifest["employee_distribution_allowed"] is True
+    assert manifest["employee_release"] is False
+    assert manifest["employee_distribution_allowed"] is False
     assert manifest["public_distribution_allowed"] is False
+    assert manifest["distribution_allowed"] is False
+    assert manifest["owner_claude_state"] == "PROVIDER_READY"
     assert manifest["windows_warning_expected"] is True
     assert manifest["foundation_release"]["package_acceptance"] == "PASS"
     assert manifest["foundation_release"]["engine_version"] == "0.2.1"
@@ -2946,8 +3063,8 @@ def test_employee_distribution_requires_provider_eligibility(
         "FULL_RELEASE_CLAUDE": "PASS",
         "FULL_RELEASE_OPENCODE": "PASS",
         "PROGRAM_RELEASE": "3/3",
-        "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-        "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+        "OWNER_INSTALLER_INTERNAL": "OWNER_CANDIDATE",
+        "PUBLIC_SIGNED_RELEASE": "NOT_APPLICABLE",
     }
 
     public_signed = subprocess.run(
