@@ -4,24 +4,23 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 
-TARGETS = ("codex", "claude", "opencode")
-EXPECTED_CLIENTS = {
-    "codex-cli": "0.146.0-alpha.3.1",
-    "codex-desktop": "store-current",
-    "claude-code": "2.1.218",
-    "opencode-cli": "1.18.7",
-    "opencode-desktop": "1.18.7",
+VERSION = "0.3.0"
+TAG = "employee-v0.3.0"
+TARGETS = ("codex", "opencode")
+PRODUCT_FILES = {
+    "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
+    "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
 }
-EXPECTED_CANARY_CLIENTS = {
-    **EXPECTED_CLIENTS,
-    "codex-desktop": "store-identity-verified",
+PRODUCT_ROLES = {
+    "installer": "Installer",
+    "launch_center": "LaunchCenter",
 }
+RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
 EXPECTED_TARGET_LIFECYCLE = {
     "status": "PASS",
     "plan": "READY",
@@ -31,41 +30,70 @@ EXPECTED_TARGET_LIFECYCLE = {
     "rollback": "ROLLED_BACK",
     "preserved_data": "PASS",
 }
+EXPECTED_PRODUCT_CANARY = {
+    "installer": {
+        "product": "PASS",
+        "self_test": "PASS",
+        "catalog": "PASS",
+        "sibling_handoff": "PASS",
+    },
+    "launch_center": {
+        "product": "PASS",
+        "self_test": "PASS",
+        "catalog": "PASS",
+        "sibling_handoff": "NOT_APPLICABLE",
+    },
+}
+EXPECTED_RUNTIME_CANARY = {
+    "id": "sing-box",
+    "version": "1.13.14",
+    "status": "VERIFIED",
+}
 EXPECTED_BUNDLE_VERDICTS = {
     "FULL_RELEASE_CODEX": "PASS",
-    "FULL_RELEASE_CLAUDE": "PASS",
     "FULL_RELEASE_OPENCODE": "PASS",
-    "PROGRAM_RELEASE": "3/3",
+    "PROGRAM_RELEASE": "2/2",
     "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
     "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
 }
-INSTALL_GUIDE = """# LLM Foundation Installer v0.3.0
+EXPECTED_DRAFT_VERDICTS = {
+    **EXPECTED_BUNDLE_VERDICTS,
+    "INSTALLER_HUB_CANARY": "PASS",
+    "CLEAN_PC_PILOT": "PENDING",
+    "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
+}
+INSTALL_GUIDE = """# K-7 AI Employee v0.3.0
 
-This is the approved internal unsigned employee installer.
+В комплекте четыре связанные позиции:
 
-1. Verify the downloaded executable:
+- `K7-AI-Foundation-Employee-InternalUnsigned.exe` — установка и обслуживание;
+- `K7-AI-Launch-Center-Employee-InternalUnsigned.exe` — ежедневный запуск;
+- `sing-box-1.13.14-windows-amd64.zip` — hash-locked runtime маршрутов;
+- `bundle-manifest.json` — проверяемые SHA-256 и состав комплекта.
 
-   `Get-FileHash .\\LLMFoundationInstaller.exe -Algorithm SHA256`
-
-2. Compare the result with `SHA256SUMS`.
-3. Windows can show `Unknown Publisher` or SmartScreen. This is expected for
-   `InternalUnsigned`; verify the SHA-256 before choosing to continue.
-4. Run without administrator rights and follow the seven installer stages.
-5. Sign in interactively inside Codex, Claude, and OpenCode. The installer
-   never requests or transfers LLM credentials.
-
-This release is for controlled employee distribution only. Public
-distribution is not authorized.
+Перед запуском сверить каждый файл с `SHA256SUMS`. Подпись пока внутренняя
+unsigned, поэтому Windows может показать Unknown Publisher или SmartScreen.
+Администратор не требуется. Employee-редакция включает только Codex и
+OpenCode; Claude в этот релиз не входит.
 """
 
 
 @dataclass(frozen=True)
 class DraftRelease:
     root: Path
-    installer_path: Path
+    product_paths: dict[str, Path]
+    runtime_path: Path
     release_manifest_path: Path
     components_lock_path: Path
     sha256sums_path: Path
+
+    @property
+    def installer_path(self) -> Path:
+        return self.product_paths["installer"]
+
+    @property
+    def launch_center_path(self) -> Path:
+        return self.product_paths["launch_center"]
 
 
 def _json_bytes(value: object) -> bytes:
@@ -80,10 +108,7 @@ def _sha256(payload: bytes) -> str:
 
 def _file_record(path: Path) -> dict[str, object]:
     payload = path.read_bytes()
-    return {
-        "sha256": _sha256(payload),
-        "bytes": len(payload),
-    }
+    return {"sha256": _sha256(payload), "bytes": len(payload)}
 
 
 def evidence_body_sha256(value: dict[str, object]) -> str:
@@ -93,218 +118,129 @@ def evidence_body_sha256(value: dict[str, object]) -> str:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"{path.name} is missing or unsafe")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return value
 
 
-def _safe_relative(value: str) -> bool:
-    if "\\" in value:
-        return False
-    path = PurePosixPath(value)
-    return (
-        bool(value)
-        and not path.is_absolute()
-        and all(part not in {"", ".", ".."} for part in path.parts)
-    )
-
-
-def _validate_artifact(
-    bundle: Path,
-    relative: str,
-    record: object,
-) -> Path:
-    if not _safe_relative(relative) or not isinstance(record, dict):
-        raise ValueError("bundle artifact record is unsafe")
-    expected_hash = record.get("sha256")
-    expected_bytes = record.get("bytes")
-    path = bundle.joinpath(*PurePosixPath(relative).parts)
+def _validate_record(path: Path, value: object, label: str) -> None:
     if (
-        not isinstance(expected_hash, str)
-        or len(expected_hash) != 64
-        or not isinstance(expected_bytes, int)
-        or isinstance(expected_bytes, bool)
-        or expected_bytes < 0
-        or not path.is_file()
+        not isinstance(value, dict)
+        or set(value) != {"sha256", "bytes"}
+        or value != _file_record(path)
     ):
-        raise ValueError(f"bundle artifact is invalid: {relative}")
-    actual = _file_record(path)
-    if actual != {
-        "sha256": expected_hash,
-        "bytes": expected_bytes,
-    }:
-        raise ValueError(f"bundle artifact binding differs: {relative}")
-    return path
-
-
-def _validate_client_lock(path: Path) -> None:
-    value = _load_json(path)
-    clients = value.get("clients")
-    found = (
-        {
-            str(row.get("id")): str(row.get("version"))
-            for row in clients
-            if isinstance(row, dict)
-        }
-        if isinstance(clients, list)
-        else {}
-    )
-    if (
-        value.get("schema_version") != 1
-        or value.get("official_only") is not True
-        or value.get("test_only") is not False
-        or found != EXPECTED_CLIENTS
-    ):
-        raise ValueError("client source lock is not release-accepted")
+        raise ValueError(f"Employee bundle {label} binding differs")
 
 
 def validate_bundle(bundle: Path) -> dict[str, Any]:
+    """Validate the exact four-file Employee edition release input."""
+
     bundle = bundle.resolve()
-    manifest_path = bundle / "bundle-manifest.json"
-    manifest = _load_json(manifest_path)
-    verdicts = manifest.get("verdicts")
+    if not bundle.is_dir() or bundle.is_symlink():
+        raise ValueError("Employee bundle root is missing or unsafe")
+    manifest = _load_json(bundle / "bundle-manifest.json")
     if (
         manifest.get("schema_version") != 1
-        or manifest.get("app_id") != "llm-foundation-installer"
-        or manifest.get("version") != "0.3.0"
-        or manifest.get("network") != "user-initiated-only"
-        or manifest.get("automatic_network") is not False
-        or manifest.get("telemetry") is not False
-        or manifest.get("reverse_flow") is not False
-        or manifest.get("distribution_mode") != "internal_unsigned"
-        or manifest.get("embedded_target_count") != 3
-        or manifest.get("signature") != "unsigned-internal"
-        or manifest.get("employee_release") is not True
-        or manifest.get("employee_distribution_allowed") is not True
-        or manifest.get("public_distribution_allowed") is not False
-        or manifest.get("windows_warning_expected") is not True
+        or manifest.get("app_id") != "k7-ai-edition-bundle"
+        or manifest.get("edition_id") != "Employee"
+        or manifest.get("version") != VERSION
+        or manifest.get("theme_id") != "K7Signal"
+        or manifest.get("owner_controlled") is not False
+        or manifest.get("distribution_allowed") is not True
+        or manifest.get("distribution_mode") != "InternalUnsigned"
         or manifest.get("targets") != list(TARGETS)
-        or verdicts != EXPECTED_BUNDLE_VERDICTS
+        or manifest.get("verdicts") != EXPECTED_BUNDLE_VERDICTS
     ):
-        raise ValueError("bundle manifest is not an accepted internal release")
-    artifacts = manifest.get("artifacts")
-    foundation = manifest.get("foundation_release")
-    if not isinstance(artifacts, dict):
-        raise ValueError("bundle artifact inventory is missing")
-    foundation_paths = {
-        "asset": "foundation/foundation-engine-0.2.1.zip",
-        "release_manifest": "foundation/release-manifest.json",
-        "acceptance_evidence": "foundation/acceptance-evidence.json",
-        "release_verification": "foundation/release-verification.json",
-        "package_acceptance_record": (
-            "foundation/package-acceptance.json"
-        ),
+        raise ValueError("Employee edition bundle manifest is not accepted")
+    expected_names = {
+        "bundle-manifest.json",
+        RUNTIME_FILE,
+        *PRODUCT_FILES.values(),
     }
+    children = sorted(bundle.iterdir(), key=lambda item: item.name)
     if (
-        not isinstance(foundation, dict)
-        or foundation.get("package_acceptance") != "PASS"
-        or foundation.get("engine_version") != "0.2.1"
+        {path.name for path in children} != expected_names
+        or any(not path.is_file() or path.is_symlink() for path in children)
     ):
-        raise ValueError("bundle Foundation release is not accepted")
-    for label, relative in foundation_paths.items():
-        record = foundation.get(label)
+        raise ValueError("Employee bundle file inventory differs")
+    products = manifest.get("products")
+    if not isinstance(products, dict) or set(products) != set(PRODUCT_FILES):
+        raise ValueError("Employee bundle product inventory differs")
+    for product, filename in PRODUCT_FILES.items():
+        row = products.get(product)
+        path = bundle / filename
         if (
-            not isinstance(record, dict)
-            or record.get("relative_path") != relative
-            or {
-                "sha256": record.get("sha256"),
-                "bytes": record.get("bytes"),
-            }
-            != artifacts.get(relative)
+            not isinstance(row, dict)
+            or row.get("product_role") != PRODUCT_ROLES[product]
+            or row.get("file") != filename
         ):
-            raise ValueError("bundle Foundation release binding differs")
-    required = {
-        "LLMFoundationInstaller.exe",
-        "VERSION",
-        "engine/foundation.ps1",
-        "engine/engine-manifest.json",
-        "engine/VERSION",
-        "client-sources.lock.json",
-        "provider-eligibility-evidence.json",
-        *foundation_paths.values(),
-    }
-    for target in TARGETS:
-        prefix = f"packages/{target}/"
-        required.update(
-            {
-                prefix + "release-manifest.json",
-                prefix + "acceptance-evidence.json",
-                prefix + "release-verification.json",
-                prefix + "package-acceptance.json",
-            }
+            raise ValueError(f"Employee bundle {product} metadata differs")
+        _validate_record(
+            path,
+            {"sha256": row.get("sha256"), "bytes": row.get("bytes")},
+            product,
         )
-        zip_names = [
-            name
-            for name in artifacts
-            if name.startswith(prefix)
-            and name.endswith(".zip")
-            and "/" not in name[len(prefix) :]
-        ]
-        if len(zip_names) != 1:
-            raise ValueError(f"bundle artifact inventory for {target} differs")
-        required.add(zip_names[0])
-    missing = sorted(required.difference(artifacts))
-    if missing:
-        raise ValueError(
-            "bundle artifact inventory is incomplete: " + ", ".join(missing)
-        )
-    for relative, record in artifacts.items():
-        _validate_artifact(bundle, str(relative), record)
-    foundation_acceptance = _load_json(
-        bundle / "foundation" / "package-acceptance.json"
-    )
-    expected_engine_files = {
-        name: artifacts[f"engine/{name}"]
-        for name in ("VERSION", "engine-manifest.json", "foundation.ps1")
-    }
+    runtime = manifest.get("runtime")
     if (
-        foundation_acceptance.get("schema_version") != 1
-        or foundation_acceptance.get("target") != "foundation"
-        or foundation_acceptance.get("engine_version") != "0.2.1"
-        or foundation_acceptance.get("package_acceptance") != "PASS"
-        or foundation_acceptance.get("engine_files")
-        != expected_engine_files
-        or foundation_acceptance.get("immutable_release") is not True
-        or foundation_acceptance.get("release_attestation") is not True
+        not isinstance(runtime, dict)
+        or runtime.get("id") != "sing-box"
+        or runtime.get("version") != "1.13.14"
+        or runtime.get("file") != RUNTIME_FILE
     ):
-        raise ValueError(
-            "bundle Foundation package acceptance is invalid or unbound"
-        )
-    _validate_client_lock(bundle / "client-sources.lock.json")
+        raise ValueError("Employee bundle runtime metadata differs")
+    _validate_record(
+        bundle / RUNTIME_FILE,
+        {
+            "sha256": runtime.get("sha256"),
+            "bytes": runtime.get("bytes"),
+        },
+        "runtime",
+    )
     return manifest
 
 
-def _validate_hub_canary(
-    path: Path,
-    bundle: Path,
-) -> dict[str, Any]:
+def _validate_hub_canary(path: Path, bundle: Path) -> dict[str, Any]:
     evidence = _load_json(path)
     binding = evidence.get("bundle")
-    targets = evidence.get("targets")
+    expected_binding = {
+        "manifest_sha256": _file_record(
+            bundle / "bundle-manifest.json"
+        )["sha256"],
+        "installer_sha256": _file_record(
+            bundle / PRODUCT_FILES["installer"]
+        )["sha256"],
+        "launch_center_sha256": _file_record(
+            bundle / PRODUCT_FILES["launch_center"]
+        )["sha256"],
+        "runtime_sha256": _file_record(
+            bundle / RUNTIME_FILE
+        )["sha256"],
+    }
     if (
         evidence.get("schema_version") != 1
-        or evidence.get("target") != "installer"
-        or evidence.get("version") != "0.3.0"
+        or evidence.get("target") != "employee_edition"
+        or evidence.get("version") != VERSION
         or evidence.get("INSTALLER_HUB_CANARY") != "PASS"
         or evidence.get("model_requests") != 0
         or evidence.get("unexpected_network") != 0
-        or evidence.get("clients") != EXPECTED_CANARY_CLIENTS
-        or not isinstance(binding, dict)
-        or binding.get("manifest_sha256")
-        != _file_record(bundle / "bundle-manifest.json")["sha256"]
-        or binding.get("installer_sha256")
-        != _file_record(bundle / "LLMFoundationInstaller.exe")["sha256"]
-        or not isinstance(targets, dict)
-        or set(targets) != set(TARGETS)
-        or any(
-            targets.get(target) != EXPECTED_TARGET_LIFECYCLE
+        or binding != expected_binding
+        or evidence.get("products")
+        != EXPECTED_PRODUCT_CANARY
+        or evidence.get("runtime") != EXPECTED_RUNTIME_CANARY
+        or evidence.get("targets")
+        != {
+            target: EXPECTED_TARGET_LIFECYCLE
             for target in TARGETS
-        )
+        }
+        or evidence.get("credentials_included") is not False
+        or evidence.get("personal_data_included") is not False
         or evidence.get("evidence_body_sha256")
         != evidence_body_sha256(evidence)
     ):
-        raise ValueError("installer hub canary evidence is invalid or unbound")
+        raise ValueError("Employee edition hub canary is invalid or unbound")
     return evidence
 
 
@@ -318,72 +254,40 @@ def _write_new(path: Path, payload: bytes) -> None:
 
 
 def _copy_exact(source: Path, destination: Path) -> None:
-    _write_new(destination, source.read_bytes())
-    if destination.read_bytes() != source.read_bytes():
+    payload = source.read_bytes()
+    _write_new(destination, payload)
+    if destination.read_bytes() != payload:
         raise AssertionError(f"exact-byte copy failed: {source.name}")
 
 
-def _release_components(
-    bundle: Path,
-    manifest: dict[str, Any],
-) -> dict[str, Any]:
-    target_records: dict[str, object] = {}
-    artifacts = manifest["artifacts"]
-    for target in TARGETS:
-        prefix = f"packages/{target}/"
-        target_records[target] = {
-            name[len(prefix) :]: record
-            for name, record in artifacts.items()
-            if name.startswith(prefix)
-        }
+def _sha256sums(root: Path) -> bytes:
+    lines = [
+        f"{_file_record(path)['sha256']}  {path.name}"
+        for path in sorted(root.iterdir(), key=lambda item: item.name)
+        if path.is_file() and path.name != "SHA256SUMS"
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _components(manifest: dict[str, Any]) -> dict[str, object]:
     return {
         "schema_version": 1,
-        "target": "installer",
-        "version": "0.3.0",
-        "foundation_engine": {
-            "version": (
-                bundle / "engine" / "VERSION"
-            ).read_text(encoding="utf-8").strip(),
-            "manifest": artifacts["engine/engine-manifest.json"],
-            "script": artifacts["engine/foundation.ps1"],
+        "edition_id": "Employee",
+        "version": VERSION,
+        "products": {
+            product: {
+                "file": row["file"],
+                "product_role": row["product_role"],
+                "sha256": row["sha256"],
+                "bytes": row["bytes"],
+            }
+            for product, row in manifest["products"].items()
         },
-        "foundation": {
-            "version": manifest["foundation_release"]["engine_version"],
-            "package_acceptance": manifest["foundation_release"][
-                "package_acceptance"
-            ],
-            "release_artifacts": {
-                label: artifacts[relative]
-                for label, relative in {
-                    "asset": "foundation/foundation-engine-0.2.1.zip",
-                    "release_manifest": (
-                        "foundation/release-manifest.json"
-                    ),
-                    "acceptance_evidence": (
-                        "foundation/acceptance-evidence.json"
-                    ),
-                    "release_verification": (
-                        "foundation/release-verification.json"
-                    ),
-                    "package_acceptance": (
-                        "foundation/package-acceptance.json"
-                    ),
-                }.items()
-            },
-        },
-        "client_sources": artifacts["client-sources.lock.json"],
-        "targets": target_records,
+        "runtime": manifest["runtime"],
+        "targets": list(TARGETS),
         "sync_direction": "hub-to-consumer",
         "consumer_upload": False,
     }
-
-
-def _sha256sums(root: Path) -> bytes:
-    lines = []
-    for path in sorted(root.iterdir(), key=lambda item: item.name):
-        if path.is_file() and path.name != "SHA256SUMS":
-            lines.append(f"{_file_record(path)['sha256']}  {path.name}")
-    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def prepare_draft_release(
@@ -392,39 +296,28 @@ def prepare_draft_release(
     hub_canary_path: Path,
     output: Path,
 ) -> DraftRelease:
-    """Prepare deterministic draft assets without rebuilding the EXE."""
+    """Prepare draft assets without rebuilding any edition binary."""
 
     bundle = bundle.resolve()
     output = output.resolve()
     manifest = validate_bundle(bundle)
-    canary = _validate_hub_canary(
-        hub_canary_path.resolve(),
-        bundle,
-    )
+    _validate_hub_canary(hub_canary_path.resolve(), bundle)
     if output.exists():
         raise ValueError("draft release output must not exist")
     output.mkdir(parents=True)
 
-    installer = output / "LLMFoundationInstaller.exe"
-    _copy_exact(bundle / installer.name, installer)
-    _copy_exact(
-        bundle / "bundle-manifest.json",
-        output / "bundle-manifest.json",
-    )
-    _copy_exact(
-        bundle / "client-sources.lock.json",
-        output / "client-sources.lock.json",
-    )
-    _copy_exact(
-        bundle / "provider-eligibility-evidence.json",
-        output / "provider-eligibility-evidence.json",
-    )
+    for filename in (
+        "bundle-manifest.json",
+        RUNTIME_FILE,
+        *PRODUCT_FILES.values(),
+    ):
+        _copy_exact(bundle / filename, output / filename)
     _copy_exact(
         hub_canary_path.resolve(),
         output / "hub-canary-evidence.json",
     )
-    components = output / "components.lock.json"
-    _write_new(components, _json_bytes(_release_components(bundle, manifest)))
+    components_path = output / "components.lock.json"
+    _write_new(components_path, _json_bytes(_components(manifest)))
     _write_new(
         output / "EMPLOYEE-INSTALL.md",
         INSTALL_GUIDE.encode("utf-8"),
@@ -437,24 +330,28 @@ def prepare_draft_release(
     }
     release_manifest: dict[str, Any] = {
         "schema_version": 1,
-        "app_id": "llm-foundation-installer",
-        "version": "0.3.0",
-        "tag": "installer-v0.3.0",
+        "app_id": "k7-ai-employee-edition",
+        "edition_id": "Employee",
+        "version": VERSION,
+        "tag": TAG,
         "channel": "draft",
-        "distribution_mode": "internal_unsigned",
-        "installer": artifacts["LLMFoundationInstaller.exe"],
-        "bundle_manifest_sha256": artifacts["bundle-manifest.json"]["sha256"],
-        "hub_canary_sha256": artifacts["hub-canary-evidence.json"]["sha256"],
-        "artifacts": artifacts,
-        "verdicts": {
-            **EXPECTED_BUNDLE_VERDICTS,
-            "INSTALLER_HUB_CANARY": "PASS",
-            "CLEAN_PC_PILOT": "PENDING",
-            "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
+        "distribution_mode": "InternalUnsigned",
+        "products": {
+            product: artifacts[filename]
+            for product, filename in PRODUCT_FILES.items()
         },
+        "runtime": artifacts[RUNTIME_FILE],
+        "bundle_manifest_sha256": artifacts[
+            "bundle-manifest.json"
+        ]["sha256"],
+        "hub_canary_sha256": artifacts[
+            "hub-canary-evidence.json"
+        ]["sha256"],
+        "artifacts": artifacts,
+        "verdicts": EXPECTED_DRAFT_VERDICTS,
         "requires": {
             "clean_pc_pilot": True,
-            "same_installer_bytes": True,
+            "same_product_and_runtime_bytes": True,
             "immutable_release": True,
             "release_attestation": True,
         },
@@ -466,11 +363,16 @@ def prepare_draft_release(
     _write_new(release_manifest_path, _json_bytes(release_manifest))
     sums = output / "SHA256SUMS"
     _write_new(sums, _sha256sums(output))
+    product_paths = {
+        product: output / filename
+        for product, filename in PRODUCT_FILES.items()
+    }
     return DraftRelease(
         root=output,
-        installer_path=installer,
+        product_paths=product_paths,
+        runtime_path=output / RUNTIME_FILE,
         release_manifest_path=release_manifest_path,
-        components_lock_path=components,
+        components_lock_path=components_path,
         sha256sums_path=sums,
     )
 
@@ -478,8 +380,8 @@ def prepare_draft_release(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare deterministic installer-v0.3.0 draft assets from an "
-            "accepted InternalUnsigned bundle and hub canary."
+            "Prepare deterministic employee-v0.3.0 draft assets from the "
+            "accepted Employee edition and no-model hub canary."
         )
     )
     parser.add_argument("--bundle", required=True, type=Path)
@@ -495,9 +397,13 @@ def main() -> int:
         json.dumps(
             {
                 "status": "DRAFT_ASSETS_PREPARED",
-                "tag": "installer-v0.3.0",
-                "installer_sha256": _file_record(
-                    result.installer_path
+                "tag": TAG,
+                "products": {
+                    product: _file_record(path)["sha256"]
+                    for product, path in result.product_paths.items()
+                },
+                "runtime_sha256": _file_record(
+                    result.runtime_path
                 )["sha256"],
                 "pilot": "PENDING",
                 "output": str(result.root),

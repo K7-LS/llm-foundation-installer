@@ -19,39 +19,51 @@ import installer_release  # noqa: E402
 
 REQUIRED_PILOT_CHECKS = (
     "windows_preflight",
+    "installer_launch",
+    "launch_center_launch",
+    "installer_to_launch_center_handoff",
     "codex_desktop",
     "codex_cli",
-    "claude_code",
     "opencode_desktop",
     "opencode_cli",
     "opencode_oauth",
-    "simple_chat",
-    "discovery_16_37",
-    "sync_base",
-    "rollback",
+    "direct_mode",
+    "vpn_mode",
+    "singbox_http_mode",
+    "singbox_https_mode",
+    "interactive_guide",
+    "install_doctor_inventory_rollback",
     "preserved_user_data",
     "no_reverse_flow",
 )
-EXPECTED_DRAFT_VERDICTS = {
-    "FULL_RELEASE_CODEX": "PASS",
-    "FULL_RELEASE_CLAUDE": "PASS",
-    "FULL_RELEASE_OPENCODE": "PASS",
-    "PROGRAM_RELEASE": "3/3",
+NETWORK_MODES = ("Direct", "VPN", "SingBoxHttp", "SingBoxHttps")
+EXPECTED_DRAFT_VERDICTS = installer_release.EXPECTED_DRAFT_VERDICTS
+EXPECTED_STABLE_VERDICTS = {
+    **installer_release.EXPECTED_BUNDLE_VERDICTS,
     "INSTALLER_HUB_CANARY": "PASS",
-    "CLEAN_PC_PILOT": "PENDING",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
-    "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+    "CLEAN_PC_PILOT": "PASS",
+    "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
+    "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
 }
 
 
 @dataclass(frozen=True)
 class EmployeeRelease:
     root: Path
-    installer_path: Path
+    product_paths: dict[str, Path]
+    runtime_path: Path
     release_manifest_path: Path
     acceptance_evidence_path: Path
     pilot_evidence_path: Path
     sha256sums_path: Path
+
+    @property
+    def installer_path(self) -> Path:
+        return self.product_paths["installer"]
+
+    @property
+    def launch_center_path(self) -> Path:
+        return self.product_paths["launch_center"]
 
 
 def _json_bytes(value: object) -> bytes:
@@ -69,6 +81,8 @@ def _record(path: Path) -> dict[str, object]:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"{path.name} is missing or unsafe")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -101,55 +115,78 @@ def _expected_sums(root: Path) -> str:
 
 
 def _validate_draft(draft: Path) -> dict[str, Any]:
-    manifest_path = draft / "release-manifest.json"
-    manifest = _load_json(manifest_path)
-    installer = draft / "LLMFoundationInstaller.exe"
+    if not draft.is_dir() or draft.is_symlink():
+        raise ValueError("Employee draft root is missing or unsafe")
+    manifest = _load_json(draft / "release-manifest.json")
     artifacts = manifest.get("artifacts")
+    products = manifest.get("products")
     if (
         manifest.get("schema_version") != 1
-        or manifest.get("app_id") != "llm-foundation-installer"
-        or manifest.get("version") != "0.3.0"
-        or manifest.get("tag") != "installer-v0.3.0"
+        or manifest.get("app_id") != "k7-ai-employee-edition"
+        or manifest.get("edition_id") != "Employee"
+        or manifest.get("version") != installer_release.VERSION
+        or manifest.get("tag") != installer_release.TAG
         or manifest.get("channel") != "draft"
-        or manifest.get("distribution_mode") != "internal_unsigned"
-        or manifest.get("installer") != _record(installer)
+        or manifest.get("distribution_mode") != "InternalUnsigned"
         or manifest.get("verdicts") != EXPECTED_DRAFT_VERDICTS
         or manifest.get("evidence_body_sha256")
         != installer_release.evidence_body_sha256(manifest)
         or not isinstance(artifacts, dict)
+        or not isinstance(products, dict)
     ):
-        raise ValueError("installer draft release manifest is invalid")
+        raise ValueError("Employee draft release manifest is invalid")
+    expected_artifact_names = {
+        path.name
+        for path in draft.iterdir()
+        if path.is_file()
+    }.difference({"release-manifest.json", "SHA256SUMS"})
+    if set(artifacts) != expected_artifact_names:
+        raise ValueError("Employee draft artifact inventory differs")
     for name, record in artifacts.items():
         path = draft / str(name)
         if (
             not path.is_file()
+            or path.is_symlink()
             or not isinstance(record, dict)
             or _record(path) != record
         ):
-            raise ValueError(f"installer draft artifact differs: {name}")
+            raise ValueError(f"Employee draft artifact differs: {name}")
+    expected_products = {
+        product: _record(draft / filename)
+        for product, filename in installer_release.PRODUCT_FILES.items()
+    }
+    if products != expected_products:
+        raise ValueError("Employee draft product binding differs")
+    if manifest.get("runtime") != _record(
+        draft / installer_release.RUNTIME_FILE
+    ):
+        raise ValueError("Employee draft runtime binding differs")
     sums = draft / "SHA256SUMS"
     if (
         not sums.is_file()
+        or sums.is_symlink()
         or sums.read_text(encoding="utf-8") != _expected_sums(draft)
     ):
-        raise ValueError("installer draft SHA256SUMS differs")
+        raise ValueError("Employee draft SHA256SUMS differs")
     return manifest
 
 
-def _validate_pilot(
-    evidence: dict[str, Any],
-    draft: Path,
-) -> None:
+def _validate_pilot(evidence: dict[str, Any], draft: Path) -> None:
     machine = evidence.get("machine")
     checks = evidence.get("checks")
     privacy = evidence.get("privacy")
+    expected_products = {
+        product: _record(draft / filename)
+        for product, filename in installer_release.PRODUCT_FILES.items()
+    }
     valid = (
         evidence.get("schema_version") == 1
-        and evidence.get("target") == "installer"
-        and evidence.get("version") == "0.3.0"
+        and evidence.get("target") == "employee_edition"
+        and evidence.get("version") == installer_release.VERSION
         and isinstance(evidence.get("recorded_at_utc"), str)
-        and evidence.get("installer_sha256")
-        == _record(draft / "LLMFoundationInstaller.exe")["sha256"]
+        and evidence.get("products") == expected_products
+        and evidence.get("runtime")
+        == _record(draft / installer_release.RUNTIME_FILE)
         and evidence.get("draft_release_manifest_sha256")
         == _record(draft / "release-manifest.json")["sha256"]
         and isinstance(machine, dict)
@@ -158,7 +195,7 @@ def _validate_pilot(
         and not isinstance(machine.get("windows_build"), bool)
         and machine["windows_build"] >= 19041
         and machine.get("admin_used") is False
-        and evidence.get("network_mode") in {"Direct", "VPN", "Proxy"}
+        and evidence.get("network_modes") == list(NETWORK_MODES)
         and isinstance(checks, dict)
         and set(checks) == set(REQUIRED_PILOT_CHECKS)
         and all(checks[name] == "PASS" for name in REQUIRED_PILOT_CHECKS)
@@ -173,7 +210,7 @@ def _validate_pilot(
         == installer_release.evidence_body_sha256(evidence)
     )
     if not valid:
-        raise ValueError("clean-PC pilot evidence is invalid or unbound")
+        raise ValueError("clean-PC Employee pilot evidence is invalid or unbound")
 
 
 def finalize_employee_release(
@@ -182,14 +219,14 @@ def finalize_employee_release(
     pilot_evidence_path: Path,
     output: Path,
 ) -> EmployeeRelease:
-    """Finalize stable metadata while preserving the exact draft EXE."""
+    """Finalize stable metadata while preserving every accepted input byte."""
 
     draft = draft.resolve()
     output = output.resolve()
     draft_manifest = _validate_draft(draft)
     pilot_source = pilot_evidence_path.resolve()
-    pilot_evidence = _load_json(pilot_source)
-    _validate_pilot(pilot_evidence, draft)
+    pilot_value = _load_json(pilot_source)
+    _validate_pilot(pilot_value, draft)
     if output.exists():
         raise ValueError("employee release output must not exist")
     output.mkdir(parents=True)
@@ -204,14 +241,22 @@ def finalize_employee_release(
     pilot_path = output / "pilot-acceptance.json"
     _copy_exact(pilot_source, pilot_path)
 
-    installer = output / "LLMFoundationInstaller.exe"
+    product_paths = {
+        product: output / filename
+        for product, filename in installer_release.PRODUCT_FILES.items()
+    }
+    runtime_path = output / installer_release.RUNTIME_FILE
     acceptance: dict[str, Any] = {
         "schema_version": 1,
-        "target": "installer",
-        "version": "0.3.0",
-        "tag": "installer-v0.3.0",
-        "distribution_mode": "internal_unsigned",
-        "installer": _record(installer),
+        "target": "employee_edition",
+        "version": installer_release.VERSION,
+        "tag": installer_release.TAG,
+        "distribution_mode": "InternalUnsigned",
+        "products": {
+            product: _record(path)
+            for product, path in product_paths.items()
+        },
+        "runtime": _record(runtime_path),
         "draft_release_manifest_sha256": _record(
             draft / "release-manifest.json"
         )["sha256"],
@@ -219,17 +264,7 @@ def finalize_employee_release(
             output / "hub-canary-evidence.json"
         )["sha256"],
         "pilot_evidence_sha256": _record(pilot_path)["sha256"],
-        "verdicts": {
-            "FULL_RELEASE_CODEX": "PASS",
-            "FULL_RELEASE_CLAUDE": "PASS",
-            "FULL_RELEASE_OPENCODE": "PASS",
-            "PROGRAM_RELEASE": "3/3",
-            "INSTALLER_HUB_CANARY": "PASS",
-            "CLEAN_PC_PILOT": "PASS",
-            "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-            "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
-            "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
-        },
+        "verdicts": EXPECTED_STABLE_VERDICTS,
         "privacy": {
             "credentials_included": False,
             "personal_data_included": False,
@@ -252,7 +287,11 @@ def finalize_employee_release(
     stable_manifest.update(
         {
             "channel": "stable",
-            "installer": _record(installer),
+            "products": {
+                product: _record(path)
+                for product, path in product_paths.items()
+            },
+            "runtime": _record(runtime_path),
             "artifacts": artifacts,
             "promoted_from_draft_manifest_sha256": _record(
                 draft / "release-manifest.json"
@@ -261,7 +300,7 @@ def finalize_employee_release(
             "acceptance_evidence_sha256": _record(
                 acceptance_path
             )["sha256"],
-            "verdicts": acceptance["verdicts"],
+            "verdicts": EXPECTED_STABLE_VERDICTS,
         }
     )
     stable_manifest["evidence_body_sha256"] = (
@@ -271,13 +310,21 @@ def finalize_employee_release(
     _write_new(manifest_path, _json_bytes(stable_manifest))
     sums = output / "SHA256SUMS"
     _write_new(sums, _expected_sums(output).encode("utf-8"))
-    if installer.read_bytes() != (
-        draft / "LLMFoundationInstaller.exe"
+    for product, filename in installer_release.PRODUCT_FILES.items():
+        if product_paths[product].read_bytes() != (
+            draft / filename
+        ).read_bytes():
+            raise AssertionError(
+                f"pilot finalization changed {product} bytes"
+            )
+    if runtime_path.read_bytes() != (
+        draft / installer_release.RUNTIME_FILE
     ).read_bytes():
-        raise AssertionError("pilot finalization changed installer bytes")
+        raise AssertionError("pilot finalization changed runtime bytes")
     return EmployeeRelease(
         root=output,
-        installer_path=installer,
+        product_paths=product_paths,
+        runtime_path=runtime_path,
         release_manifest_path=manifest_path,
         acceptance_evidence_path=acceptance_path,
         pilot_evidence_path=pilot_path,
@@ -288,8 +335,8 @@ def finalize_employee_release(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Finalize installer-v0.3.0 after an accepted clean-PC pilot "
-            "without rebuilding the installer executable."
+            "Finalize employee-v0.3.0 after an accepted clean-PC pilot "
+            "without rebuilding either executable or the runtime."
         )
     )
     parser.add_argument("--draft", required=True, type=Path)
@@ -306,8 +353,12 @@ def main() -> int:
             {
                 "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
                 "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
-                "installer_sha256": _record(
-                    result.installer_path
+                "products": {
+                    product: _record(path)["sha256"]
+                    for product, path in result.product_paths.items()
+                },
+                "runtime_sha256": _record(
+                    result.runtime_path
                 )["sha256"],
                 "output": str(result.root),
             },

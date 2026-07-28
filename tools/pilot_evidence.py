@@ -13,7 +13,11 @@ TOOLS_ROOT = Path(__file__).resolve().parent
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
+import installer_release  # noqa: E402
 import pilot_release  # noqa: E402
+
+
+NETWORK_MODES = ("Direct", "VPN", "SingBoxHttp", "SingBoxHttps")
 
 
 def _json_bytes(value: object) -> bytes:
@@ -28,8 +32,12 @@ def evidence_body_sha256(value: dict[str, object]) -> str:
     return hashlib.sha256(_json_bytes(body)).hexdigest()
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _record(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
 
 
 def create_pilot_evidence(
@@ -37,24 +45,29 @@ def create_pilot_evidence(
     draft: Path,
     output: Path,
     windows_build: int,
-    network_mode: str,
     confirmations: dict[str, bool],
 ) -> dict[str, object]:
-    """Record explicit, PII-free clean-PC pilot confirmations."""
+    """Record explicit, PII-free clean-PC Employee pilot confirmations."""
 
     draft = draft.resolve()
     output = output.resolve()
-    installer = draft / "LLMFoundationInstaller.exe"
-    manifest = draft / "release-manifest.json"
+    required_paths = {
+        "manifest": draft / "release-manifest.json",
+        "runtime": draft / installer_release.RUNTIME_FILE,
+        **{
+            product: draft / filename
+            for product, filename in installer_release.PRODUCT_FILES.items()
+        },
+    }
     if (
         not draft.is_dir()
         or draft.is_symlink()
-        or not installer.is_file()
-        or installer.is_symlink()
-        or not manifest.is_file()
-        or manifest.is_symlink()
+        or any(
+            not path.is_file() or path.is_symlink()
+            for path in required_paths.values()
+        )
     ):
-        raise ValueError("draft release binding is missing or unsafe")
+        raise ValueError("Employee draft release binding is missing or unsafe")
     if output.exists():
         raise ValueError("pilot evidence output already exists")
     try:
@@ -69,8 +82,6 @@ def create_pilot_evidence(
         or windows_build < 19041
     ):
         raise ValueError("pilot Windows build is unsupported")
-    if network_mode not in {"Direct", "VPN", "Proxy"}:
-        raise ValueError("pilot network mode is unsupported")
     expected = set(pilot_release.REQUIRED_PILOT_CHECKS)
     if set(confirmations) != expected:
         raise ValueError("pilot confirmation inventory differs")
@@ -83,20 +94,26 @@ def create_pilot_evidence(
         )
     evidence: dict[str, object] = {
         "schema_version": 1,
-        "target": "installer",
-        "version": "0.3.0",
+        "target": "employee_edition",
+        "version": installer_release.VERSION,
         "recorded_at_utc": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
-        "installer_sha256": _sha256(installer),
-        "draft_release_manifest_sha256": _sha256(manifest),
+        "products": {
+            product: _record(required_paths[product])
+            for product in installer_release.PRODUCT_FILES
+        },
+        "runtime": _record(required_paths["runtime"]),
+        "draft_release_manifest_sha256": _record(
+            required_paths["manifest"]
+        )["sha256"],
         "machine": {
             "clean_windows_x64": True,
             "windows_build": windows_build,
             "admin_used": False,
         },
-        "network_mode": network_mode,
+        "network_modes": list(NETWORK_MODES),
         "checks": {
             name: "PASS"
             for name in pilot_release.REQUIRED_PILOT_CHECKS
@@ -119,18 +136,13 @@ def create_pilot_evidence(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Create PII-free clean-PC pilot evidence only after every "
-            "required check has been explicitly confirmed."
+            "Create PII-free Employee clean-PC pilot evidence only after "
+            "every required check has been explicitly confirmed."
         )
     )
     parser.add_argument("--draft", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--windows-build", required=True, type=int)
-    parser.add_argument(
-        "--network-mode",
-        required=True,
-        choices=("Direct", "VPN", "Proxy"),
-    )
     parser.add_argument(
         "--confirm-clean-windows-x64",
         action="store_true",
@@ -158,7 +170,6 @@ def main() -> int:
         draft=arguments.draft,
         output=arguments.output,
         windows_build=arguments.windows_build,
-        network_mode=arguments.network_mode,
         confirmations=confirmations,
     )
     print(

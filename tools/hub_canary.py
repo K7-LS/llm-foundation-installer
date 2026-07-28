@@ -19,12 +19,9 @@ if str(TOOLS_ROOT) not in sys.path:
 import installer_release  # noqa: E402
 
 
-EXPECTED_CLIENTS = installer_release.EXPECTED_CANARY_CLIENTS
-EXPECTED_TARGET = installer_release.EXPECTED_TARGET_LIFECYCLE
 TARGET_CLIENT = {
-    "codex": ("codex-cli", "0.146.0-alpha.3.1"),
-    "claude": ("claude-code", "2.1.218"),
-    "opencode": ("opencode", "1.18.7"),
+    "codex": "0.146.0-alpha.3.1",
+    "opencode": "1.18.7",
 }
 
 
@@ -51,34 +48,41 @@ def _valid_sha256(value: object) -> bool:
 def build_hub_canary_evidence(
     *,
     bundle_binding: dict[str, str],
-    clients: dict[str, str],
+    product_results: dict[str, dict[str, str]],
+    runtime_result: dict[str, str],
     target_results: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
     valid = (
-        set(bundle_binding) == {
+        set(bundle_binding)
+        == {
             "manifest_sha256",
             "installer_sha256",
+            "launch_center_sha256",
+            "runtime_sha256",
         }
         and all(_valid_sha256(value) for value in bundle_binding.values())
-        and clients == EXPECTED_CLIENTS
-        and set(target_results) == set(installer_release.TARGETS)
-        and all(
-            target_results.get(target) == EXPECTED_TARGET
+        and product_results
+        == installer_release.EXPECTED_PRODUCT_CANARY
+        and runtime_result == installer_release.EXPECTED_RUNTIME_CANARY
+        and target_results
+        == {
+            target: installer_release.EXPECTED_TARGET_LIFECYCLE
             for target in installer_release.TARGETS
-        )
+        }
     )
     if not valid:
-        raise ValueError("installer hub canary inputs are not accepted")
+        raise ValueError("Employee edition hub canary inputs are not accepted")
     evidence: dict[str, Any] = {
         "schema_version": 1,
-        "target": "installer",
-        "version": "0.3.0",
+        "target": "employee_edition",
+        "version": installer_release.VERSION,
         "generated_at_utc": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
         "bundle": bundle_binding,
-        "clients": clients,
+        "products": product_results,
+        "runtime": runtime_result,
         "targets": target_results,
         "model_requests": 0,
         "unexpected_network": 0,
@@ -113,48 +117,64 @@ def _run_json(
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"installer command failed ({result.returncode}): "
+            f"edition command failed ({result.returncode}): "
             + (result.stderr or result.stdout)[-2000:]
         )
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError("installer command returned invalid JSON") from error
+        raise RuntimeError("edition command returned invalid JSON") from error
     if not isinstance(payload, dict):
-        raise RuntimeError("installer command returned a non-object")
+        raise RuntimeError("edition command returned a non-object")
     return payload
 
 
-def _verify_self_test(executable: Path, bundle: Path) -> None:
-    result = _run_json(
+def _verify_product(
+    executable: Path,
+    bundle: Path,
+    product: str,
+) -> dict[str, str]:
+    role = installer_release.PRODUCT_ROLES[product]
+    product_value = _run_json(
+        executable,
+        ["--product-json"],
+        cwd=bundle,
+        timeout=30,
+    )
+    if (
+        product_value.get("edition_id") != "Employee"
+        or product_value.get("product_role") != role
+        or product_value.get("targets")
+        != [
+            "codex-cli",
+            "codex-desktop",
+            "opencode-cli",
+            "opencode-desktop",
+        ]
+    ):
+        raise ValueError(f"Employee {product} identity differs")
+    self_test = _run_json(
         executable,
         ["--self-test-json"],
         cwd=bundle,
         timeout=30,
     )
-    expected = {
-        "app_id": "llm-foundation-installer",
-        "engine_validated": True,
-        "foundation_protocol": 1,
-        "network": "user-initiated-only",
-        "automatic_network": False,
-        "reverse_flow": False,
-        "targets": ["codex", "claude", "opencode"],
-        "telemetry": False,
-        "version": "0.3.0",
-    }
-    if result != expected:
-        raise ValueError("installer self-test differs from release contract")
-
-
-def _verify_catalog(executable: Path, bundle: Path) -> None:
-    result = _run_json(
+    if (
+        self_test.get("version") != installer_release.VERSION
+        or self_test.get("targets") != list(installer_release.TARGETS)
+        or self_test.get("engine_validated") is not True
+        or self_test.get("automatic_network") is not False
+        or self_test.get("telemetry") is not False
+        or self_test.get("reverse_flow") is not False
+    ):
+        raise ValueError(f"Employee {product} self-test differs")
+    catalog = _run_json(
         executable,
         ["--catalog-json"],
         cwd=bundle,
         timeout=30,
     )
-    rows = result.get("targets")
+    rows = catalog.get("targets")
     states = (
         {
             row.get("id"): row.get("package_state")
@@ -165,39 +185,34 @@ def _verify_catalog(executable: Path, bundle: Path) -> None:
         else {}
     )
     if (
-        states != {target: "accepted" for target in installer_release.TARGETS}
-        or result.get("install_enabled") is not True
-        or result.get("provider_eligibility") != "PASS"
+        states
+        != {
+            target: "accepted"
+            for target in installer_release.TARGETS
+        }
+        or catalog.get("install_enabled") is not True
+        or catalog.get("provider_eligibility") != "NOT_PROVIDED"
     ):
-        raise ValueError("installer catalog is not fully accepted")
-
-
-def _verify_clients(
-    executable: Path,
-    bundle: Path,
-    user_home: Path,
-) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for client_id, expected in EXPECTED_CLIENTS.items():
-        plan = _run_json(
+        raise ValueError(f"Employee {product} catalog differs")
+    if product == "installer":
+        sibling = _run_json(
             executable,
-            [
-                "--client-plan-json",
-                str(user_home),
-                client_id,
-            ],
+            ["--resolve-sibling-json", str(bundle)],
             cwd=bundle,
             timeout=30,
         )
-        if plan.get("status") != "READY":
-            raise ValueError(f"hub client is not ready: {client_id}")
-        if client_id == "codex-desktop":
-            if plan.get("detected_state") != "exact_identity":
-                raise ValueError("Codex Store identity was not verified")
-        elif plan.get("detected_version") != expected:
-            raise ValueError(f"hub client version differs: {client_id}")
-        result[client_id] = expected
-    return result
+        if (
+            sibling.get("status") != "RESOLVED"
+            or sibling.get("edition_id") != "Employee"
+            or sibling.get("product_role") != "LaunchCenter"
+            or Path(str(sibling.get("executable_path"))).resolve()
+            != (
+                bundle
+                / installer_release.PRODUCT_FILES["launch_center"]
+            ).resolve()
+        ):
+            raise ValueError("Employee Installer sibling handoff differs")
+    return dict(installer_release.EXPECTED_PRODUCT_CANARY[product])
 
 
 def _sentinel_paths(home: Path, target: str) -> dict[Path, bytes]:
@@ -206,21 +221,13 @@ def _sentinel_paths(home: Path, target: str) -> dict[Path, bytes]:
             home / ".codex" / "auth.json": b'{"auth":"preserve"}\n',
             home / ".codex" / "sessions" / "s.json": b"session\n",
         }
-    if target == "claude":
-        return {
-            home / ".claude.json": b'{"auth":"preserve"}\n',
-            home / ".claude" / "projects" / "s.json": b"session\n",
-        }
     return {
-        home
-        / ".config"
-        / "opencode"
-        / "auth.json": b'{"auth":"preserve"}\n',
-        home
-        / ".local"
-        / "share"
-        / "opencode"
-        / "session.json": b"session\n",
+        home / ".config" / "opencode" / "auth.json": (
+            b'{"auth":"preserve"}\n'
+        ),
+        home / ".local" / "share" / "opencode" / "session.json": (
+            b"session\n"
+        ),
     }
 
 
@@ -230,13 +237,12 @@ def _run_target(
     target: str,
     root: Path,
 ) -> dict[str, str]:
-    home = root / target
-    home.mkdir(parents=True)
-    sentinels = _sentinel_paths(home, target)
+    isolated_home = root / target
+    isolated_home.mkdir(parents=True)
+    sentinels = _sentinel_paths(isolated_home, target)
     for path, payload in sentinels.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
-    _, version = TARGET_CLIENT[target]
     statuses: dict[str, str] = {}
     for command in ("plan", "install", "doctor", "inventory", "rollback"):
         result = _run_json(
@@ -245,8 +251,8 @@ def _run_target(
                 "--workflow-json",
                 command,
                 target,
-                str(home),
-                version,
+                str(isolated_home),
+                TARGET_CLIENT[target],
             ],
             cwd=bundle,
             timeout=180,
@@ -273,9 +279,31 @@ def _run_target(
         **statuses,
         "preserved_data": "PASS" if preserved else "NOT_PASS",
     }
-    if result != EXPECTED_TARGET:
-        raise ValueError(f"hub target workflow differs: {target}")
+    if result != installer_release.EXPECTED_TARGET_LIFECYCLE:
+        raise ValueError(f"Employee target workflow differs: {target}")
     return result
+
+
+def _verify_runtime(
+    executable: Path,
+    bundle: Path,
+    isolated_home: Path,
+) -> dict[str, str]:
+    value = _run_json(
+        executable,
+        ["--ensure-runtime-json", str(isolated_home)],
+        cwd=bundle,
+        timeout=180,
+    )
+    if (
+        value.get("status") != "VERIFIED"
+        or value.get("runtime_id") != "sing-box"
+        or value.get("version") != "1.13.14"
+        or value.get("archive_sha256")
+        != _sha256(bundle / installer_release.RUNTIME_FILE)
+    ):
+        raise ValueError("Employee runtime verification differs")
+    return dict(installer_release.EXPECTED_RUNTIME_CANARY)
 
 
 def _write_new(path: Path, value: object) -> None:
@@ -290,35 +318,38 @@ def _write_new(path: Path, value: object) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the approved no-model hub canary for the exact employee "
-            "installer bundle. Default is a zero-action dry-run."
+            "Run the isolated zero-model hub canary for the exact Employee "
+            "edition bundle. Default is a zero-action dry-run."
         )
     )
     parser.add_argument("--execute-approved-hub-canary", action="store_true")
     parser.add_argument("--bundle", type=Path)
-    parser.add_argument("--home", type=Path, default=Path.home())
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("dist/installer-hub-canary.json"),
+        default=Path("dist/employee-hub-canary.json"),
     )
     arguments = parser.parse_args()
     plan = {
         "schema_version": 1,
         "would_execute": bool(arguments.execute_approved_hub_canary),
-        "version": "0.3.0",
-        "clients": EXPECTED_CLIENTS,
+        "version": installer_release.VERSION,
+        "products": list(installer_release.PRODUCT_FILES),
+        "runtime": "sing-box-1.13.14",
         "targets": list(installer_release.TARGETS),
         "workflow": [
+            "product-identity",
             "self-test",
             "catalog",
-            "client-detection",
+            "sibling-handoff",
+            "runtime-bootstrap",
             "plan",
             "install",
             "doctor",
             "inventory",
             "rollback",
         ],
+        "isolated_home": True,
         "model_requests": 0,
     }
     if not arguments.execute_approved_hub_canary:
@@ -328,18 +359,30 @@ def main() -> int:
         raise SystemExit("--bundle is required for execution")
     bundle = arguments.bundle.resolve()
     installer_release.validate_bundle(bundle)
-    executable = bundle / "LLMFoundationInstaller.exe"
-    _verify_self_test(executable, bundle)
-    _verify_catalog(executable, bundle)
-    clients = _verify_clients(
-        executable,
-        bundle,
-        arguments.home.resolve(),
-    )
-    with tempfile.TemporaryDirectory(prefix="installer-hub-canary-") as raw:
-        root = Path(raw)
+    executables = {
+        product: bundle / filename
+        for product, filename in installer_release.PRODUCT_FILES.items()
+    }
+    products = {
+        product: _verify_product(executable, bundle, product)
+        for product, executable in executables.items()
+    }
+    with tempfile.TemporaryDirectory(
+        prefix="employee-hub-canary-"
+    ) as raw:
+        isolated_root = Path(raw)
+        runtime = _verify_runtime(
+            executables["launch_center"],
+            bundle,
+            isolated_root / "runtime-home",
+        )
         targets = {
-            target: _run_target(executable, bundle, target, root)
+            target: _run_target(
+                executables["installer"],
+                bundle,
+                target,
+                isolated_root / "workflow-homes",
+            )
             for target in installer_release.TARGETS
         }
     evidence = build_hub_canary_evidence(
@@ -347,9 +390,16 @@ def main() -> int:
             "manifest_sha256": _sha256(
                 bundle / "bundle-manifest.json"
             ),
-            "installer_sha256": _sha256(executable),
+            "installer_sha256": _sha256(executables["installer"]),
+            "launch_center_sha256": _sha256(
+                executables["launch_center"]
+            ),
+            "runtime_sha256": _sha256(
+                bundle / installer_release.RUNTIME_FILE
+            ),
         },
-        clients=clients,
+        product_results=products,
+        runtime_result=runtime,
         target_results=targets,
     )
     _write_new(arguments.output.resolve(), evidence)
@@ -357,6 +407,7 @@ def main() -> int:
         json.dumps(
             {
                 "INSTALLER_HUB_CANARY": "PASS",
+                "model_requests": 0,
                 "output": str(arguments.output.resolve()),
             },
             sort_keys=True,

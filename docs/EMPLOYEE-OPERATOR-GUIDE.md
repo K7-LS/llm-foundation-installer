@@ -128,6 +128,38 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
 `bundle-manifest.json`. Сборщик проверяет SHA-256 runtime до копирования и
 после него.
 
+## Канонический релизный конвейер
+
+```powershell
+py -3.12 .\tools\hub_canary.py `
+  --execute-approved-hub-canary `
+  --bundle .\dist\employee-internal `
+  --output .\dist\employee-hub-canary.json
+
+py -3.12 .\tools\installer_release.py `
+  --bundle .\dist\employee-internal `
+  --hub-canary .\dist\employee-hub-canary.json `
+  --output .\dist\employee-draft-0.3.0
+```
+
+Canary работает только во временных изолированных home и не делает model
+calls. Clean-PC pilot обязан проверить теми же байтами Installer, Launch
+Center, Codex/OpenCode, интерактивную Инструкцию и все четыре маршрута.
+Перечень подтверждений выводит:
+
+```powershell
+py -3.12 .\tools\pilot_evidence.py --help
+```
+
+После pilot PASS формируется stable-набор без пересборки и публикуется
+immutable release `employee-v0.3.0`. Проверка после публикации:
+
+```powershell
+py -3.12 .\tools\installer_release_verifier.py `
+  --stable-root .\dist\employee-stable-0.3.0 `
+  --output .\dist\employee-v0.3.0-release-verification.json
+```
+
 ## Перед выдачей сотруднику
 
 - Codex и OpenCode package acceptance — PASS.

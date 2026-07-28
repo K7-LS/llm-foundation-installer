@@ -1,22 +1,21 @@
-# LLM Foundation Installer
+# K-7 AI Foundation
 
-Windows 10/11 current-user installer for three independently versioned native
-bases:
+Windows 10/11 current-user installer and daily Launch Center in two explicitly
+separated editions:
 
-- Codex Desktop + Codex CLI;
-- Claude Code;
-- OpenCode Desktop + CLI.
+- **Employee** — Codex Desktop/CLI and OpenCode Desktop/CLI; distributable
+  only after the clean-PC and immutable-publication gates;
+- **Owner** — Codex, OpenCode and an owner-only Claude candidate;
+  `distribution_allowed=false` while `FULL_RELEASE_CLAUDE=NOT_PASS`.
 
-The WPF application is DPI-aware, has a seven-stage employee workflow, does
-not require administrator rights, and never collects LLM credentials. It
-downloads clients only from the hash-locked sources in
-`client-sources.lock.json`, verifies SHA-256 and Authenticode publisher before
-execution, then installs each base through the pinned Foundation engine.
+Each edition is one hash-bound bundle containing Installer, Launch Center,
+`bundle-manifest.json` and the pinned sing-box runtime. Both WPF products are
+DPI-aware, require no administrator rights and never collect LLM credentials.
 
 ## Employee workflow
 
 1. Check Windows, accepted packages, and installed clients.
-2. Select `Direct`, `VPN`, or `Proxy`.
+2. Select `Direct`, `VPN`, `SingBox HTTP`, or `SingBox HTTPS`.
 3. Download and verify missing official clients.
 4. Show the deterministic base plan.
 5. Backup, install, run `doctor`, and rollback automatically on failure.
@@ -48,16 +47,17 @@ unsupported clients before changing the target home.
 - **Direct** — inherited proxy variables are cleared.
 - **VPN** — uses system routing; absence of proxy is expected and never a
   blocker.
-- **Proxy** — HTTP, HTTPS, or SOCKS5, with optional username/password.
+- **SingBox HTTP/HTTPS** — process-local routing through the pinned runtime.
 
 Proxy credentials are protected with Windows DPAPI for the current user. They
 are passed to child processes only through temporary environment variables and
 never written to argv, manifests, evidence, or logs. Verbose `curl` is not
 used.
 
-LLM authorization remains inside Codex, Claude, and OpenCode. Existing auth,
-sessions, memories, state, projects, and external workspaces are outside the
-managed surface and remain untouched. Consumer devices never upload feedback,
+LLM authorization remains inside Codex and OpenCode. In Owner edition Claude
+authorization also stays inside Claude itself. Existing auth, sessions,
+memories, state, projects, and external workspaces are outside the managed
+surface and remain untouched. Consumer devices never upload feedback,
 telemetry, session reports, or local changes.
 
 ## Distribution modes
@@ -67,20 +67,20 @@ telemetry, session reports, or local changes.
 ```
 
 - `Preview` — development and synthetic validation only.
-- `InternalUnsigned` — employee distribution after all target/provider/client
-  evidence passes. Windows may show `Unknown Publisher` or SmartScreen.
+- `InternalUnsigned` — controlled employee distribution after product,
+  runtime, target and clean-PC evidence passes. Windows may show
+  `Unknown Publisher` or SmartScreen.
 - `PublicSigned` — also requires a valid timestamped Authenticode signature.
 
 The internal unsigned manifest explicitly records:
 
 ```json
 {
-  "distribution_mode": "internal_unsigned",
-  "signature": "unsigned-internal",
-  "employee_release": true,
-  "employee_distribution_allowed": true,
-  "public_distribution_allowed": false,
-  "windows_warning_expected": true
+  "edition_id": "Employee",
+  "distribution_mode": "InternalUnsigned",
+  "owner_controlled": false,
+  "distribution_allowed": true,
+  "targets": ["codex", "opencode"]
 }
 ```
 
@@ -135,71 +135,68 @@ py -3.12 .\tools\create_foundation_package_acceptance.py `
   --output .\dist\foundation-stable-0.2.1\package-acceptance.json
 ```
 
-### Internal employee candidate
+### Internal Employee candidate
 
-After all three target releases have their own post-publication
-`package-acceptance.json`, create current PII-free provider evidence:
+After Codex, OpenCode and Foundation package acceptance is complete, build the
+two-product edition with the exact pinned runtime:
 
 ```powershell
-pwsh -NoProfile -File .\tools\new-provider-eligibility-evidence.ps1 `
-  -OutputPath .\provider-eligibility-evidence.json `
-  -ConfirmEmployeeLocationEligibility `
-  -ConfirmOrganizationEligibility `
-  -ConfirmIndividualAccounts `
-  -ConfirmNoRegionOrBanBypass `
-  -ConfirmNoUnattendedConsumerAutomation
-
-pwsh -NoProfile -File .\tools\build-gui.ps1 `
-  -OutputRoot .\dist\employee `
-  -PackageRoot <accepted-packages-root> `
-  -FoundationPackageRoot .\dist\foundation-stable-0.2.1 `
-  -ProviderEligibilityEvidence .\provider-eligibility-evidence.json `
-  -DistributionMode InternalUnsigned
+pwsh -NoProfile -File .\tools\build-edition.ps1 `
+  -OutputRoot .\dist\employee-internal `
+  -Edition Employee `
+  -DistributionMode InternalUnsigned `
+  -PackageRoot <accepted-codex-opencode-packages> `
+  -FoundationPackageRoot <accepted-foundation-package> `
+  -ClientSourcesLock .\client-sources.lock.json `
+  -RuntimeSourcesLock .\runtime-sources.lock.json `
+  -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
 ```
 
-Provider evidence is PII-free, expires within seven days, and is hash-bound to
-the bundle. Each target manifest must reference the same accepted Foundation
-`engine-manifest.json`; a mismatch blocks the build.
+Employee edition never contains Claude or provider-eligibility evidence.
+Each target manifest must reference the same accepted Foundation engine; a
+mismatch blocks the build.
 
 ### Hub canary, draft, pilot, publication
 
 ```powershell
 py -3.12 .\tools\hub_canary.py `
   --execute-approved-hub-canary `
-  --bundle .\dist\employee `
-  --home <isolated-canary-home> `
-  --output .\dist\hub-canary.json
+  --bundle .\dist\employee-internal `
+  --output .\dist\employee-hub-canary.json
 
 py -3.12 .\tools\installer_release.py `
-  --bundle .\dist\employee `
-  --hub-canary .\dist\hub-canary.json `
-  --output .\dist\installer-draft-0.3.0
+  --bundle .\dist\employee-internal `
+  --hub-canary .\dist\employee-hub-canary.json `
+  --output .\dist\employee-draft-0.3.0
 ```
 
-The clean-PC pilot uses the exact draft EXE. Every pilot check is explicitly
-confirmed in a PII-free record made by `pilot_evidence.py`; no machine name,
-account, IP address, token or credential is stored. After a passing pilot:
+The canary uses temporary isolated homes only. The clean-PC pilot then uses
+the exact draft Installer, Launch Center and runtime. Every pilot check is
+explicitly confirmed in a PII-free record made by `pilot_evidence.py`; no
+machine name, account, IP address, token or credential is stored. Run
+`py -3.12 .\tools\pilot_evidence.py --help` for the complete explicit
+confirmation inventory. After a passing pilot:
 
 ```powershell
 py -3.12 .\tools\pilot_release.py `
-  --draft .\dist\installer-draft-0.3.0 `
+  --draft .\dist\employee-draft-0.3.0 `
   --pilot-evidence <pilot-evidence.json> `
-  --output .\dist\installer-stable-0.3.0
+  --output .\dist\employee-stable-0.3.0
 ```
 
 Final metadata and evidence are necessarily produced after the pilot, while
-`LLMFoundationInstaller.exe` remains byte-for-byte identical to the draft
-canary and pilot EXE. After immutable publication, verify the release and
-every asset:
+both EXE files and the sing-box archive remain byte-for-byte identical to the
+draft and pilot inputs. Publish under tag `employee-v0.3.0`. After immutable
+publication, verify the release and every asset:
 
 ```powershell
 py -3.12 .\tools\installer_release_verifier.py `
-  --stable-root .\dist\installer-stable-0.3.0 `
-  --output .\dist\installer-v0.3.0-release-verification.json
+  --stable-root .\dist\employee-stable-0.3.0 `
+  --output .\dist\employee-v0.3.0-release-verification.json
 ```
 
 `FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a provider
-canary, clean-PC pilot, or final employee release.
+canary, clean-PC pilot, or final Employee release.
 
 Role-specific operation and release procedures:
 

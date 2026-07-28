@@ -6,10 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.edition_release_fixtures import (
+    canary_value,
+    employee_bundle,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "installer_hub_canary",
+    "hub_canary",
     ROOT / "tools" / "hub_canary.py",
 )
 assert SPEC and SPEC.loader
@@ -18,77 +23,68 @@ sys.modules[SPEC.name] = canary
 SPEC.loader.exec_module(canary)
 
 
-def _binding() -> dict[str, str]:
-    return {
-        "manifest_sha256": "a" * 64,
-        "installer_sha256": "b" * 64,
-    }
-
-
-def _clients() -> dict[str, str]:
-    return {
-        "codex-cli": "0.146.0-alpha.3.1",
-        "codex-desktop": "store-identity-verified",
-        "claude-code": "2.1.218",
-        "opencode-cli": "1.18.7",
-        "opencode-desktop": "1.18.7",
-    }
-
-
-def _target() -> dict[str, str]:
-    return {
-        "status": "PASS",
-        "plan": "READY",
-        "install": "INSTALLED",
-        "doctor": "HEALTHY",
-        "inventory": "INSTALLED",
-        "rollback": "ROLLED_BACK",
-        "preserved_data": "PASS",
-    }
-
-
-def test_canary_evidence_is_fail_closed_and_privacy_safe():
-    evidence = canary.build_hub_canary_evidence(
-        bundle_binding=_binding(),
-        clients=_clients(),
-        target_results={
-            target: _target()
-            for target in ("codex", "claude", "opencode")
-        },
+def test_hub_canary_accepts_two_products_runtime_and_two_targets(
+    tmp_path: Path,
+):
+    bundle = employee_bundle(tmp_path / "bundle")
+    expected = canary_value(
+        bundle,
+        canary.evidence_body_sha256,
     )
 
-    assert evidence["INSTALLER_HUB_CANARY"] == "PASS"
-    assert evidence["model_requests"] == 0
-    assert evidence["unexpected_network"] == 0
-    assert evidence["credentials_included"] is False
-    assert canary.evidence_body_sha256(evidence) == (
-        evidence["evidence_body_sha256"]
+    value = canary.build_hub_canary_evidence(
+        bundle_binding=expected["bundle"],
+        product_results=expected["products"],
+        runtime_result=expected["runtime"],
+        target_results=expected["targets"],
+    )
+
+    assert value["target"] == "employee_edition"
+    assert set(value["products"]) == {"installer", "launch_center"}
+    assert value["products"]["installer"]["sibling_handoff"] == "PASS"
+    assert (
+        value["products"]["launch_center"]["sibling_handoff"]
+        == "NOT_APPLICABLE"
+    )
+    assert set(value["targets"]) == {"codex", "opencode"}
+    assert value["runtime"]["status"] == "VERIFIED"
+    assert value["model_requests"] == 0
+    assert value["evidence_body_sha256"] == canary.evidence_body_sha256(
+        value
     )
 
 
-def test_canary_evidence_rejects_unready_desktop_client():
-    clients = _clients()
-    clients["opencode-desktop"] = "missing"
-    with pytest.raises(ValueError, match="canary"):
+def test_hub_canary_rejects_old_single_exe_contract(tmp_path: Path):
+    bundle = employee_bundle(tmp_path / "bundle")
+    expected = canary_value(
+        bundle,
+        canary.evidence_body_sha256,
+    )
+    binding = dict(expected["bundle"])
+    binding.pop("launch_center_sha256")
+
+    with pytest.raises(ValueError, match="not accepted"):
         canary.build_hub_canary_evidence(
-            bundle_binding=_binding(),
-            clients=clients,
-            target_results={
-                target: _target()
-                for target in ("codex", "claude", "opencode")
-            },
+            bundle_binding=binding,
+            product_results=expected["products"],
+            runtime_result=expected["runtime"],
+            target_results=expected["targets"],
         )
 
 
-def test_canary_evidence_rejects_non_identical_rollback():
-    targets = {
-        target: _target()
-        for target in ("codex", "claude", "opencode")
-    }
-    targets["claude"]["preserved_data"] = "NOT_PASS"
-    with pytest.raises(ValueError, match="canary"):
+def test_hub_canary_rejects_unverified_runtime(tmp_path: Path):
+    bundle = employee_bundle(tmp_path / "bundle")
+    expected = canary_value(
+        bundle,
+        canary.evidence_body_sha256,
+    )
+    runtime = dict(expected["runtime"])
+    runtime["status"] = "MISSING"
+
+    with pytest.raises(ValueError, match="not accepted"):
         canary.build_hub_canary_evidence(
-            bundle_binding=_binding(),
-            clients=_clients(),
-            target_results=targets,
+            bundle_binding=expected["bundle"],
+            product_results=expected["products"],
+            runtime_result=runtime,
+            target_results=expected["targets"],
         )

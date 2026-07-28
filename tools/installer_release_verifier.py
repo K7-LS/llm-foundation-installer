@@ -5,24 +5,23 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
+TOOLS_ROOT = Path(__file__).resolve().parent
+if str(TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_ROOT))
+
+import installer_release  # noqa: E402
+import pilot_release  # noqa: E402
+
+
 REPOSITORY = "daniileliseev1337/llm-foundation-installer"
-TAG = "installer-v0.3.0"
-EXPECTED_VERDICTS = {
-    "FULL_RELEASE_CODEX": "PASS",
-    "FULL_RELEASE_CLAUDE": "PASS",
-    "FULL_RELEASE_OPENCODE": "PASS",
-    "PROGRAM_RELEASE": "3/3",
-    "INSTALLER_HUB_CANARY": "PASS",
-    "CLEAN_PC_PILOT": "PASS",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-    "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
-    "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
-}
+TAG = installer_release.TAG
+EXPECTED_VERDICTS = pilot_release.EXPECTED_STABLE_VERDICTS
 
 
 def _json_bytes(value: object) -> bytes:
@@ -38,6 +37,8 @@ def evidence_body_sha256(value: dict[str, object]) -> str:
 
 
 def _load_object(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"{path.name} is missing or unsafe")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -82,19 +83,20 @@ def _expected_sums(paths: list[Path]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _validate_stable_root(stable_root: Path) -> tuple[dict[str, Any], list[Path]]:
+def _validate_stable_root(
+    stable_root: Path,
+) -> tuple[dict[str, Any], list[Path]]:
     paths = _local_assets(stable_root)
     by_name = {path.name: path for path in paths}
     required = {
-        "LLMFoundationInstaller.exe",
+        *installer_release.PRODUCT_FILES.values(),
+        installer_release.RUNTIME_FILE,
         "release-manifest.json",
         "acceptance-evidence.json",
         "pilot-acceptance.json",
         "hub-canary-evidence.json",
-        "provider-eligibility-evidence.json",
         "bundle-manifest.json",
         "components.lock.json",
-        "client-sources.lock.json",
         "EMPLOYEE-INSTALL.md",
         "SHA256SUMS",
     }
@@ -108,17 +110,18 @@ def _validate_stable_root(stable_root: Path) -> tuple[dict[str, Any], list[Path]
     artifacts = manifest.get("artifacts")
     if (
         manifest.get("schema_version") != 1
-        or manifest.get("app_id") != "llm-foundation-installer"
-        or manifest.get("version") != "0.3.0"
+        or manifest.get("app_id") != "k7-ai-employee-edition"
+        or manifest.get("edition_id") != "Employee"
+        or manifest.get("version") != installer_release.VERSION
         or manifest.get("tag") != TAG
         or manifest.get("channel") != "stable"
-        or manifest.get("distribution_mode") != "internal_unsigned"
+        or manifest.get("distribution_mode") != "InternalUnsigned"
         or manifest.get("verdicts") != EXPECTED_VERDICTS
         or manifest.get("evidence_body_sha256")
         != evidence_body_sha256(manifest)
         or not isinstance(artifacts, dict)
     ):
-        raise ValueError("stable installer release manifest is invalid")
+        raise ValueError("stable Employee release manifest is invalid")
     expected_artifact_names = set(by_name).difference(
         {"release-manifest.json", "SHA256SUMS"}
     )
@@ -127,13 +130,19 @@ def _validate_stable_root(stable_root: Path) -> tuple[dict[str, Any], list[Path]
     for name, record in artifacts.items():
         if not isinstance(record, dict) or _record(by_name[name]) != record:
             raise ValueError(f"stable release artifact differs: {name}")
-    if manifest.get("installer") != _record(
-        by_name["LLMFoundationInstaller.exe"]
+    expected_products = {
+        product: _record(by_name[filename])
+        for product, filename in installer_release.PRODUCT_FILES.items()
+    }
+    if manifest.get("products") != expected_products:
+        raise ValueError("stable release product binding differs")
+    if manifest.get("runtime") != _record(
+        by_name[installer_release.RUNTIME_FILE]
     ):
-        raise ValueError("stable release installer binding differs")
-    if by_name["SHA256SUMS"].read_text(encoding="utf-8") != _expected_sums(
-        paths
-    ):
+        raise ValueError("stable release runtime binding differs")
+    if by_name["SHA256SUMS"].read_text(
+        encoding="utf-8"
+    ) != _expected_sums(paths):
         raise ValueError("stable release SHA256SUMS differs")
     return manifest, paths
 
@@ -265,7 +274,7 @@ def _run(command: list[str]) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify immutable installer-v0.3.0 and every published asset."
+            "Verify immutable employee-v0.3.0 and every published asset."
         )
     )
     parser.add_argument("--stable-root", required=True, type=Path)
