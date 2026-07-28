@@ -42,9 +42,12 @@ def _write_runtime_lock(path: Path, archive: Path, entry: str) -> None:
     )
 
 
-def _build(output: Path, runtime_lock: Path) -> Path:
-    result = subprocess.run(
-        [
+def _build(
+    output: Path,
+    runtime_lock: Path,
+    client_lock: Path | None = None,
+) -> Path:
+    command = [
             str(POWERSHELL),
             "-NoLogo",
             "-NoProfile",
@@ -60,7 +63,11 @@ def _build(output: Path, runtime_lock: Path) -> Path:
             "-RuntimeSourcesLock",
             str(runtime_lock),
             "-AllowLocalTestSources",
-        ],
+    ]
+    if client_lock is not None:
+        command.extend(["-ClientSourcesLock", str(client_lock)])
+    result = subprocess.run(
+        command,
         cwd=REPOSITORY,
         text=True,
         capture_output=True,
@@ -125,6 +132,27 @@ def _compile_fake_singbox(path: Path) -> None:
                             log,
                             String.Join(" ", args) + "\n"
                         );
+                    }
+                    if (args.Length == 0)
+                    {
+                        string output = Environment.GetEnvironmentVariable(
+                            "K7_TEST_OUTPUT"
+                        );
+                        if (!String.IsNullOrEmpty(output))
+                        {
+                            File.WriteAllText(
+                                output,
+                                "HTTP_PROXY=" +
+                                    (Environment.GetEnvironmentVariable(
+                                        "HTTP_PROXY"
+                                    ) ?? "<null>") + "\n" +
+                                "HTTPS_PROXY=" +
+                                    (Environment.GetEnvironmentVariable(
+                                        "HTTPS_PROXY"
+                                    ) ?? "<null>") + "\n"
+                            );
+                        }
+                        return 0;
                     }
                     if (args.Length != 3 || args[1] != "-c" ||
                         !File.Exists(args[2]))
@@ -460,6 +488,175 @@ def test_singbox_session_owns_runtime_and_removes_secret_config(
         "TEMP_REMOVED",
     ]
     assert "password" not in result.stdout.lower()
+    assert not list(
+        (
+            home
+            / ".llm-foundation"
+            / "launcher-state"
+            / "sessions"
+        ).glob("*")
+    )
+
+
+def test_singbox_route_launches_exact_client_with_local_proxy_only(
+    tmp_path: Path,
+) -> None:
+    fake = tmp_path / "sing-box.exe"
+    _compile_fake_singbox(fake)
+    fake_hash = _sha256(fake)
+    archive = tmp_path / "sing-box-fixture.zip"
+    entry = "sing-box-1.13.14-windows-amd64/sing-box.exe"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.write(fake, entry)
+    runtime_lock = tmp_path / "runtime.lock.json"
+    _write_runtime_lock(runtime_lock, archive, entry)
+    client_lock = tmp_path / "client.lock.json"
+    client_lock.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "official_only": False,
+                "test_only": True,
+                "platform": {
+                    "os": "windows",
+                    "architecture": "x64",
+                    "minimum_build": 19041,
+                },
+                "clients": [
+                    {
+                        "id": "opencode-desktop",
+                        "target": "opencode",
+                        "display_name": "OpenCode Desktop",
+                        "role": "desktop",
+                        "required_for_base": False,
+                        "required_for_employee": True,
+                        "version": "1.0.0",
+                        "source_kind": "download",
+                        "url": "http://127.0.0.1:43119/opencode.exe",
+                        "sha256": fake_hash,
+                        "artifact_kind": "portable-exe",
+                        "archive_entry": None,
+                        "publisher": None,
+                        "signature_required": False,
+                        "install_mode": "managed-desktop",
+                        "detect_commands": [],
+                        "version_arguments": [],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    bundle = _build(
+        tmp_path / "center",
+        runtime_lock,
+        client_lock,
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    profile = tmp_path / "connection.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mode": "Proxy",
+                "proxy": {
+                    "type": "HTTP",
+                    "host": "proxy.example.test",
+                    "port": 8080,
+                    "auth": {"mode": "None", "username": None},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    saved = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--save-connection-json",
+            str(home),
+            str(profile),
+        ],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert saved.returncode == 0, saved.stdout + saved.stderr
+    returncode, _ = _run_json(
+        bundle,
+        "--install-runtime-json",
+        str(home),
+        str(archive),
+    )
+    assert returncode == 0
+    client = (
+        home
+        / ".llm-foundation"
+        / "apps"
+        / "opencode-desktop"
+        / "1.0.0"
+        / "opencode.exe"
+    )
+    client.parent.mkdir(parents=True)
+    client.write_bytes(fake.read_bytes())
+    (client.parents[1] / "current.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "client_id": "opencode-desktop",
+                "version": "1.0.0",
+                "relative_path": "1.0.0/opencode.exe",
+                "sha256": fake_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+    child_environment = tmp_path / "child-environment.txt"
+    command_log = tmp_path / "commands.txt"
+    environment = dict(os.environ)
+    environment["K7_TEST_OUTPUT"] = str(child_environment)
+    environment["K7_FAKE_COMMAND_LOG"] = str(command_log)
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--launch-target-json",
+            str(home),
+            "opencode-desktop",
+            "SingBoxHttp",
+        ],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        env=environment,
+        timeout=30,
+    )
+    assert result.stdout.strip(), result.stderr
+    value = json.loads(result.stdout)
+
+    assert result.returncode == 0
+    assert value["status"] == "PASS"
+    assert value["transport"] == "SingBoxHttp"
+    assert value["uses_proxy"] is True
+    assert value["cleanup_verified"] is True
+    assert value["lifecycle"] == [
+        "PROFILE_VALIDATED",
+        "RUNTIME_VERIFIED",
+        "CONFIG_CHECKED",
+        "LOCAL_PROXY_READY",
+        "EXACT_CLIENT_STARTED",
+        "CLIENT_EXITED",
+        "RUNTIME_STOPPED",
+        "TEMP_REMOVED",
+    ]
+    child_values = child_environment.read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert child_values[0].startswith("HTTP_PROXY=http://127.0.0.1:")
+    assert child_values[1].startswith("HTTPS_PROXY=http://127.0.0.1:")
     assert not list(
         (
             home

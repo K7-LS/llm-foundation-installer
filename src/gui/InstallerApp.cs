@@ -1374,7 +1374,9 @@ namespace LlmFoundationInstaller
                 LauncherSessionResult result = await Task.Run(
                     () => ClientLauncher.StartAndWait(
                         resolution,
-                        route
+                        route,
+                        bundleRoot,
+                        home
                     )
                 );
                 if (routeStatus != null)
@@ -2789,7 +2791,9 @@ namespace LlmFoundationInstaller
                     LauncherSessionResult launched =
                         ClientLauncher.StartAndWait(
                             resolution,
-                            args[3]
+                            args[3],
+                            bundleRoot,
+                            args[1]
                         );
                     WriteOutput(new JavaScriptSerializer().Serialize(
                         launched

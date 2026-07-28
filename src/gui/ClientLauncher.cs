@@ -17,6 +17,7 @@ namespace LlmFoundationInstaller
         public string target_id { get; set; }
         public string executable_path { get; set; }
         public string executable_sha256 { get; set; }
+        public List<string> lifecycle { get; set; }
         public string reason { get; set; }
     }
 
@@ -36,7 +37,9 @@ namespace LlmFoundationInstaller
 
         public static LauncherSessionResult StartAndWait(
             LaunchTargetResolution target,
-            string route
+            string route,
+            string bundleRoot = null,
+            string home = null
         )
         {
             if (target == null || target.status != "RESOLVED")
@@ -47,6 +50,16 @@ namespace LlmFoundationInstaller
                     "EXACT_TARGET_NOT_RESOLVED",
                     true,
                     -1
+                );
+            }
+            if (route == "SingBoxHttp" ||
+                route == "SingBoxHttps")
+            {
+                return StartThroughSingBox(
+                    target,
+                    route,
+                    bundleRoot,
+                    home
                 );
             }
             if (route != "Direct" && route != "VPN")
@@ -122,6 +135,11 @@ namespace LlmFoundationInstaller
                     target_id = target.target_id,
                     executable_path = target.executable_path,
                     executable_sha256 = target.sha256,
+                    lifecycle = new List<string>
+                    {
+                        "EXACT_CLIENT_STARTED",
+                        "CLIENT_EXITED"
+                    },
                     reason = exitCode == 0
                         ? null
                         : "CLIENT_EXIT_NONZERO"
@@ -148,6 +166,164 @@ namespace LlmFoundationInstaller
             }
         }
 
+        private static LauncherSessionResult StartThroughSingBox(
+            LaunchTargetResolution target,
+            string route,
+            string bundleRoot,
+            string home
+        )
+        {
+            if (String.IsNullOrWhiteSpace(bundleRoot) ||
+                String.IsNullOrWhiteSpace(home))
+            {
+                return Failed(
+                    target,
+                    route,
+                    "SINGBOX_CONTEXT_MISSING",
+                    true,
+                    -1
+                );
+            }
+            RunningSingBoxSession session = null;
+            Process client = null;
+            try
+            {
+                session = SingBoxSession.Start(
+                    bundleRoot,
+                    home,
+                    target.target_id,
+                    route
+                );
+                ProcessStartInfo start = new ProcessStartInfo
+                {
+                    FileName = target.executable_path,
+                    WorkingDirectory = Path.GetDirectoryName(
+                        target.executable_path
+                    ),
+                    UseShellExecute = false,
+                    CreateNoWindow = target.role == "cli"
+                };
+                foreach (string variable in ProxyVariables)
+                {
+                    start.EnvironmentVariables.Remove(variable);
+                }
+                string localProxy = "http://127.0.0.1:" +
+                    session.listen_port.ToString();
+                start.EnvironmentVariables["HTTP_PROXY"] = localProxy;
+                start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
+                start.EnvironmentVariables["http_proxy"] = localProxy;
+                start.EnvironmentVariables["https_proxy"] = localProxy;
+                start.EnvironmentVariables[
+                    "LLM_FOUNDATION_CONNECTION_MODE"
+                ] = route;
+                client = Process.Start(start);
+                if (client == null)
+                {
+                    throw new InvalidOperationException(
+                        "CLIENT_START_FAILED"
+                    );
+                }
+                session.lifecycle.Add("EXACT_CLIENT_STARTED");
+                if (!client.WaitForExit(300000))
+                {
+                    client.Kill();
+                    client.WaitForExit(10000);
+                    throw new InvalidOperationException(
+                        "CLIENT_TIMEOUT"
+                    );
+                }
+                int exitCode = client.ExitCode;
+                session.lifecycle.Add("CLIENT_EXITED");
+                SingBoxSessionResult stopped =
+                    SingBoxSession.StopVerified(session);
+                session = null;
+                bool passed = exitCode == 0 &&
+                    stopped.status == "PASS";
+                return new LauncherSessionResult
+                {
+                    status = passed ? "PASS" : "FAILED",
+                    transport = route,
+                    uses_proxy = true,
+                    cleanup_verified =
+                        stopped.cleanup_verified,
+                    process_exit_code = exitCode,
+                    target_id = target.target_id,
+                    executable_path = target.executable_path,
+                    executable_sha256 = target.sha256,
+                    lifecycle = stopped.lifecycle,
+                    reason = passed
+                        ? null
+                        : (exitCode == 0
+                            ? stopped.reason
+                            : "CLIENT_EXIT_NONZERO")
+                };
+            }
+            catch (Exception exception)
+            {
+                bool cleanup = true;
+                List<string> lifecycle = session == null
+                    ? new List<string>()
+                    : session.lifecycle;
+                if (session != null)
+                {
+                    SingBoxSessionResult stopped =
+                        SingBoxSession.StopVerified(session);
+                    cleanup = stopped.cleanup_verified;
+                    lifecycle = stopped.lifecycle;
+                }
+                return new LauncherSessionResult
+                {
+                    status = "FAILED",
+                    transport = route,
+                    uses_proxy = true,
+                    cleanup_verified = cleanup,
+                    process_exit_code = client != null &&
+                        client.HasExited
+                        ? client.ExitCode
+                        : -1,
+                    target_id = target.target_id,
+                    executable_path = target.executable_path,
+                    executable_sha256 = target.sha256,
+                    lifecycle = lifecycle,
+                    reason = StableSingBoxReason(exception)
+                };
+            }
+            finally
+            {
+                if (client != null)
+                {
+                    client.Dispose();
+                }
+            }
+        }
+
+        private static string StableSingBoxReason(Exception exception)
+        {
+            string message = exception == null
+                ? ""
+                : exception.Message;
+            foreach (string reason in new[]
+            {
+                "RUNTIME_NOT_VERIFIED",
+                "LOCAL_PORT_UNAVAILABLE",
+                "CONFIG_CHECK_FAILED",
+                "RUNTIME_START_FAILED",
+                "RUNTIME_EXITED_BEFORE_READY",
+                "OWNED_STATE_MISMATCH",
+                "SECRET_CONFIG_REMOVE_FAILED",
+                "LOCAL_PROXY_NOT_READY",
+                "CLIENT_START_FAILED",
+                "CLIENT_TIMEOUT"
+            })
+            {
+                if (message.Contains(reason))
+                {
+                    return reason;
+                }
+            }
+            return "SINGBOX_LAUNCH_FAILED";
+        }
+
         private static LauncherSessionResult Failed(
             LaunchTargetResolution target,
             string route,
@@ -170,6 +346,7 @@ namespace LlmFoundationInstaller
                 executable_sha256 = target == null
                     ? null
                     : target.sha256,
+                lifecycle = new List<string>(),
                 reason = reason
             };
         }
