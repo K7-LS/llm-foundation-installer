@@ -2606,6 +2606,31 @@ namespace LlmFoundationInstaller
                     ));
                     return 0;
                 }
+                if (args.Length == 1 && args[0] == "--product-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchTargetCatalog.Describe(
+                            edition,
+                            bundleRoot
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--resolve-launch-target-json")
+                {
+                    LaunchTargetResolution resolution =
+                        LaunchTargetResolver.Resolve(
+                            edition,
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {
                     return RunSelfTest(bundleRoot);

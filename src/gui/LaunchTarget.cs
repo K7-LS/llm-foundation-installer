@@ -1,0 +1,265 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Web.Script.Serialization;
+
+namespace LlmFoundationInstaller
+{
+    internal sealed class LaunchTarget
+    {
+        public string target_id { get; set; }
+        public string client_id { get; set; }
+        public string role { get; set; }
+        public string display_name { get; set; }
+    }
+
+    internal sealed class ProductDescription
+    {
+        public string app_id { get; set; }
+        public string edition_id { get; set; }
+        public string product_role { get; set; }
+        public List<string> targets { get; set; }
+    }
+
+    internal sealed class LaunchTargetResolution
+    {
+        public string status { get; set; }
+        public string target_id { get; set; }
+        public string client_id { get; set; }
+        public string role { get; set; }
+        public string executable_path { get; set; }
+        public string sha256 { get; set; }
+        public string reason { get; set; }
+    }
+
+    internal static class LaunchTargetCatalog
+    {
+        public static List<LaunchTarget> ForEdition(
+            EditionProfile edition,
+            string bundleRoot
+        )
+        {
+            HashSet<string> included = new HashSet<string>(
+                edition.included_target_ids,
+                StringComparer.Ordinal
+            );
+            return ClientBootstrap.Load(bundleRoot).clients
+                .Where(source => included.Contains(source.target))
+                .Select(source => new LaunchTarget
+                {
+                    target_id = source.id,
+                    client_id = source.id,
+                    role = source.role,
+                    display_name = source.display_name
+                })
+                .ToList();
+        }
+
+        public static ProductDescription Describe(
+            EditionProfile edition,
+            string bundleRoot
+        )
+        {
+            return new ProductDescription
+            {
+                app_id = edition.product_role == "LaunchCenter"
+                    ? "k7-ai-launch-center"
+                    : "k7-ai-foundation-installer",
+                edition_id = edition.edition_id,
+                product_role = edition.product_role,
+                targets = ForEdition(edition, bundleRoot)
+                    .Select(target => target.target_id)
+                    .ToList()
+            };
+        }
+    }
+
+    internal static class LaunchTargetResolver
+    {
+        public static LaunchTargetResolution Resolve(
+            EditionProfile edition,
+            string bundleRoot,
+            string home,
+            string targetId
+        )
+        {
+            LaunchTarget target = LaunchTargetCatalog.ForEdition(
+                edition,
+                bundleRoot
+            ).FirstOrDefault(candidate => String.Equals(
+                candidate.target_id,
+                targetId,
+                StringComparison.Ordinal
+            ));
+            if (target == null)
+            {
+                return Blocked(
+                    targetId,
+                    null,
+                    null,
+                    "TARGET_NOT_IN_EDITION"
+                );
+            }
+            ClientSource source = ClientBootstrap.Load(bundleRoot).clients
+                .First(entry => String.Equals(
+                    entry.id,
+                    target.client_id,
+                    StringComparison.Ordinal
+                ));
+            if (!String.Equals(
+                    source.install_mode,
+                    "managed-desktop",
+                    StringComparison.Ordinal))
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "EXACT_TARGET_NOT_SUPPORTED"
+                );
+            }
+            return ResolveManagedDesktop(home, source, target);
+        }
+
+        private static LaunchTargetResolution ResolveManagedDesktop(
+            string home,
+            ClientSource source,
+            LaunchTarget target
+        )
+        {
+            string root = Path.Combine(
+                Path.GetFullPath(home),
+                ".llm-foundation",
+                "apps",
+                source.id
+            );
+            string recordPath = Path.Combine(root, "current.json");
+            if (!File.Exists(recordPath))
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "MANAGED_DESKTOP_NOT_FOUND"
+                );
+            }
+            try
+            {
+                FileInfo recordInfo = new FileInfo(recordPath);
+                if (recordInfo.Length < 2 ||
+                    recordInfo.Length > 65536 ||
+                    (recordInfo.Attributes &
+                        FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException();
+                }
+                ManagedDesktopRecord record =
+                    new JavaScriptSerializer()
+                        .Deserialize<ManagedDesktopRecord>(
+                            File.ReadAllText(
+                                recordPath,
+                                new UTF8Encoding(false, true)
+                            )
+                        );
+                if (record == null ||
+                    record.schema_version != 1 ||
+                    !String.Equals(
+                        record.client_id,
+                        source.id,
+                        StringComparison.Ordinal) ||
+                    !String.Equals(
+                        record.version,
+                        source.version,
+                        StringComparison.Ordinal) ||
+                    !String.Equals(
+                        record.sha256,
+                        source.sha256,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    String.IsNullOrWhiteSpace(record.relative_path))
+                {
+                    throw new InvalidOperationException();
+                }
+                string relative = record.relative_path.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar
+                );
+                if (Path.IsPathRooted(relative) ||
+                    relative.Split(Path.DirectorySeparatorChar).Any(
+                        segment => segment.Length == 0 ||
+                            segment == "." ||
+                            segment == ".."
+                    ))
+                {
+                    throw new InvalidOperationException();
+                }
+                string executable = Path.GetFullPath(
+                    Path.Combine(root, relative)
+                );
+                string rootPrefix = Path.GetFullPath(root)
+                    .TrimEnd(Path.DirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar;
+                if (!executable.StartsWith(
+                        rootPrefix,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(executable))
+                {
+                    throw new InvalidOperationException();
+                }
+                FileInfo executableInfo = new FileInfo(executable);
+                if ((executableInfo.Attributes &
+                        FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException();
+                }
+                string actual = BundleIntegrity.Sha256(executable);
+                if (!String.Equals(
+                        actual,
+                        record.sha256,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException();
+                }
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    executable_path = executable,
+                    sha256 = actual,
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "MANAGED_DESKTOP_INTEGRITY_FAILED"
+                );
+            }
+        }
+
+        private static LaunchTargetResolution Blocked(
+            string targetId,
+            string clientId,
+            string role,
+            string reason
+        )
+        {
+            return new LaunchTargetResolution
+            {
+                status = "BLOCKED",
+                target_id = targetId,
+                client_id = clientId,
+                role = role,
+                executable_path = null,
+                sha256 = null,
+                reason = reason
+            };
+        }
+    }
+}

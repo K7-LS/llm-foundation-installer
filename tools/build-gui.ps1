@@ -1204,6 +1204,7 @@ $Executable = Join-Path $OutputRoot 'LLMFoundationInstaller.exe'
 $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
 $EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
 $EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
+$LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1274,6 +1275,7 @@ $CompilerArguments += @(
     $Source,
     $EditionSource,
     $EditionThemeSource,
+    $LaunchTargetSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )
