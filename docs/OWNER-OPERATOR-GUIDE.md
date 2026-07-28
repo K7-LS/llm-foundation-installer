@@ -52,6 +52,8 @@ bundle-manifest. Она не делает model calls, не выполняет �
 
 Owner Installer может нести и устанавливать `OWNER_CANDIDATE`. Это не
 переводит `FULL_RELEASE_CLAUDE` в PASS и не разрешает распространение.
+Owner Launch Center может по явному действию владельца запустить установленный
+официальный Claude Code, не объявляя provider readiness подтверждённым.
 
 Каждый вход выполняется владельцем интерактивно в официальном клиенте.
 Region bypass, ban bypass и safeguard bypass не используются. VPN или proxy

@@ -258,6 +258,17 @@ def test_owner_views_use_signal_console_contract(view_name: str) -> None:
     assert "Cyberpunk" not in value
 
 
+def test_owner_launch_center_labels_claude_as_owner_only_candidate() -> None:
+    value = (
+        REPOSITORY / "src" / "gui" / "LaunchCenterOwnerView.xaml"
+    ).read_text(encoding="utf-8")
+
+    assert "CLAUDE / OWNER CANDIDATE" in value
+    assert 'Text="OWNER ONLY"' in value
+    assert "provider readiness remains NOT_PASS" in value
+    assert 'Text="BLOCKED"' not in value
+
+
 @pytest.mark.parametrize(
     ("edition", "product_role"),
     [
