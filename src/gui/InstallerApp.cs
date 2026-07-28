@@ -2806,6 +2806,36 @@ namespace LlmFoundationInstaller
                     ));
                     return sibling.status == "RESOLVED" ? 0 : 20;
                 }
+                if (args.Length == 3 &&
+                    args[0] == "--install-runtime-json")
+                {
+                    RuntimeBootstrapResult installed =
+                        RuntimeBootstrap.InstallFromArchive(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        installed
+                    ));
+                    return installed.status == "INSTALLED" ||
+                        installed.status == "VERIFIED"
+                        ? 0
+                        : 20;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--verify-runtime-json")
+                {
+                    RuntimeBootstrapResult runtime =
+                        RuntimeBootstrap.Verify(
+                            bundleRoot,
+                            args[1]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        runtime
+                    ));
+                    return runtime.status == "VERIFIED" ? 0 : 20;
+                }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {
                     return RunSelfTest(bundleRoot);

@@ -14,6 +14,7 @@ param(
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
     [string]$ClientSourcesLock,
+    [string]$RuntimeSourcesLock,
     [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
@@ -63,6 +64,22 @@ if (($ClientSourcesItem.Attributes -band
     $ClientSourcesItem.Length -lt 2 -or
     $ClientSourcesItem.Length -gt 65536) {
     throw 'ClientSourcesLock file is unsafe'
+}
+if ([string]::IsNullOrWhiteSpace($RuntimeSourcesLock)) {
+    $RuntimeSourcesLock = Join-Path (
+        [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    ) 'runtime-sources.lock.json'
+}
+$RuntimeSourcesLock = [IO.Path]::GetFullPath($RuntimeSourcesLock)
+if (-not (Test-Path -LiteralPath $RuntimeSourcesLock -PathType Leaf)) {
+    throw 'RuntimeSourcesLock does not exist'
+}
+$RuntimeSourcesItem = Get-Item -LiteralPath $RuntimeSourcesLock -Force
+if (($RuntimeSourcesItem.Attributes -band
+    [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+    $RuntimeSourcesItem.Length -lt 2 -or
+    $RuntimeSourcesItem.Length -gt 65536) {
+    throw 'RuntimeSourcesLock file is unsafe'
 }
 
 if (Test-Path -LiteralPath $OutputRoot) {
@@ -977,6 +994,50 @@ if ($ClientSourcesTestOnly) {
 elseif (-not $ClientSourcesOfficialOnly) {
     throw 'Non-official client sources must be marked test-only'
 }
+$RuntimeSources = $null
+try {
+    $RuntimeSources = [IO.File]::ReadAllText(
+        $RuntimeSourcesLock
+    ) | ConvertFrom-Json
+} catch {
+    throw 'RuntimeSourcesLock JSON is invalid'
+}
+if ($null -eq $RuntimeSources -or
+    [int]$RuntimeSources.schema_version -ne 1 -or
+    $RuntimeSources.test_only -isnot [bool] -or
+    $null -eq $RuntimeSources.runtime -or
+    [string]$RuntimeSources.runtime.id -cne 'sing-box' -or
+    [string]$RuntimeSources.runtime.version -cne '1.13.14' -or
+    [string]$RuntimeSources.runtime.archive_kind -cne 'zip' -or
+    [string]$RuntimeSources.runtime.executable_name -cne 'sing-box.exe' -or
+    [string]$RuntimeSources.runtime.sha256 -notmatch '^[0-9A-Fa-f]{64}$') {
+    throw 'RuntimeSourcesLock schema is invalid'
+}
+$RuntimeUri = $null
+if (-not [Uri]::TryCreate(
+        [string]$RuntimeSources.runtime.url,
+        [UriKind]::Absolute,
+        [ref]$RuntimeUri
+    ) -or
+    -not [string]::IsNullOrWhiteSpace($RuntimeUri.UserInfo)) {
+    throw 'Runtime source URL is invalid'
+}
+if ([bool]$RuntimeSources.test_only) {
+    if (-not $AllowLocalTestSources -or
+        $DistributionMode -cne 'Preview' -or
+        -not $RuntimeUri.IsLoopback -or
+        $RuntimeUri.Scheme -notin @('http', 'https')) {
+        throw 'Local test runtime source is unsafe'
+    }
+}
+elseif ($RuntimeUri.Scheme -cne 'https' -or
+    $RuntimeUri.Host -cne 'github.com' -or
+    $RuntimeUri.AbsolutePath -cne (
+        '/SagerNet/sing-box/releases/download/v1.13.14/' +
+        'sing-box-1.13.14-windows-amd64.zip'
+    )) {
+    throw 'Official runtime source is not immutable'
+}
 $ApprovedHosts = @(
     'chatgpt.com',
     'downloads.claude.ai',
@@ -1146,6 +1207,12 @@ else {
         $Utf8NoBom
     )
 }
+$EffectiveRuntimeSourcesPath = Join-Path (
+    $OutputRoot
+) 'runtime-sources.lock.json'
+Copy-Item -LiteralPath $RuntimeSourcesLock -Destination (
+    $EffectiveRuntimeSourcesPath
+)
 $EngineRoot = Join-Path $OutputRoot 'engine'
 if ($IsPackagedRelease) {
     Export-AcceptedFoundationEngine $AcceptedFoundation $EngineRoot
@@ -1206,6 +1273,7 @@ $EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
 $EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
 $LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
 $ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
+$RuntimeBootstrapSource = Join-Path $RepositoryRoot 'src\gui\RuntimeBootstrap.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1214,6 +1282,10 @@ $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
 $ClientSourcesHash = Get-Sha256 $EffectiveClientSourcesPath
+$RuntimeSourcesBytes = (
+    Get-Item -LiteralPath $EffectiveRuntimeSourcesPath
+).Length
+$RuntimeSourcesHash = Get-Sha256 $EffectiveRuntimeSourcesPath
 $Views = @(
     'InstallerEmployeeView.xaml',
     'InstallerOwnerView.xaml',
@@ -1240,6 +1312,7 @@ $CompilerArguments = @(
     "/resource:$EditionResource,EditionProfile.json",
     "/resource:$TrustedResource,TrustedPackages.json",
     "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
+    "/resource:$EffectiveRuntimeSourcesPath,RuntimeSources.lock.json",
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
@@ -1278,6 +1351,7 @@ $CompilerArguments += @(
     $EditionThemeSource,
     $LaunchTargetSource,
     $ClientLauncherSource,
+    $RuntimeBootstrapSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )
@@ -1534,6 +1608,14 @@ $Manifest = [ordered]@{
         sha256 = $ClientSourcesHash
         bytes = $ClientSourcesBytes
     }
+    runtime_sources = [ordered]@{
+        schema_version = 1
+        test_only = [bool]$RuntimeSources.test_only
+        relative_path = 'runtime-sources.lock.json'
+        resource_name = 'RuntimeSources.lock.json'
+        sha256 = $RuntimeSourcesHash
+        bytes = $RuntimeSourcesBytes
+    }
     targets = $IncludedTargets
     artifacts = [ordered]@{
         'LLMFoundationInstaller.exe' = [ordered]@{
@@ -1569,6 +1651,10 @@ $Manifest = [ordered]@{
         'client-sources.lock.json' = [ordered]@{
             sha256 = $ClientSourcesHash
             bytes = $ClientSourcesBytes
+        }
+        'runtime-sources.lock.json' = [ordered]@{
+            sha256 = $RuntimeSourcesHash
+            bytes = $RuntimeSourcesBytes
         }
     }
 }
