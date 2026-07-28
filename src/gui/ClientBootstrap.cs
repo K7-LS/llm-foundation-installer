@@ -42,6 +42,9 @@ namespace LlmFoundationInstaller
         public string store_identity { get; set; }
         public string store_publisher { get; set; }
         public string store_signature_kind { get; set; }
+        public string store_application_id { get; set; }
+        public string store_executable { get; set; }
+        public string store_entry_point { get; set; }
     }
 
     internal sealed class ClientSourceLock
@@ -101,6 +104,16 @@ namespace LlmFoundationInstaller
         public string sha256 { get; set; }
     }
 
+    internal sealed class ManagedCommandRecord
+    {
+        public int schema_version { get; set; }
+        public string client_id { get; set; }
+        public string version { get; set; }
+        public string relative_path { get; set; }
+        public string sha256 { get; set; }
+        public string source_sha256 { get; set; }
+    }
+
     internal sealed class SignatureProbe
     {
         public string status { get; set; }
@@ -117,6 +130,11 @@ namespace LlmFoundationInstaller
         public string architecture { get; set; }
         public string version { get; set; }
         public string package_full_name { get; set; }
+        public string package_family_name { get; set; }
+        public string install_location { get; set; }
+        public string application_id { get; set; }
+        public string executable { get; set; }
+        public string entry_point { get; set; }
     }
 
     internal sealed class StoreClientResult
@@ -125,6 +143,10 @@ namespace LlmFoundationInstaller
         public string client_id { get; set; }
         public string version { get; set; }
         public string package_full_name { get; set; }
+        public string package_family_name { get; set; }
+        public string install_location { get; set; }
+        public string application_id { get; set; }
+        public string executable { get; set; }
         public string store_product_id { get; set; }
         public string source_uri { get; set; }
     }
@@ -248,13 +270,22 @@ namespace LlmFoundationInstaller
                 "ConvertTo-Json -Compress;exit 0};" +
                 "if($items.Count -ne 1){exit 44};" +
                 "$p=$items[0];" +
+                "$m=Get-AppxPackageManifest -Package $p;" +
+                "$apps=@($m.Package.Applications.Application);" +
+                "if($apps.Count -ne 1){exit 45};" +
+                "$a=$apps[0];" +
                 "[pscustomobject]@{present=$true;" +
                 "name=[string]$p.Name;" +
                 "publisher=[string]$p.Publisher;" +
                 "signature_kind=[string]$p.SignatureKind;" +
                 "architecture=[string]$p.Architecture;" +
                 "version=[string]$p.Version;" +
-                "package_full_name=[string]$p.PackageFullName}|" +
+                "package_full_name=[string]$p.PackageFullName;" +
+                "package_family_name=[string]$p.PackageFamilyName;" +
+                "install_location=[string]$p.InstallLocation;" +
+                "application_id=[string]$a.Id;" +
+                "executable=[string]$a.Executable;" +
+                "entry_point=[string]$a.EntryPoint}|" +
                 "ConvertTo-Json -Compress;";
             ProcessStartInfo start = new ProcessStartInfo
             {
@@ -316,6 +347,10 @@ namespace LlmFoundationInstaller
                 client_id = source.id,
                 version = null,
                 package_full_name = null,
+                package_family_name = null,
+                install_location = null,
+                application_id = null,
+                executable = null,
                 store_product_id = source.store_product_id,
                 source_uri = uri
             };
@@ -566,6 +601,19 @@ namespace LlmFoundationInstaller
                     source.version,
                     StringComparison.Ordinal))
             {
+                if (UsesManagedCommand(source) &&
+                    !HasValidManagedCommandRecord(home, source))
+                {
+                    return new ClientPlanResult
+                    {
+                        status = "INSTALL_AVAILABLE",
+                        client_id = source.id,
+                        supported_version = source.version,
+                        detected_version = detected,
+                        detected_state = "exact_unrecorded",
+                        action = "reinstall"
+                    };
+                }
                 return new ClientPlanResult
                 {
                     status = "READY",
@@ -805,6 +853,11 @@ namespace LlmFoundationInstaller
                         "Installed client version differs from source lock"
                     );
                 }
+                WriteManagedCommandRecord(
+                    home,
+                    source,
+                    commandPath
+                );
             }
             catch
             {
@@ -812,6 +865,7 @@ namespace LlmFoundationInstaller
                 {
                     File.Delete(temporary);
                 }
+                RestoreManagedFile(commandPath, prior);
                 throw;
             }
             finally
@@ -950,6 +1004,14 @@ namespace LlmFoundationInstaller
                     "Installed client version differs from source lock"
                 );
             }
+            WriteManagedCommandRecord(
+                home,
+                source,
+                Path.Combine(
+                    binRoot,
+                    source.detect_commands[0]
+                )
+            );
             bool pathPersisted = PersistManagedPathForCurrentUser(
                 home,
                 binRoot
@@ -1677,6 +1739,18 @@ namespace LlmFoundationInstaller
                         !String.Equals(
                             source.store_signature_kind,
                             "Store",
+                            StringComparison.Ordinal) ||
+                        !String.Equals(
+                            source.store_application_id,
+                            "App",
+                            StringComparison.Ordinal) ||
+                        !String.Equals(
+                            source.store_executable,
+                            "app/ChatGPT.exe",
+                            StringComparison.Ordinal) ||
+                        !String.Equals(
+                            source.store_entry_point,
+                            "Windows.FullTrustApplication",
                             StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException(
@@ -1736,10 +1810,17 @@ namespace LlmFoundationInstaller
                     client_id = source.id,
                     version = null,
                     package_full_name = null,
+                    package_family_name = null,
+                    install_location = null,
+                    application_id = null,
+                    executable = null,
                     store_product_id = source.store_product_id,
                     source_uri = sourceUri
                 };
             }
+            string normalizedExecutable = (
+                probe.executable ?? ""
+            ).Replace('\\', '/');
             if (!String.Equals(
                     probe.name,
                     source.store_identity,
@@ -1760,6 +1841,24 @@ namespace LlmFoundationInstaller
                 String.IsNullOrWhiteSpace(probe.package_full_name) ||
                 !probe.package_full_name.StartsWith(
                     source.store_identity + "_",
+                    StringComparison.Ordinal) ||
+                String.IsNullOrWhiteSpace(probe.package_family_name) ||
+                !probe.package_family_name.StartsWith(
+                    source.store_identity + "_",
+                    StringComparison.Ordinal) ||
+                String.IsNullOrWhiteSpace(probe.install_location) ||
+                !Path.IsPathRooted(probe.install_location) ||
+                !String.Equals(
+                    probe.application_id,
+                    source.store_application_id,
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    normalizedExecutable,
+                    source.store_executable,
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    probe.entry_point,
+                    source.store_entry_point,
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
@@ -1772,6 +1871,12 @@ namespace LlmFoundationInstaller
                 client_id = source.id,
                 version = probe.version,
                 package_full_name = probe.package_full_name,
+                package_family_name = probe.package_family_name,
+                install_location = Path.GetFullPath(
+                    probe.install_location
+                ),
+                application_id = probe.application_id,
+                executable = normalizedExecutable,
                 store_product_id = source.store_product_id,
                 source_uri = sourceUri
             };
@@ -2092,6 +2197,213 @@ namespace LlmFoundationInstaller
                     "/bin/" + source.detect_commands[0];
             }
             return ".llm-foundation/bin/" + source.detect_commands[0];
+        }
+
+        internal static bool UsesManagedCommand(ClientSource source)
+        {
+            return source != null &&
+                (String.Equals(
+                    source.install_mode,
+                    "official-script",
+                    StringComparison.Ordinal) ||
+                 String.Equals(
+                    source.install_mode,
+                    "managed-bin",
+                    StringComparison.Ordinal));
+        }
+
+        internal static string ManagedCommandRecordPath(
+            string home,
+            ClientSource source
+        )
+        {
+            if (!UsesManagedCommand(source) ||
+                !IsSafeSegment(source.id))
+            {
+                throw new InvalidOperationException(
+                    "Managed command source is invalid"
+                );
+            }
+            return Path.Combine(
+                Path.GetFullPath(home),
+                ".llm-foundation",
+                "clients",
+                source.id,
+                "current.json"
+            );
+        }
+
+        internal static string ResolveManagedCommandPath(
+            string home,
+            ClientSource source,
+            out ManagedCommandRecord record
+        )
+        {
+            record = null;
+            string recordPath = ManagedCommandRecordPath(home, source);
+            if (!File.Exists(recordPath))
+            {
+                throw new FileNotFoundException(
+                    "Managed command record is missing",
+                    recordPath
+                );
+            }
+            FileInfo recordInfo = new FileInfo(recordPath);
+            if (recordInfo.Length < 2 ||
+                recordInfo.Length > 65536 ||
+                (recordInfo.Attributes &
+                    FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    "Managed command record is invalid"
+                );
+            }
+            record = new JavaScriptSerializer()
+                .Deserialize<ManagedCommandRecord>(
+                    File.ReadAllText(
+                        recordPath,
+                        new UTF8Encoding(false, true)
+                    )
+                );
+            string expectedRelative = ManagedRelativePath(source);
+            if (record == null ||
+                record.schema_version != 1 ||
+                !String.Equals(
+                    record.client_id,
+                    source.id,
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    record.version,
+                    source.version,
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    record.relative_path,
+                    expectedRelative,
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    record.source_sha256,
+                    source.sha256,
+                    StringComparison.OrdinalIgnoreCase) ||
+                String.IsNullOrWhiteSpace(record.sha256) ||
+                record.sha256.Length != 64)
+            {
+                throw new InvalidOperationException(
+                    "Managed command record is invalid"
+                );
+            }
+            string relative = expectedRelative.Replace(
+                '/',
+                Path.DirectorySeparatorChar
+            );
+            string root = Path.GetFullPath(home)
+                .TrimEnd(Path.DirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            string executable = Path.GetFullPath(
+                Path.Combine(root, relative)
+            );
+            if (!executable.StartsWith(
+                    root,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(executable) ||
+                (File.GetAttributes(executable) &
+                    FileAttributes.ReparsePoint) != 0 ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(executable),
+                    record.sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Managed command integrity check failed"
+                );
+            }
+            return executable;
+        }
+
+        private static bool HasValidManagedCommandRecord(
+            string home,
+            ClientSource source
+        )
+        {
+            try
+            {
+                ManagedCommandRecord record;
+                ResolveManagedCommandPath(home, source, out record);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void WriteManagedCommandRecord(
+            string home,
+            ClientSource source,
+            string commandPath
+        )
+        {
+            if (!UsesManagedCommand(source) ||
+                String.IsNullOrWhiteSpace(source.sha256) ||
+                !File.Exists(commandPath))
+            {
+                throw new InvalidOperationException(
+                    "Managed command cannot be recorded"
+                );
+            }
+            string expected = Path.GetFullPath(
+                Path.Combine(
+                    Path.GetFullPath(home),
+                    ManagedRelativePath(source).Replace(
+                        '/',
+                        Path.DirectorySeparatorChar
+                    )
+                )
+            );
+            if (!String.Equals(
+                    expected,
+                    Path.GetFullPath(commandPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Managed command path differs from source contract"
+                );
+            }
+            string recordPath = ManagedCommandRecordPath(home, source);
+            EnsureSafeDirectory(Path.GetDirectoryName(recordPath));
+            string temporary = recordPath + ".install-" +
+                Guid.NewGuid().ToString("N");
+            ManagedCommandRecord record = new ManagedCommandRecord
+            {
+                schema_version = 1,
+                client_id = source.id,
+                version = source.version,
+                relative_path = ManagedRelativePath(source),
+                sha256 = BundleIntegrity.Sha256(commandPath),
+                source_sha256 = source.sha256
+            };
+            try
+            {
+                File.WriteAllText(
+                    temporary,
+                    new JavaScriptSerializer().Serialize(record),
+                    new UTF8Encoding(false)
+                );
+                if (File.Exists(recordPath))
+                {
+                    File.Replace(temporary, recordPath, null, true);
+                }
+                else
+                {
+                    File.Move(temporary, recordPath);
+                }
+            }
+            finally
+            {
+                if (File.Exists(temporary))
+                {
+                    File.Delete(temporary);
+                }
+            }
         }
 
         private static string ManagedCommandPath(

@@ -288,6 +288,47 @@ def test_runtime_install_and_verify_are_archive_hash_bound(
     assert verified["reason"] == "RUNTIME_EXECUTABLE_INTEGRITY_FAILED"
 
 
+def test_runtime_ensure_installs_locked_bundle_archive(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "sing-box-fixture.zip"
+    entry = "sing-box-1.13.14-windows-amd64/sing-box.exe"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr(entry, b"fake-sing-box-runtime\n")
+    lock = tmp_path / "runtime.lock.json"
+    _write_runtime_lock(lock, archive, entry)
+    bundle = _build(tmp_path / "center", lock)
+    shutil.copy2(archive, bundle / archive.name)
+    home = tmp_path / "home"
+
+    returncode, value = _run_json(
+        bundle,
+        "--ensure-runtime-json",
+        str(home),
+    )
+
+    assert returncode == 0
+    assert value["status"] == "VERIFIED"
+    assert value["archive_sha256"] == _sha256(archive)
+    assert (
+        home
+        / ".llm-foundation"
+        / "runtimes"
+        / "sing-box"
+        / "1.13.14"
+        / "sing-box.exe"
+    ).is_file()
+
+    missing_bundle = _build(tmp_path / "missing-center", lock)
+    returncode, value = _run_json(
+        missing_bundle,
+        "--ensure-runtime-json",
+        str(tmp_path / "other-home"),
+    )
+    assert returncode == 20
+    assert value["reason"] == "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+
+
 def test_runtime_install_rejects_unsafe_zip_entry(tmp_path: Path) -> None:
     archive = tmp_path / "unsafe.zip"
     entry = "../sing-box.exe"

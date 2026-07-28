@@ -282,8 +282,11 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         "target_id": "opencode-desktop",
         "client_id": "opencode-desktop",
         "role": "desktop",
+        "launch_mode": "executable",
         "executable_path": str(executable.resolve()),
         "sha256": payload_hash,
+        "activation_id": None,
+        "package_full_name": None,
         "reason": None,
     }
 
@@ -297,6 +300,207 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
     assert returncode == 20
     assert value["status"] == "BLOCKED"
     assert value["reason"] == "MANAGED_DESKTOP_INTEGRITY_FAILED"
+
+
+def test_exact_managed_cli_resolution_requires_install_record(
+    tmp_path: Path,
+) -> None:
+    payload = b"managed-opencode-cli-fixture\n"
+    executable_hash = hashlib.sha256(payload).hexdigest()
+    source_hash = "a" * 64
+    source_lock = tmp_path / "client-sources.lock.json"
+    source_lock.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "official_only": False,
+                "test_only": True,
+                "platform": {
+                    "os": "windows",
+                    "architecture": "x64",
+                    "minimum_build": 19041,
+                },
+                "clients": [
+                    {
+                        "id": "opencode-cli",
+                        "target": "opencode",
+                        "display_name": "OpenCode CLI",
+                        "role": "cli",
+                        "required_for_base": True,
+                        "required_for_employee": True,
+                        "version": "1.0.0",
+                        "source_kind": "download",
+                        "url": "http://127.0.0.1:43117/opencode.exe",
+                        "sha256": source_hash,
+                        "artifact_kind": "portable-exe",
+                        "archive_entry": None,
+                        "publisher": None,
+                        "signature_required": False,
+                        "install_mode": "managed-bin",
+                        "detect_commands": ["opencode.exe"],
+                        "version_arguments": ["--version"],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    bundle = _build(
+        tmp_path / "center",
+        edition="Employee",
+        product_role="LaunchCenter",
+        client_lock=source_lock,
+    )
+    home = tmp_path / "home"
+    executable = home / ".llm-foundation" / "bin" / "opencode.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(payload)
+
+    returncode, value = _run_json(
+        bundle,
+        "--resolve-launch-target-json",
+        str(home),
+        "opencode-cli",
+    )
+    assert returncode == 20
+    assert value["reason"] == "MANAGED_COMMAND_NOT_FOUND"
+
+    record = (
+        home
+        / ".llm-foundation"
+        / "clients"
+        / "opencode-cli"
+        / "current.json"
+    )
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "client_id": "opencode-cli",
+                "version": "1.0.0",
+                "relative_path": ".llm-foundation/bin/opencode.exe",
+                "sha256": executable_hash,
+                "source_sha256": source_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    returncode, value = _run_json(
+        bundle,
+        "--resolve-launch-target-json",
+        str(home),
+        "opencode-cli",
+    )
+    assert returncode == 0
+    assert value == {
+        "status": "RESOLVED",
+        "target_id": "opencode-cli",
+        "client_id": "opencode-cli",
+        "role": "cli",
+        "launch_mode": "executable",
+        "executable_path": str(executable.resolve()),
+        "sha256": executable_hash,
+        "activation_id": None,
+        "package_full_name": None,
+        "reason": None,
+    }
+
+    executable.write_bytes(payload + b"tampered")
+    returncode, value = _run_json(
+        bundle,
+        "--resolve-launch-target-json",
+        str(home),
+        "opencode-cli",
+    )
+    assert returncode == 20
+    assert value["reason"] == "MANAGED_COMMAND_INTEGRITY_FAILED"
+
+
+def test_store_launch_resolution_is_manifest_and_hash_bound(
+    tmp_path: Path,
+) -> None:
+    bundle = _build(
+        tmp_path / "center",
+        edition="Employee",
+        product_role="LaunchCenter",
+    )
+    home = tmp_path / "home"
+    package_root = tmp_path / "WindowsApps" / (
+        "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+    )
+    executable = package_root / "app" / "ChatGPT.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"store-codex-fixture\n")
+    executable_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
+    record = tmp_path / "store-record.json"
+    record.write_text(
+        json.dumps(
+            {
+                "present": True,
+                "name": "OpenAI.Codex",
+                "publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
+                "signature_kind": "Store",
+                "architecture": "X64",
+                "version": "26.721.4979.0",
+                "package_full_name": (
+                    "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+                ),
+                "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
+                "install_location": str(package_root),
+                "application_id": "App",
+                "executable": "app/ChatGPT.exe",
+                "entry_point": "Windows.FullTrustApplication",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    returncode, value = _run_json(
+        bundle,
+        "--resolve-store-launch-target-record-json",
+        "codex-desktop",
+        str(record),
+    )
+
+    assert returncode == 0
+    assert value == {
+        "status": "RESOLVED",
+        "target_id": "codex-desktop",
+        "client_id": "codex-desktop",
+        "role": "desktop",
+        "launch_mode": "appx",
+        "executable_path": str(executable.resolve()),
+        "sha256": executable_hash,
+        "activation_id": "OpenAI.Codex_2p2nqsd0c76g0!App",
+        "package_full_name": (
+            "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+        ),
+        "reason": None,
+    }
+
+    executable.write_bytes(b"tampered")
+    returncode, value = _run_json(
+        bundle,
+        "--resolve-store-launch-target-record-json",
+        "codex-desktop",
+        str(record),
+    )
+    assert returncode == 0
+    assert value["sha256"] != executable_hash
+
+
+def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
+    source = (
+        REPOSITORY / "src" / "gui" / "ClientLauncher.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "IApplicationActivationManager" in source
+    assert "ActivateApplication" in source
+    assert "Process.GetProcessById" in source
+    assert "PROCESS_PROXY_NOT_SUPPORTED" in source
 
 
 @pytest.mark.parametrize("route", ["Direct", "VPN"])

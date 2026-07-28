@@ -2,11 +2,38 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
 
 namespace LlmFoundationInstaller
 {
+    [Flags]
+    internal enum ActivateOptions
+    {
+        None = 0
+    }
+
+    [ComImport]
+    [Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+    internal class ApplicationActivationManager
+    {
+    }
+
+    [ComImport]
+    [Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IApplicationActivationManager
+    {
+        [PreserveSig]
+        int ActivateApplication(
+            [MarshalAs(UnmanagedType.LPWStr)] string appUserModelId,
+            [MarshalAs(UnmanagedType.LPWStr)] string arguments,
+            ActivateOptions options,
+            out uint processId
+        );
+    }
+
     internal sealed class LauncherSessionResult
     {
         public string status { get; set; }
@@ -72,6 +99,20 @@ namespace LlmFoundationInstaller
                     -1
                 );
             }
+            if (String.Equals(
+                    target.launch_mode,
+                    "appx",
+                    StringComparison.Ordinal) &&
+                String.IsNullOrWhiteSpace(target.activation_id))
+            {
+                return Failed(
+                    target,
+                    route,
+                    "APPX_ACTIVATION_ID_MISSING",
+                    true,
+                    -1
+                );
+            }
             Process process = null;
             try
             {
@@ -88,7 +129,7 @@ namespace LlmFoundationInstaller
                 {
                     start.EnvironmentVariables.Remove(variable);
                 }
-                process = Process.Start(start);
+                process = StartExactTarget(target, start);
                 if (process == null)
                 {
                     return Failed(
@@ -99,7 +140,30 @@ namespace LlmFoundationInstaller
                         -1
                     );
                 }
-                if (!process.WaitForExit(300000))
+                if (target.role == "desktop")
+                {
+                    if (!process.WaitForExit(1000))
+                    {
+                        return new LauncherSessionResult
+                        {
+                            status = "PASS",
+                            transport = route,
+                            uses_proxy = false,
+                            cleanup_verified = true,
+                            process_exit_code = -1,
+                            target_id = target.target_id,
+                            executable_path = target.executable_path,
+                            executable_sha256 = target.sha256,
+                            lifecycle = new List<string>
+                            {
+                                "EXACT_CLIENT_STARTED",
+                                "CLIENT_RUNNING"
+                            },
+                            reason = null
+                        };
+                    }
+                }
+                else if (!process.WaitForExit(300000))
                 {
                     try
                     {
@@ -184,6 +248,19 @@ namespace LlmFoundationInstaller
                     -1
                 );
             }
+            if (String.Equals(
+                    target.launch_mode,
+                    "appx",
+                    StringComparison.Ordinal))
+            {
+                return Failed(
+                    target,
+                    route,
+                    "PROCESS_PROXY_NOT_SUPPORTED",
+                    true,
+                    -1
+                );
+            }
             RunningSingBoxSession session = null;
             Process client = null;
             try
@@ -216,7 +293,7 @@ namespace LlmFoundationInstaller
                 start.EnvironmentVariables[
                     "LLM_FOUNDATION_CONNECTION_MODE"
                 ] = route;
-                client = Process.Start(start);
+                client = StartExactTarget(target, start);
                 if (client == null)
                 {
                     throw new InvalidOperationException(
@@ -224,7 +301,11 @@ namespace LlmFoundationInstaller
                     );
                 }
                 session.lifecycle.Add("EXACT_CLIENT_STARTED");
-                if (!client.WaitForExit(300000))
+                if (target.role == "desktop")
+                {
+                    client.WaitForExit();
+                }
+                else if (!client.WaitForExit(300000))
                 {
                     client.Kill();
                     client.WaitForExit(10000);
@@ -295,6 +376,50 @@ namespace LlmFoundationInstaller
                     client.Dispose();
                 }
             }
+        }
+
+        private static Process StartExactTarget(
+            LaunchTargetResolution target,
+            ProcessStartInfo start
+        )
+        {
+            if (target == null ||
+                String.IsNullOrWhiteSpace(target.executable_path) ||
+                !File.Exists(target.executable_path) ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(target.executable_path),
+                    target.sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "TARGET_INTEGRITY_CHANGED"
+                );
+            }
+            if (!String.Equals(
+                    target.launch_mode,
+                    "appx",
+                    StringComparison.Ordinal))
+            {
+                return Process.Start(start);
+            }
+            IApplicationActivationManager manager =
+                (IApplicationActivationManager)
+                    new ApplicationActivationManager();
+            uint processId;
+            int result = manager.ActivateApplication(
+                target.activation_id,
+                null,
+                ActivateOptions.None,
+                out processId
+            );
+            Marshal.ThrowExceptionForHR(result);
+            if (processId == 0)
+            {
+                throw new InvalidOperationException(
+                    "APPX_ACTIVATION_FAILED"
+                );
+            }
+            return Process.GetProcessById((int)processId);
         }
 
         private static string StableSingBoxReason(Exception exception)

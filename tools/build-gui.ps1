@@ -1083,7 +1083,14 @@ foreach ($ClientSource in @($ClientSources.clients)) {
             [string]$ClientSource.store_publisher -cne (
                 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B'
             ) -or
-            [string]$ClientSource.store_signature_kind -cne 'Store'
+            [string]$ClientSource.store_signature_kind -cne 'Store' -or
+            [string]$ClientSource.store_application_id -cne 'App' -or
+            [string]$ClientSource.store_executable -cne (
+                'app/ChatGPT.exe'
+            ) -or
+            [string]$ClientSource.store_entry_point -cne (
+                'Windows.FullTrustApplication'
+            )
         )) {
         throw 'Codex Store client identity is invalid'
     }

@@ -756,6 +756,9 @@ def test_codex_desktop_source_uses_exact_store_product_and_identity(
         == "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B"
     )
     assert desktop["store_signature_kind"] == "Store"
+    assert desktop["store_application_id"] == "App"
+    assert desktop["store_executable"] == "app/ChatGPT.exe"
+    assert desktop["store_entry_point"] == "Windows.FullTrustApplication"
 
 
 def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
@@ -786,6 +789,9 @@ def test_store_record_validation_accepts_only_locked_codex_identity(
     gui_bundle: Path,
     tmp_path: Path,
 ):
+    package_root = tmp_path / (
+        "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+    )
     valid_record = tmp_path / "valid-store-record.json"
     _write_json(
         valid_record,
@@ -799,6 +805,11 @@ def test_store_record_validation_accepts_only_locked_codex_identity(
             "package_full_name": (
                 "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
             ),
+            "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
+            "install_location": str(package_root),
+            "application_id": "App",
+            "executable": "app/ChatGPT.exe",
+            "entry_point": "Windows.FullTrustApplication",
         },
     )
     valid = subprocess.run(
@@ -824,6 +835,10 @@ def test_store_record_validation_accepts_only_locked_codex_identity(
         "package_full_name": (
             "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
         ),
+        "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
+        "install_location": str(package_root.resolve()),
+        "application_id": "App",
+        "executable": "app/ChatGPT.exe",
         "store_product_id": "9PLM9XGG6VKS",
         "source_uri": (
             "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS"
@@ -835,6 +850,11 @@ def test_store_record_validation_accepts_only_locked_codex_identity(
         ("publisher", "CN=Third Party"),
         ("signature_kind", "Developer"),
         ("architecture", "Arm64"),
+        ("package_family_name", "ThirdParty.Codex_bad"),
+        ("install_location", "relative"),
+        ("application_id", "Other"),
+        ("executable", "app/Other.exe"),
+        ("entry_point", "Other.EntryPoint"),
     ):
         record = json.loads(valid_record.read_text(encoding="utf-8"))
         record[field] = wrong
@@ -4119,6 +4139,16 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
         assert required in xaml
     assert "winget search" not in source.lower()
     assert "winget install codex" not in source.lower()
+
+
+def test_owner_candidate_is_installable_only_in_owner_edition():
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+
+    assert "IsInstallableTarget" in source
+    assert "edition.owner_controlled" in source
+    assert 'row.package_state == "owner_candidate"' in source
 
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():

@@ -1093,7 +1093,7 @@ namespace LlmFoundationInstaller
                         : (row.package_state == "tampered"
                             ? "Пакет повреждён · установка запрещена"
                             : (row.package_state == "owner_candidate"
-                                ? "Owner candidate · provider gate blocked"
+                                ? "Owner-only · provider marker не проверен"
                                 : (row.package_state == "policy_blocked"
                                 ? "Допуск провайдера истёк или недействителен"
                                 : (row.client_state == "present_unbound"
@@ -1114,7 +1114,7 @@ namespace LlmFoundationInstaller
                         ? "Пакет проверен. Поддерживаемая версия клиента: " +
                             row.supported_version
                         : (row.package_state == "owner_candidate"
-                            ? "Пакет можно установить владельцу, но запуск Claude остаётся заблокирован до действующего provider marker."
+                            ? "Пакет доступен только Owner edition. Допуск провайдера установщик не подтверждает."
                             : (row.package_state == "policy_blocked"
                             ? "Повторите проверку Supported Regions Policy и соберите новый подписанный installer."
                             : null));
@@ -1463,6 +1463,7 @@ namespace LlmFoundationInstaller
         )
         {
             PlatformCompatibility.RequireSupported();
+            EditionProfile edition = EditionProfile.LoadEmbedded();
             CatalogResult catalog = ProductCatalog.Inspect(bundleRoot, true);
             List<TargetRow> selected = catalog.targets.Where(row =>
             {
@@ -1473,7 +1474,7 @@ namespace LlmFoundationInstaller
                     prefix + "Selected"
                 ) as CheckBox;
                 return box != null && box.IsChecked == true &&
-                    row.package_state == "accepted";
+                    IsInstallableTarget(row, edition);
             }).ToList();
             if (selected.Count == 0)
             {
@@ -2042,6 +2043,7 @@ namespace LlmFoundationInstaller
             bool busy
         )
         {
+            EditionProfile edition = EditionProfile.LoadEmbedded();
             Button primary = view.FindName("PrimaryAction") as Button;
             Button refresh = view.FindName(
                 "RefreshEnvironment"
@@ -2068,9 +2070,21 @@ namespace LlmFoundationInstaller
                 if (box != null)
                 {
                     box.IsEnabled = !busy &&
-                        row.package_state == "accepted";
+                        IsInstallableTarget(row, edition);
                 }
             }
+        }
+
+        private static bool IsInstallableTarget(
+            TargetRow row,
+            EditionProfile edition
+        )
+        {
+            return row != null &&
+                edition != null &&
+                (row.package_state == "accepted" ||
+                 (edition.owner_controlled &&
+                  row.package_state == "owner_candidate"));
         }
 
         private static void SetStatus(
@@ -2778,6 +2792,22 @@ namespace LlmFoundationInstaller
                     ));
                     return resolution.status == "RESOLVED" ? 0 : 20;
                 }
+                if (args.Length == 3 &&
+                    args[0] ==
+                        "--resolve-store-launch-target-record-json")
+                {
+                    LaunchTargetResolution resolution =
+                        LaunchTargetResolver.ResolveStoreRecord(
+                            edition,
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
                 if (args.Length == 4 &&
                     args[0] == "--launch-target-json")
                 {
@@ -2826,6 +2856,19 @@ namespace LlmFoundationInstaller
                         installed.status == "VERIFIED"
                         ? 0
                         : 20;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--ensure-runtime-json")
+                {
+                    RuntimeBootstrapResult runtime =
+                        RuntimeBootstrap.EnsureInstalled(
+                            bundleRoot,
+                            args[1]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        runtime
+                    ));
+                    return runtime.status == "VERIFIED" ? 0 : 20;
                 }
                 if (args.Length == 2 &&
                     args[0] == "--verify-runtime-json")

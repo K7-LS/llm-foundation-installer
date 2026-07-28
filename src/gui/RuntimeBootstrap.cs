@@ -217,6 +217,69 @@ namespace LlmFoundationInstaller
             }
         }
 
+        public static RuntimeBootstrapResult EnsureInstalled(
+            string bundleRoot,
+            string home
+        )
+        {
+            RuntimeBootstrapResult existing = Verify(
+                bundleRoot,
+                home
+            );
+            if (existing.status == "VERIFIED")
+            {
+                return existing;
+            }
+            if (existing.reason != "RUNTIME_NOT_INSTALLED")
+            {
+                return existing;
+            }
+            RuntimeSource source;
+            try
+            {
+                source = Load(bundleRoot).runtime;
+            }
+            catch
+            {
+                return Blocked(null, "RUNTIME_SOURCE_LOCK_INVALID");
+            }
+            string archiveName = Path.GetFileName(
+                new Uri(
+                    source.url,
+                    UriKind.Absolute
+                ).AbsolutePath
+            );
+            if (String.IsNullOrWhiteSpace(archiveName))
+            {
+                return Blocked(
+                    source,
+                    "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+                );
+            }
+            string archive = Path.Combine(
+                Path.GetFullPath(bundleRoot),
+                archiveName
+            );
+            if (!File.Exists(archive) || IsReparse(archive))
+            {
+                return Blocked(
+                    source,
+                    "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+                );
+            }
+            RuntimeBootstrapResult installed = InstallFromArchive(
+                bundleRoot,
+                home,
+                archive
+            );
+            if (installed.status != "INSTALLED" &&
+                installed.status != "VERIFIED")
+            {
+                return installed;
+            }
+            return Verify(bundleRoot, home);
+        }
+
         public static RuntimeBootstrapResult Verify(
             string bundleRoot,
             string home

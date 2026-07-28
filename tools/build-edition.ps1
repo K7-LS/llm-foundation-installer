@@ -12,6 +12,7 @@ param(
     [string]$ProviderEligibilityEvidence,
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
+    [string]$RuntimeArchive,
     [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
@@ -64,6 +65,56 @@ function Get-Sha256 {
     } finally {
         $Algorithm.Dispose()
         $Stream.Dispose()
+    }
+}
+
+$RuntimeRecord = $null
+if ([string]::IsNullOrWhiteSpace($RuntimeArchive)) {
+    if ($DistributionMode -cne 'Preview') {
+        throw 'RuntimeArchive is required outside Preview mode'
+    }
+}
+else {
+    $RuntimeArchive = [IO.Path]::GetFullPath($RuntimeArchive)
+    if (-not (Test-Path -LiteralPath $RuntimeArchive -PathType Leaf) -or
+        ((Get-Item -LiteralPath $RuntimeArchive).Attributes -band
+            [IO.FileAttributes]::ReparsePoint)) {
+        throw 'RuntimeArchive is missing or unsafe'
+    }
+    $RuntimeLockPath = if (
+        [string]::IsNullOrWhiteSpace($RuntimeSourcesLock)
+    ) {
+        Join-Path $RepositoryRoot 'runtime-sources.lock.json'
+    }
+    else {
+        [IO.Path]::GetFullPath($RuntimeSourcesLock)
+    }
+    try {
+        $RuntimeLockValue = Get-Content -LiteralPath $RuntimeLockPath -Raw |
+            ConvertFrom-Json
+        $RuntimeUri = [Uri][string]$RuntimeLockValue.runtime.url
+    }
+    catch {
+        throw 'RuntimeSourcesLock is invalid'
+    }
+    $RuntimeFileName = [IO.Path]::GetFileName(
+        $RuntimeUri.AbsolutePath
+    )
+    if ([string]::IsNullOrWhiteSpace($RuntimeFileName) -or
+        [string]$RuntimeLockValue.runtime.id -cne 'sing-box' -or
+        [string]$RuntimeLockValue.runtime.version -cne '1.13.14' -or
+        [string]$RuntimeLockValue.runtime.sha256 -cne (
+            Get-Sha256 $RuntimeArchive
+        ) -or
+        [IO.Path]::GetExtension($RuntimeFileName) -cne '.zip') {
+        throw 'RuntimeArchive differs from RuntimeSourcesLock'
+    }
+    $RuntimeRecord = [ordered]@{
+        id = 'sing-box'
+        version = '1.13.14'
+        file = $RuntimeFileName
+        sha256 = Get-Sha256 $RuntimeArchive
+        bytes = (Get-Item -LiteralPath $RuntimeArchive).Length
     }
 }
 
@@ -172,6 +223,15 @@ try {
     Copy-Item -LiteralPath (
         Join-Path $LaunchCenterRoot 'LLMFoundationInstaller.exe'
     ) -Destination $LaunchCenterOutput
+    if ($null -ne $RuntimeRecord) {
+        $RuntimeOutput = Join-Path $OutputRoot $RuntimeRecord.file
+        Copy-Item -LiteralPath $RuntimeArchive -Destination $RuntimeOutput
+        if ((Get-Sha256 $RuntimeOutput) -cne $RuntimeRecord.sha256 -or
+            (Get-Item -LiteralPath $RuntimeOutput).Length -ne
+                $RuntimeRecord.bytes) {
+            throw 'Copied runtime archive differs'
+        }
+    }
 
     $Manifest = [ordered]@{
         schema_version = 1
@@ -185,6 +245,7 @@ try {
         distribution_mode = $DistributionMode
         targets = @($InstallerManifest.targets)
         verdicts = $InstallerManifest.verdicts
+        runtime = $RuntimeRecord
         products = [ordered]@{
             installer = [ordered]@{
                 product_role = 'Installer'

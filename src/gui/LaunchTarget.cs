@@ -29,8 +29,11 @@ namespace LlmFoundationInstaller
         public string target_id { get; set; }
         public string client_id { get; set; }
         public string role { get; set; }
+        public string launch_mode { get; set; }
         public string executable_path { get; set; }
         public string sha256 { get; set; }
+        public string activation_id { get; set; }
+        public string package_full_name { get; set; }
         public string reason { get; set; }
     }
 
@@ -108,6 +111,30 @@ namespace LlmFoundationInstaller
                     target.client_id,
                     StringComparison.Ordinal
                 ));
+            if (String.Equals(
+                    source.source_kind,
+                    "store",
+                    StringComparison.Ordinal))
+            {
+                StoreClientResult store = ClientBootstrap.ProbeStore(
+                    bundleRoot,
+                    source.id
+                );
+                if (store.status != "READY")
+                {
+                    return Blocked(
+                        target.target_id,
+                        target.client_id,
+                        target.role,
+                        "STORE_PACKAGE_NOT_FOUND"
+                    );
+                }
+                return ResolveStore(source, target, store);
+            }
+            if (ClientBootstrap.UsesManagedCommand(source))
+            {
+                return ResolveManagedCommand(home, source, target);
+            }
             if (!String.Equals(
                     source.install_mode,
                     "managed-desktop",
@@ -121,6 +148,123 @@ namespace LlmFoundationInstaller
                 );
             }
             return ResolveManagedDesktop(home, source, target);
+        }
+
+        public static LaunchTargetResolution ResolveStoreRecord(
+            EditionProfile edition,
+            string bundleRoot,
+            string targetId,
+            string recordPath
+        )
+        {
+            LaunchTarget target = LaunchTargetCatalog.ForEdition(
+                edition,
+                bundleRoot
+            ).FirstOrDefault(candidate => String.Equals(
+                candidate.target_id,
+                targetId,
+                StringComparison.Ordinal
+            ));
+            if (target == null)
+            {
+                return Blocked(
+                    targetId,
+                    null,
+                    null,
+                    "TARGET_NOT_IN_EDITION"
+                );
+            }
+            ClientSource source = ClientBootstrap.Load(bundleRoot).clients
+                .First(entry => String.Equals(
+                    entry.id,
+                    target.client_id,
+                    StringComparison.Ordinal
+                ));
+            try
+            {
+                StoreClientResult store =
+                    ClientBootstrap.ValidateStoreRecord(
+                        bundleRoot,
+                        source.id,
+                        recordPath
+                    );
+                return ResolveStore(source, target, store);
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "STORE_APP_INTEGRITY_FAILED"
+                );
+            }
+        }
+
+        private static LaunchTargetResolution ResolveManagedCommand(
+            string home,
+            ClientSource source,
+            LaunchTarget target
+        )
+        {
+            string recordPath;
+            try
+            {
+                recordPath = ClientBootstrap.ManagedCommandRecordPath(
+                    home,
+                    source
+                );
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "MANAGED_COMMAND_INTEGRITY_FAILED"
+                );
+            }
+            if (!File.Exists(recordPath))
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "MANAGED_COMMAND_NOT_FOUND"
+                );
+            }
+            try
+            {
+                ManagedCommandRecord record;
+                string executable =
+                    ClientBootstrap.ResolveManagedCommandPath(
+                        home,
+                        source,
+                        out record
+                    );
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    launch_mode = "executable",
+                    executable_path = executable,
+                    sha256 = record.sha256,
+                    activation_id = null,
+                    package_full_name = null,
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "MANAGED_COMMAND_INTEGRITY_FAILED"
+                );
+            }
         }
 
         private static LaunchTargetResolution ResolveManagedDesktop(
@@ -227,8 +371,11 @@ namespace LlmFoundationInstaller
                     target_id = target.target_id,
                     client_id = target.client_id,
                     role = target.role,
+                    launch_mode = "executable",
                     executable_path = executable,
                     sha256 = actual,
+                    activation_id = null,
+                    package_full_name = null,
                     reason = null
                 };
             }
@@ -239,6 +386,96 @@ namespace LlmFoundationInstaller
                     target.client_id,
                     target.role,
                     "MANAGED_DESKTOP_INTEGRITY_FAILED"
+                );
+            }
+        }
+
+        private static LaunchTargetResolution ResolveStore(
+            ClientSource source,
+            LaunchTarget target,
+            StoreClientResult store
+        )
+        {
+            try
+            {
+                if (store == null ||
+                    store.status != "READY" ||
+                    !String.Equals(
+                        store.application_id,
+                        source.store_application_id,
+                        StringComparison.Ordinal) ||
+                    !String.Equals(
+                        store.executable,
+                        source.store_executable,
+                        StringComparison.Ordinal) ||
+                    String.IsNullOrWhiteSpace(
+                        store.package_family_name) ||
+                    String.IsNullOrWhiteSpace(
+                        store.package_full_name))
+                {
+                    throw new InvalidOperationException();
+                }
+                string root = Path.GetFullPath(
+                    store.install_location
+                );
+                if (!String.Equals(
+                        Path.GetFileName(root),
+                        store.package_full_name,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException();
+                }
+                string relative = store.executable.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar
+                );
+                if (Path.IsPathRooted(relative) ||
+                    relative.Split(Path.DirectorySeparatorChar).Any(
+                        segment => segment.Length == 0 ||
+                            segment == "." ||
+                            segment == ".."
+                    ))
+                {
+                    throw new InvalidOperationException();
+                }
+                string executable = Path.GetFullPath(
+                    Path.Combine(root, relative)
+                );
+                string rootPrefix = root.TrimEnd(
+                    Path.DirectorySeparatorChar
+                ) + Path.DirectorySeparatorChar;
+                if (!executable.StartsWith(
+                        rootPrefix,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(executable) ||
+                    (File.GetAttributes(executable) &
+                        FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException();
+                }
+                string actual = BundleIntegrity.Sha256(executable);
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    launch_mode = "appx",
+                    executable_path = executable,
+                    sha256 = actual,
+                    activation_id = store.package_family_name +
+                        "!" + store.application_id,
+                    package_full_name = store.package_full_name,
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "STORE_APP_INTEGRITY_FAILED"
                 );
             }
         }
@@ -256,8 +493,11 @@ namespace LlmFoundationInstaller
                 target_id = targetId,
                 client_id = clientId,
                 role = role,
+                launch_mode = null,
                 executable_path = null,
                 sha256 = null,
+                activation_id = null,
+                package_full_name = null,
                 reason = reason
             };
         }

@@ -55,7 +55,10 @@
       "store_product_id": "9PLM9XGG6VKS",
       "store_identity": "OpenAI.Codex",
       "store_publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
-      "store_signature_kind": "Store"
+      "store_signature_kind": "Store",
+      "store_application_id": "App",
+      "store_executable": "app/ChatGPT.exe",
+      "store_entry_point": "Windows.FullTrustApplication"
     },
     {
       "id": "claude-code",

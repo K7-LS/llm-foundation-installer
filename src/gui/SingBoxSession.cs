@@ -81,7 +81,7 @@ namespace LlmFoundationInstaller
             string route
         )
         {
-            RuntimeBootstrapResult runtime = RuntimeBootstrap.Verify(
+            RuntimeBootstrapResult runtime = RuntimeBootstrap.EnsureInstalled(
                 bundleRoot,
                 home
             );
