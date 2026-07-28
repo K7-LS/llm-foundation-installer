@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import struct
@@ -9,6 +10,7 @@ import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
+EDITION_BUILD_SCRIPT = REPOSITORY / "tools" / "build-edition.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
 
 
@@ -249,3 +251,91 @@ def test_each_edition_product_renders_its_own_preview(
     payload = preview.read_bytes()
     assert payload.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", payload[16:24]) == (1440, 900)
+
+
+def _build_edition(output: Path, edition: str) -> Path:
+    result = subprocess.run(
+        [
+            str(POWERSHELL),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(EDITION_BUILD_SCRIPT),
+            "-OutputRoot",
+            str(output),
+            "-Edition",
+            edition,
+            "-DistributionMode",
+            "Preview",
+        ],
+        cwd=REPOSITORY,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return output
+
+
+def test_edition_builder_declares_exact_internal_artifact_names() -> None:
+    source = EDITION_BUILD_SCRIPT.read_text(encoding="utf-8")
+    for name in (
+        "K7-AI-Foundation-Employee-InternalUnsigned.exe",
+        "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
+        "K7-AI-Foundation-Owner-InternalUnsigned.exe",
+        "K7-AI-Launch-Center-Owner-InternalUnsigned.exe",
+    ):
+        assert name in source
+
+
+def test_deterministic_edition_bundle_binds_both_products(
+    tmp_path: Path,
+) -> None:
+    first = _build_edition(tmp_path / "first", "Employee")
+    second = _build_edition(tmp_path / "second", "Employee")
+    expected = {
+        "installer": "K7-AI-Foundation-Employee-Preview.exe",
+        "launch_center": "K7-AI-Launch-Center-Employee-Preview.exe",
+    }
+    manifest = json.loads(
+        (first / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schema_version"] == 1
+    assert manifest["edition_id"] == "Employee"
+    assert manifest["theme_id"] == "K7Signal"
+    assert manifest["distribution_mode"] == "Preview"
+    assert manifest["targets"] == ["codex", "opencode"]
+    assert {
+        role: value["file"]
+        for role, value in manifest["products"].items()
+    } == expected
+    for role, name in expected.items():
+        first_executable = first / name
+        second_executable = second / name
+        assert first_executable.read_bytes() == second_executable.read_bytes()
+        assert manifest["products"][role]["sha256"] == hashlib.sha256(
+            first_executable.read_bytes()
+        ).hexdigest()
+    assert (first / "bundle-manifest.json").read_bytes() == (
+        second / "bundle-manifest.json"
+    ).read_bytes()
+    handoff = subprocess.run(
+        [
+            str(first / expected["installer"]),
+            "--resolve-sibling-json",
+            str(first),
+        ],
+        cwd=first,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert handoff.returncode == 0, handoff.stdout + handoff.stderr
+    handoff_value = json.loads(handoff.stdout)
+    assert handoff_value["status"] == "RESOLVED"
+    assert handoff_value["executable_path"] == str(
+        (first / expected["launch_center"]).resolve()
+    )

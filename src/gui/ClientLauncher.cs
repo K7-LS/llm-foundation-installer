@@ -382,14 +382,8 @@ namespace LlmFoundationInstaller
                 root,
                 "bundle-manifest.json"
             );
-            string executable = Path.Combine(
-                root,
-                "LLMFoundationInstaller.exe"
-            );
             if (!File.Exists(manifestPath) ||
-                !File.Exists(executable) ||
-                IsReparse(manifestPath) ||
-                IsReparse(executable))
+                IsReparse(manifestPath))
             {
                 return Blocked("SIBLING_NOT_FOUND");
             }
@@ -404,13 +398,53 @@ namespace LlmFoundationInstaller
                             )
                         );
                 string editionId = manifest["edition_id"] as string;
-                string productRole = manifest["product_role"] as string;
                 if (!String.Equals(
                         editionId,
                         current.edition_id,
                         StringComparison.Ordinal))
                 {
                     return Blocked("SIBLING_EDITION_MISMATCH");
+                }
+                string productRole;
+                string executableName;
+                string expected;
+                object productsValue;
+                if (manifest.TryGetValue(
+                        "products",
+                        out productsValue))
+                {
+                    Dictionary<string, object> products =
+                        productsValue as Dictionary<string, object>;
+                    Dictionary<string, object> launchCenter =
+                        products == null
+                            ? null
+                            : products["launch_center"] as
+                                Dictionary<string, object>;
+                    productRole = launchCenter == null
+                        ? null
+                        : launchCenter["product_role"] as string;
+                    executableName = launchCenter == null
+                        ? null
+                        : launchCenter["file"] as string;
+                    expected = launchCenter == null
+                        ? null
+                        : launchCenter["sha256"] as string;
+                }
+                else
+                {
+                    productRole = manifest["product_role"] as string;
+                    executableName = "LLMFoundationInstaller.exe";
+                    Dictionary<string, object> artifacts =
+                        manifest["artifacts"] as
+                            Dictionary<string, object>;
+                    Dictionary<string, object> executableRecord =
+                        artifacts == null
+                            ? null
+                            : artifacts[executableName] as
+                                Dictionary<string, object>;
+                    expected = executableRecord == null
+                        ? null
+                        : executableRecord["sha256"] as string;
                 }
                 if (!String.Equals(
                         productRole,
@@ -419,17 +453,26 @@ namespace LlmFoundationInstaller
                 {
                     return Blocked("SIBLING_PRODUCT_MISMATCH");
                 }
-                Dictionary<string, object> artifacts =
-                    manifest["artifacts"] as
-                        Dictionary<string, object>;
-                Dictionary<string, object> executableRecord =
-                    artifacts == null
-                        ? null
-                        : artifacts["LLMFoundationInstaller.exe"] as
-                            Dictionary<string, object>;
-                string expected = executableRecord == null
-                    ? null
-                    : executableRecord["sha256"] as string;
+                if (String.IsNullOrWhiteSpace(executableName) ||
+                    !String.Equals(
+                        executableName,
+                        Path.GetFileName(executableName),
+                        StringComparison.Ordinal) ||
+                    !executableName.EndsWith(
+                        ".exe",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return Blocked("SIBLING_MANIFEST_INVALID");
+                }
+                string executable = Path.Combine(
+                    root,
+                    executableName
+                );
+                if (!File.Exists(executable) ||
+                    IsReparse(executable))
+                {
+                    return Blocked("SIBLING_NOT_FOUND");
+                }
                 string actual = BundleIntegrity.Sha256(executable);
                 if (String.IsNullOrWhiteSpace(expected) ||
                     !String.Equals(
