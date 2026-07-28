@@ -361,9 +361,10 @@ assert "claude-code" not in employee_center["targets"]
 assert "claude-code" in owner_center["targets"]
 ```
 
-Create managed Desktop and CLI fixtures and assert resolving
-`opencode-desktop` returns the exact registered, hash-verified Desktop EXE and
-never `cmd.exe` or `opencode` from `PATH`.
+The internal catalog may retain both exact adapters for compatibility tests,
+but the visible Employee and Owner choice resolves OpenCode only to
+`opencode-cli`. Assert that the UI never substitutes the dormant desktop
+adapter or an unverified `opencode` from `PATH`.
 
 - [ ] **Step 2: Run product-role tests and confirm RED**
 
@@ -562,8 +563,8 @@ git commit -m "feat: build deterministic dual-product editions"
 **Files:**
 
 - Modify: `README.md`
-- Modify: `docs/EMPLOYEE-OPERATOR-GUIDE.md`
-- Create: `docs/OWNER-OPERATOR-GUIDE.md`
+- Modify: `docs/ИНСТРУКЦИЯ-СОТРУДНИКУ.md`
+- Create: `docs/ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md`
 - Modify: `tests/test_editions.py`
 - Modify: `tests/test_gui.py`
 

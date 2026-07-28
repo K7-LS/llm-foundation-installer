@@ -45,8 +45,8 @@ namespace LlmFoundationInstaller
                     EditionProfile.LoadEmbedded();
                 Window dashboard = new Window
                 {
-                    Title = "K-7 Operator Dashboard — " +
-                        edition.edition_id,
+                    Title = "K-7 · Интерактивная инструкция · " +
+                        EditionLabel(edition),
                     Width = 1180,
                     Height = 760,
                     MinWidth = 980,
@@ -54,9 +54,16 @@ namespace LlmFoundationInstaller
                     WindowStartupLocation =
                         WindowStartupLocation.CenterOwner,
                     Background =
-                        EditionTheme.WindowBackground(edition),
-                    Content = Create(bundleRoot)
+                        EditionTheme.WindowBackground(edition)
                 };
+                dashboard.Content = Create(
+                    bundleRoot,
+                    delegate(string targetId)
+                    {
+                        ApplyHostSelection(host, targetId);
+                        dashboard.Close();
+                    }
+                );
                 Window owner = Window.GetWindow(host);
                 if (owner != null)
                 {
@@ -67,6 +74,14 @@ namespace LlmFoundationInstaller
         }
 
         public static UserControl Create(string bundleRoot)
+        {
+            return Create(bundleRoot, null);
+        }
+
+        private static UserControl Create(
+            string bundleRoot,
+            Action<string> selectTarget
+        )
         {
             EditionProfile edition = EditionProfile.LoadEmbedded();
             bool owner = edition.owner_controlled;
@@ -160,7 +175,7 @@ namespace LlmFoundationInstaller
             };
             identity.Children.Add(logo);
             identity.Children.Add(Label(
-                owner ? "SIGNAL CONTROL" : "AI FOUNDATION",
+                owner ? "КОНТУР ВЛАДЕЛЬЦА" : "РАБОЧАЯ СРЕДА ИИ",
                 owner ? accent : Color.FromRgb(20, 107, 90),
                 10,
                 FontWeights.Bold,
@@ -176,8 +191,8 @@ namespace LlmFoundationInstaller
                 new Thickness(0, 6, 0, 0)
             ));
             identity.Children.Add(Label(
-                edition.edition_id.ToUpperInvariant() + " · " +
-                    edition.product_role.ToUpperInvariant(),
+                EditionLabel(edition) + " · " +
+                    ProductLabel(edition),
                 muted,
                 10,
                 FontWeights.Normal,
@@ -199,16 +214,42 @@ namespace LlmFoundationInstaller
             Grid.SetRow(navigation, 2);
             railLayout.Children.Add(navigation);
 
-            TextBlock railFooter = Label(
+            StackPanel railFooter = new StackPanel();
+            TextBlock boundary = Label(
                 owner
-                    ? "OWNER CONTROLLED\nDISTRIBUTION DISALLOWED"
-                    : "K-7 · EMPLOYEE EDITION\nLOCAL-FIRST OPERATION",
+                    ? "ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА\nРАСПРОСТРАНЕНИЕ ЗАПРЕЩЕНО"
+                    : "K-7 · ДЛЯ СОТРУДНИКОВ\nЛОКАЛЬНАЯ РАБОТА",
                 owner ? Color.FromRgb(252, 122, 77) : secondary,
                 10,
                 FontWeights.SemiBold,
                 "Cascadia Mono"
             );
-            railFooter.LineHeight = 18;
+            boundary.LineHeight = 18;
+            railFooter.Children.Add(boundary);
+            Button closeGuide = new Button
+            {
+                Content = "Вернуться к выбору",
+                Height = 38,
+                Margin = new Thickness(0, 13, 0, 0),
+                Background = Brush(owner
+                    ? Color.FromRgb(16, 52, 58)
+                    : Color.FromRgb(255, 240, 233)),
+                Foreground = Brush(owner
+                    ? accent
+                    : Color.FromRgb(134, 50, 20)),
+                BorderBrush = Brush(accent),
+                BorderThickness = new Thickness(1),
+                Cursor = System.Windows.Input.Cursors.Hand
+            };
+            closeGuide.Click += delegate
+            {
+                Window window = Window.GetWindow(result);
+                if (window != null)
+                {
+                    window.Close();
+                }
+            };
+            railFooter.Children.Add(closeGuide);
             Grid.SetRow(railFooter, 3);
             railLayout.Children.Add(railFooter);
 
@@ -268,8 +309,8 @@ namespace LlmFoundationInstaller
             facts.ColumnDefinitions.Add(new ColumnDefinition());
             facts.ColumnDefinitions.Add(new ColumnDefinition());
             facts.Children.Add(Fact(
-                "EDITION",
-                edition.edition_id.ToUpperInvariant(),
+                "ВЕРСИЯ",
+                EditionLabel(edition).ToUpperInvariant(),
                 panel,
                 line,
                 text,
@@ -278,10 +319,10 @@ namespace LlmFoundationInstaller
                 0
             ));
             facts.Children.Add(Fact(
-                "TARGET SET",
+                "КЛИЕНТЫ",
                 edition.owner_controlled
-                    ? "3 / OWNER"
-                    : "2 / EMPLOYEE",
+                    ? "3 / ВЛАДЕЛЕЦ"
+                    : "2 / СОТРУДНИК",
                 panel,
                 line,
                 text,
@@ -290,7 +331,7 @@ namespace LlmFoundationInstaller
                 1
             ));
             facts.Children.Add(Fact(
-                "BUNDLE",
+                "КОМПЛЕКТ",
                 BundleState(bundleRoot),
                 panel,
                 line,
@@ -327,6 +368,19 @@ namespace LlmFoundationInstaller
                         text,
                         muted,
                         accent,
+                        owner
+                    ));
+                }
+                if (index == 0)
+                {
+                    pageBody.Children.Add(TargetChooser(
+                        edition,
+                        selectTarget,
+                        panel,
+                        line,
+                        text,
+                        accent,
+                        secondary,
                         owner
                     ));
                 }
@@ -413,84 +467,84 @@ namespace LlmFoundationInstaller
         {
             bool owner = edition.owner_controlled;
             string product = edition.product_role == "Installer"
-                ? "Installer"
-                : "Launch Center";
+                ? "установщик"
+                : "центр запуска";
             return new[]
             {
                 new GuidePage
                 {
                     label = "01 / СТАРТ",
-                    eyebrow = "QUICK START / " +
-                        edition.edition_id.ToUpperInvariant(),
-                    title = product == "Installer"
+                    eyebrow = "БЫСТРЫЙ СТАРТ / " +
+                        EditionLabel(edition).ToUpperInvariant(),
+                    title = product == "установщик"
                         ? "Установить среду без лишних шагов"
                         : "Запустить нужный клиент и маршрут",
                     summary = owner
-                        ? "Codex + Claude + OpenCode. Claude остаётся owner-only candidate, пока provider marker не подтверждён."
+                        ? "Codex + Claude + OpenCode. Claude остаётся кандидатом только для владельца, пока маркер провайдера не подтверждён."
                         : "Codex + OpenCode. Два клиента, один понятный рабочий контур.",
-                    steps = product == "Installer"
+                    steps = product == "установщик"
                         ? new[]
                         {
                             "Проверьте найденные клиенты и оставьте выбранными нужные базы.",
-                            "Выберите Direct, системный VPN или SingBox-профиль.",
+                            "Выберите прямое подключение, системный VPN или профиль SingBox.",
                             "Запустите установку. Вход выполняйте уже внутри официального клиента."
                         }
                         : new[]
                         {
                             "Выберите Codex или OpenCode" +
                                 (owner ? "; Claude доступен только владельцу." : "."),
-                            "Укажите Direct, VPN, SingBox HTTP или SingBox HTTPS.",
-                            "Нажмите Launch. Центр запускает только проверенную точную цель."
+                            "Укажите прямое подключение, VPN, SingBox HTTP или SingBox HTTPS.",
+                            "Нажмите «Запустить». Центр запускает только проверенную точную цель."
                         },
-                    note = "Никаких model calls, входов в аккаунт или сетевых загрузок без отдельного действия пользователя."
+                    note = "Никаких вызовов модели, входов в аккаунт или сетевых загрузок без отдельного действия пользователя."
                 },
                 new GuidePage
                 {
                     label = "02 / МАРШРУТЫ",
-                    eyebrow = "ROUTING / PROCESS-LOCAL",
+                    eyebrow = "МАРШРУТИЗАЦИЯ / ТОЛЬКО ПРОЦЕСС",
                     title = "Маршрут меняется только для запуска",
                     summary = "Профиль соединения не выдаёт право использования сервиса и не меняет правила провайдера.",
                     steps = new[]
                     {
-                        "Direct очищает унаследованные proxy-переменные дочернего процесса.",
+                        "Прямое подключение очищает унаследованные прокси-переменные дочернего процесса.",
                         "VPN использует уже активную системную VPN-маршрутизацию.",
-                        "SingBox HTTP/HTTPS поднимает локальный relay и передаёт его только запущенному процессу."
+                        "SingBox HTTP/HTTPS поднимает локальный шлюз и передаёт его только запущенному процессу."
                     },
-                    note = "Маршруты не предназначены для обхода региона, блокировки аккаунта или safeguard policy."
+                    note = "Маршруты не предназначены для обхода региона, блокировки аккаунта или защитных ограничений провайдера."
                 },
                 new GuidePage
                 {
                     label = "03 / БЕЗОПАСНОСТЬ",
-                    eyebrow = "TRUST BOUNDARY / LOCAL",
+                    eyebrow = "ГРАНИЦА ДОВЕРИЯ / ЛОКАЛЬНО",
                     title = "Проверяем байты, не собираем секреты",
                     summary = owner
-                        ? "Owner edition: distribution_allowed=false. Перераспространение запрещено."
-                        : "Employee edition содержит только принятые Codex и OpenCode пакеты.",
+                        ? "Версия владельца: распространение запрещено (distribution_allowed=false)."
+                        : "Версия для сотрудников содержит только принятые пакеты Codex и OpenCode.",
                     steps = new[]
                     {
-                        "Каждый пакет и runtime сверяются с embedded manifest и SHA-256.",
+                        "Каждый пакет и среда выполнения сверяются со встроенным манифестом и SHA-256.",
                         "Авторизация, OAuth, cookies и API-ключи остаются внутри официальных клиентов.",
                         owner
-                            ? "Наличие Claude-пакета не означает provider PASS; состояние отображается отдельно."
+                            ? "Наличие пакета Claude не означает допуск провайдера; состояние отображается отдельно."
                             : "Установщик не содержит Claude и не предлагает сотруднику общий аккаунт."
                     },
                     note = owner
-                        ? "OWNER CONTROLLED · distribution_allowed=false"
-                        : "Отдельный аккаунт каждого сотрудника; shared credentials запрещены."
+                        ? "ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА · распространение запрещено (distribution_allowed=false)"
+                        : "Отдельный аккаунт каждого сотрудника; общие учётные данные запрещены."
                 },
                 new GuidePage
                 {
                     label = "04 / ВОССТАНОВЛЕНИЕ",
-                    eyebrow = "RECOVERY / EVIDENCE",
-                    title = "Rollback сохраняет пользовательские данные",
+                    eyebrow = "ВОССТАНОВЛЕНИЕ / ПРОВЕРКА",
+                    title = "Восстановление сохраняет пользовательские данные",
                     summary = "Отчёты и резервные копии лежат локально в профиле пользователя.",
                     steps = new[]
                     {
                         "Откройте %USERPROFILE%\\.llm-foundation\\reports\\ и найдите последний отчёт.",
-                        "Запустите doctor для нужной базы; при ошибке используйте rollback.",
-                        "Rollback возвращает управляемую поверхность, не удаляя проекты, историю и авторизацию."
+                        "Запустите диагностику нужной базы; при ошибке используйте восстановление.",
+                        "Восстановление возвращает управляемую поверхность, не удаляя проекты, историю и авторизацию."
                     },
-                    note = "При нарушении SHA-256 или layout запуск блокируется; повреждённый runtime автоматически не перезаписывается."
+                    note = "При нарушении SHA-256 или структуры файлов запуск блокируется; повреждённая среда выполнения автоматически не перезаписывается."
                 }
             };
         }
@@ -502,8 +556,166 @@ namespace LlmFoundationInstaller
                 "bundle-manifest.json"
             );
             return File.Exists(manifest)
-                ? "MANIFEST READY"
-                : "EMBEDDED";
+                ? "МАНИФЕСТ ГОТОВ"
+                : "ВСТРОЕНО";
+        }
+
+        internal static bool ApplyHostSelection(
+            UserControl host,
+            string targetId
+        )
+        {
+            ListBox targetList = host.FindName(
+                "LaunchTargetList"
+            ) as ListBox;
+            if (targetList != null)
+            {
+                return LaunchCenterActions.SelectTarget(
+                    host,
+                    targetId
+                );
+            }
+            string prefix = targetId.StartsWith(
+                    "codex",
+                    StringComparison.Ordinal
+                )
+                ? "Codex"
+                : (targetId.StartsWith(
+                        "claude",
+                        StringComparison.Ordinal
+                    )
+                    ? "Claude"
+                    : (targetId.StartsWith(
+                            "opencode",
+                            StringComparison.Ordinal
+                        )
+                        ? "OpenCode"
+                        : null));
+            CheckBox selected = String.IsNullOrEmpty(prefix)
+                ? null
+                : host.FindName(prefix + "Selected") as CheckBox;
+            if (selected == null || !selected.IsEnabled)
+            {
+                return false;
+            }
+            selected.IsChecked = true;
+            return true;
+        }
+
+        private static Border TargetChooser(
+            EditionProfile edition,
+            Action<string> selectTarget,
+            Color panel,
+            Color line,
+            Color text,
+            Color accent,
+            Color secondary,
+            bool owner
+        )
+        {
+            Border chooser = Card(panel, line, 14, owner ? 6 : 11);
+            chooser.Margin = new Thickness(0, 15, 0, 0);
+            StackPanel body = new StackPanel();
+            body.Children.Add(Label(
+                "ВЫБРАТЬ КЛИЕНТ В ГЛАВНОМ ОКНЕ",
+                owner ? accent : Color.FromRgb(20, 107, 90),
+                10,
+                FontWeights.Bold,
+                "Cascadia Mono"
+            ));
+            WrapPanel actions = new WrapPanel
+            {
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            AddTargetButton(
+                actions,
+                "Выбрать Codex",
+                "codex-desktop",
+                selectTarget,
+                text,
+                accent,
+                owner
+            );
+            if (edition.owner_controlled)
+            {
+                AddTargetButton(
+                    actions,
+                    "Выбрать Claude",
+                    "claude-code",
+                    selectTarget,
+                    text,
+                    Color.FromRgb(252, 122, 77),
+                    owner
+                );
+            }
+            AddTargetButton(
+                actions,
+                "Выбрать OpenCode",
+                "opencode-cli",
+                selectTarget,
+                text,
+                secondary,
+                owner
+            );
+            body.Children.Add(actions);
+            chooser.Child = body;
+            return chooser;
+        }
+
+        private static void AddTargetButton(
+            Panel actions,
+            string label,
+            string targetId,
+            Action<string> selectTarget,
+            Color text,
+            Color accent,
+            bool owner
+        )
+        {
+            Button button = new Button
+            {
+                Content = label,
+                Height = 38,
+                Padding = new Thickness(13, 0, 13, 0),
+                Margin = new Thickness(0, 0, 9, 0),
+                Background = Brush(owner
+                    ? Color.FromRgb(16, 52, 58)
+                    : Colors.White),
+                Foreground = Brush(text),
+                BorderBrush = Brush(accent),
+                BorderThickness = new Thickness(1),
+                Cursor = System.Windows.Input.Cursors.Hand
+            };
+            button.Click += delegate
+            {
+                if (selectTarget != null)
+                {
+                    selectTarget(targetId);
+                }
+                else
+                {
+                    Window window = Window.GetWindow(button);
+                    if (window != null)
+                    {
+                        window.Close();
+                    }
+                }
+            };
+            actions.Children.Add(button);
+        }
+
+        private static string EditionLabel(EditionProfile edition)
+        {
+            return edition.owner_controlled
+                ? "Владелец"
+                : "Для сотрудников";
+        }
+
+        private static string ProductLabel(EditionProfile edition)
+        {
+            return edition.product_role == "Installer"
+                ? "УСТАНОВЩИК"
+                : "ЦЕНТР ЗАПУСКА";
         }
 
         private static Border Fact(

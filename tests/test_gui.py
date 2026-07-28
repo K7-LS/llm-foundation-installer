@@ -4373,10 +4373,10 @@ def test_owner_candidate_input_is_owner_only_and_hash_bound(
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
     employee = (
-        REPOSITORY_ROOT / "docs" / "EMPLOYEE-OPERATOR-GUIDE.md"
+        REPOSITORY_ROOT / "docs" / "ИНСТРУКЦИЯ-СОТРУДНИКУ.md"
     ).read_text(encoding="utf-8").lower()
     owner = (
-        REPOSITORY_ROOT / "docs" / "OWNER-OPERATOR-GUIDE.md"
+        REPOSITORY_ROOT / "docs" / "ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md"
     ).read_text(encoding="utf-8").lower()
     employee = " ".join(employee.split())
     owner = " ".join(owner.split())
@@ -4385,8 +4385,8 @@ def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
     assert "отдельную допустимую учётную запись" in employee
     assert "https://www.anthropic.com/supported-countries" in owner
     assert "https://www.anthropic.com/legal/consumer-terms" in owner
-    assert "region bypass" in owner
-    assert "автоматизированный или без участия человека" in owner
+    assert "обход региона" in owner
+    assert "без участия человека" in owner
     assert "new-provider-eligibility-evidence.ps1" in owner
     assert "providereligibilityevidence" in owner
     assert "7 суток" in owner

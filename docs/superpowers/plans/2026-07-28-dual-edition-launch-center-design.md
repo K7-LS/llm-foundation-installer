@@ -56,10 +56,10 @@ exact verified Desktop or CLI target through one of four explicit routes:
 - `SingBox HTTP`;
 - `SingBox HTTPS`.
 
-The selected route is per launch. OpenCode Desktop and OpenCode CLI are
-separate targets; the Desktop choice cannot fall back to CLI. The Center also
-shows the last doctor result, package identity, rollback readiness, and
-privacy-safe session evidence.
+The selected route is per launch. The current OpenCode choice is CLI-only,
+because the verified employee workflow opens a terminal rather than a desktop
+application. The Center also shows the last doctor result, package identity,
+rollback readiness, and privacy-safe session evidence.
 
 The Center does not turn transport into provider eligibility. A route can be
 technically ready while the provider target remains blocked by its account or
@@ -248,7 +248,7 @@ Implementation follows RED-GREEN-REFACTOR. Tests must prove:
 3. Owner contains Codex, Claude and OpenCode and remains distribution false;
 4. official K-7 vector geometry and exact color tokens are embedded;
 5. both applications build deterministically in PowerShell 7 and 5.1;
-6. OpenCode Desktop never falls back to CLI;
+6. the visible OpenCode choice resolves only to the verified CLI target;
 7. Direct/VPN avoid sing-box and proxy mutation;
 8. HTTP/HTTPS use the verified shared runtime and restore state exactly;
 9. no credential or PII sentinel appears in logs, manifests or binaries;

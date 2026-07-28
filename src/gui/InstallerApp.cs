@@ -1156,7 +1156,7 @@ namespace LlmFoundationInstaller
                         : (row.package_state == "tampered"
                             ? "Пакет повреждён · установка запрещена"
                             : (row.package_state == "owner_candidate"
-                                ? "Owner-only · provider marker не проверен"
+                                ? "Только владельцу · маркер провайдера не проверен"
                                 : (row.package_state == "policy_blocked"
                                 ? "Допуск провайдера истёк или недействителен"
                                 : (row.client_state == "present_unbound"
@@ -1177,9 +1177,9 @@ namespace LlmFoundationInstaller
                         ? "Пакет проверен. Поддерживаемая версия клиента: " +
                             row.supported_version
                         : (row.package_state == "owner_candidate"
-                            ? "Пакет доступен только Owner edition. Допуск провайдера установщик не подтверждает."
+                            ? "Пакет доступен только в версии владельца. Установщик не подтверждает допуск провайдера."
                             : (row.package_state == "policy_blocked"
-                            ? "Повторите проверку Supported Regions Policy и соберите новый подписанный installer."
+                            ? "Повторите проверку политики поддерживаемых регионов и соберите новый подписанный установщик."
                             : null));
                     if (badge != null)
                     {
@@ -1214,7 +1214,7 @@ namespace LlmFoundationInstaller
                     ? "Компоненты готовы. Следующий шаг — проверяемый план изменений."
                     : (catalog.provider_eligibility == "INVALID_OR_EXPIRED"
                         ? "Установка Claude заблокирована: допуск провайдера истёк или недействителен."
-                        : "Установка заблокирована: нет принятых target-пакетов.");
+                        : "Установка заблокирована: нет принятых пакетов клиентов.");
                 statusText.Foreground = new SolidColorBrush(
                     catalog.install_enabled
                         ? Color.FromRgb(22, 122, 88)
@@ -1338,10 +1338,6 @@ namespace LlmFoundationInstaller
             bool interactive
         )
         {
-            if (!interactive)
-            {
-                return;
-            }
             ListBox targetList = view.FindName(
                 "LaunchTargetList"
             ) as ListBox;
@@ -1365,6 +1361,15 @@ namespace LlmFoundationInstaller
             RadioButton https = view.FindName(
                 "RouteHttps"
             ) as RadioButton;
+            TextBlock selectedClientName = view.FindName(
+                "SelectedClientName"
+            ) as TextBlock;
+            TextBlock selectedRouteName = view.FindName(
+                "SelectedRouteName"
+            ) as TextBlock;
+            TextBlock selectedProviderName = view.FindName(
+                "SelectedProviderName"
+            ) as TextBlock;
             if (targetList == null || launch == null)
             {
                 return;
@@ -1377,14 +1382,69 @@ namespace LlmFoundationInstaller
                     ? null
                     : selected.Tag as string;
                 launch.IsEnabled = !String.IsNullOrWhiteSpace(targetId);
-                launch.Content = String.IsNullOrWhiteSpace(targetId)
-                    ? "SELECT CLIENT"
-                    : "LAUNCH SELECTED  →";
+                launch.Content = SelectionLabel(targetId);
+                if (selectedClientName != null)
+                {
+                    selectedClientName.Text =
+                        TargetDisplayName(targetId);
+                }
+                if (selectedProviderName != null)
+                {
+                    selectedProviderName.Text =
+                        TargetProviderName(targetId);
+                }
+            };
+            Action refreshRoute = delegate
+            {
+                string route = direct != null &&
+                    direct.IsChecked == true
+                    ? "Direct"
+                    : (vpn != null && vpn.IsChecked == true
+                        ? "VPN"
+                        : (http != null && http.IsChecked == true
+                            ? "SingBoxHttp"
+                            : "SingBoxHttps"));
+                string routeLabel = RouteLabel(route);
+                if (selectedRouteName != null)
+                {
+                    selectedRouteName.Text =
+                        routeLabel.ToUpperInvariant();
+                }
+                if (routeStatus != null)
+                {
+                    routeStatus.Text = routeLabel + " · готово";
+                }
             };
             targetList.SelectionChanged += delegate
             {
                 refreshLabel();
             };
+            RoutedEventHandler routeChanged = delegate
+            {
+                refreshRoute();
+            };
+            if (direct != null)
+            {
+                direct.Checked += routeChanged;
+            }
+            if (vpn != null)
+            {
+                vpn.Checked += routeChanged;
+            }
+            if (http != null)
+            {
+                http.Checked += routeChanged;
+            }
+            if (https != null)
+            {
+                https.Checked += routeChanged;
+            }
+            refreshLabel();
+            refreshRoute();
+            if (!interactive)
+            {
+                return;
+            }
             launch.Click += async delegate
             {
                 ListBoxItem selected =
@@ -1432,7 +1492,8 @@ namespace LlmFoundationInstaller
                 launch.IsEnabled = false;
                 if (routeStatus != null)
                 {
-                    routeStatus.Text = route + " / STARTING";
+                    routeStatus.Text = RouteLabel(route) +
+                        " · запуск";
                 }
                 LauncherSessionResult result = await Task.Run(
                     () => ClientLauncher.StartAndWait(
@@ -1444,13 +1505,13 @@ namespace LlmFoundationInstaller
                 );
                 if (routeStatus != null)
                 {
-                    routeStatus.Text = result.transport + " / " +
-                        result.status;
+                    routeStatus.Text = RouteLabel(result.transport) +
+                        " · " + ResultLabel(result.status);
                 }
                 if (evidenceStatus != null)
                 {
                     evidenceStatus.Text = result.reason ??
-                        "EXACT CLIENT VERIFIED";
+                        "Точный клиент проверен";
                     evidenceStatus.Foreground = new SolidColorBrush(
                         result.status == "PASS"
                             ? Color.FromRgb(119, 203, 185)
@@ -1460,12 +1521,215 @@ namespace LlmFoundationInstaller
                 if (rollbackStatus != null)
                 {
                     rollbackStatus.Text = result.cleanup_verified
-                        ? "CLEANUP VERIFIED"
-                        : "CLEANUP UNPROVEN";
+                        ? "Очистка подтверждена"
+                        : "Очистка не подтверждена";
                 }
                 refreshLabel();
             };
-            refreshLabel();
+        }
+
+        internal static bool SelectTarget(
+            UserControl view,
+            string targetId
+        )
+        {
+            ListBox targetList = view.FindName(
+                "LaunchTargetList"
+            ) as ListBox;
+            if (targetList == null)
+            {
+                return false;
+            }
+            foreach (object candidate in targetList.Items)
+            {
+                ListBoxItem item = candidate as ListBoxItem;
+                if (item != null && String.Equals(
+                        item.Tag as string,
+                        targetId,
+                        StringComparison.Ordinal
+                    ))
+                {
+                    targetList.SelectedItem = item;
+                    item.ApplyTemplate();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        internal static Dictionary<string, object> DescribeSelection(
+            UserControl view
+        )
+        {
+            ListBox targetList = view.FindName(
+                "LaunchTargetList"
+            ) as ListBox;
+            Button launch = view.FindName("LaunchSelected") as Button;
+            TextBlock client = view.FindName(
+                "SelectedClientName"
+            ) as TextBlock;
+            TextBlock provider = view.FindName(
+                "SelectedProviderName"
+            ) as TextBlock;
+            TextBlock route = view.FindName(
+                "SelectedRouteName"
+            ) as TextBlock;
+            ListBoxItem selected = targetList == null
+                ? null
+                : targetList.SelectedItem as ListBoxItem;
+            Border frame = null;
+            if (selected != null)
+            {
+                selected.ApplyTemplate();
+                frame = selected.Template == null
+                    ? null
+                    : selected.Template.FindName(
+                        "SelectionFrame",
+                        selected
+                    ) as Border;
+            }
+            bool visible = frame != null &&
+                frame.BorderThickness.Left >= 2 &&
+                frame.BorderBrush != null &&
+                frame.BorderBrush != Brushes.Transparent;
+            Dictionary<string, object> state =
+                new Dictionary<string, object>();
+            state["selected_target"] = selected == null
+                ? null
+                : selected.Tag as string;
+            state["button_content"] = launch == null
+                ? null
+                : Convert.ToString(
+                    launch.Content,
+                    CultureInfo.InvariantCulture
+                );
+            state["button_enabled"] =
+                launch != null && launch.IsEnabled;
+            state["selection_visual"] =
+                visible ? "VISIBLE" : "MISSING";
+            state["client_display"] =
+                client == null ? null : client.Text;
+            state["provider_display"] =
+                provider == null ? null : provider.Text;
+            state["route_display"] =
+                route == null ? null : route.Text;
+            return state;
+        }
+
+        private static string SelectionLabel(string targetId)
+        {
+            if (String.IsNullOrWhiteSpace(targetId))
+            {
+                return "Выберите клиент";
+            }
+            if (targetId.StartsWith(
+                    "codex",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "Запустить Codex →";
+            }
+            if (targetId.StartsWith(
+                    "claude",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "Запустить Claude →";
+            }
+            if (targetId.StartsWith(
+                    "opencode",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "Запустить OpenCode →";
+            }
+            return "Запустить выбранный клиент →";
+        }
+
+        private static string TargetDisplayName(string targetId)
+        {
+            if (String.IsNullOrWhiteSpace(targetId))
+            {
+                return "НЕ ВЫБРАНО";
+            }
+            if (targetId.StartsWith(
+                    "codex",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "CODEX";
+            }
+            if (targetId.StartsWith(
+                    "claude",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "CLAUDE";
+            }
+            return "OPENCODE CLI";
+        }
+
+        private static string TargetProviderName(string targetId)
+        {
+            if (String.IsNullOrWhiteSpace(targetId))
+            {
+                return "НЕ ВЫБРАН";
+            }
+            if (targetId.StartsWith(
+                    "codex",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "OPENAI";
+            }
+            if (targetId.StartsWith(
+                    "claude",
+                    StringComparison.Ordinal
+                ))
+            {
+                return "ANTHROPIC";
+            }
+            return "ВЫБИРАЕТ КЛИЕНТ";
+        }
+
+        private static string RouteLabel(string route)
+        {
+            return String.Equals(
+                    route,
+                    "Direct",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                ? "Напрямую"
+                : (String.Equals(
+                        route,
+                        "VPN",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                    ? "VPN"
+                    : (String.Equals(
+                            route,
+                            "SingBoxHttp",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                        ? "SingBox HTTP"
+                        : (String.Equals(
+                                route,
+                                "SingBoxHttps",
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                            ? "SingBox HTTPS"
+                            : (route ?? "Маршрут"))));
+        }
+
+        private static string ResultLabel(string status)
+        {
+            return String.Equals(
+                    status,
+                    "PASS",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                ? "готово"
+                : "ошибка";
         }
     }
 
@@ -2327,8 +2591,8 @@ namespace LlmFoundationInstaller
                     status.Text = result.profile.mode == "VPN"
                         ? "VPN сохранён: отсутствие прокси не является ошибкой."
                         : (result.profile.mode == "Direct"
-                            ? "Direct сохранён: прокси отключён."
-                            : "Proxy сохранён; пароль защищён Windows DPAPI.");
+                            ? "Прямое подключение сохранено: прокси отключён."
+                            : "Прокси сохранён; пароль защищён Windows DPAPI.");
                     status.Foreground = new SolidColorBrush(
                         Color.FromRgb(22, 122, 88)
                     );
@@ -2374,7 +2638,7 @@ namespace LlmFoundationInstaller
                 {
                     status.Text = vpn.IsChecked == true
                         ? "VPN: прокси не требуется."
-                        : "Direct: прокси не используется.";
+                        : "Напрямую: прокси не используется.";
                     status.Foreground = new SolidColorBrush(
                         Color.FromRgb(22, 122, 88)
                     );
@@ -2450,8 +2714,8 @@ namespace LlmFoundationInstaller
                         status.Text = result.profile.mode == "VPN"
                             ? "VPN сохранён: отсутствие прокси не является ошибкой."
                             : (result.profile.mode == "Direct"
-                                ? "Direct сохранён: прокси отключён."
-                                : "Proxy сохранён; пароль защищён Windows DPAPI.");
+                                ? "Прямое подключение сохранено: прокси отключён."
+                                : "Прокси сохранён; пароль защищён Windows DPAPI.");
                         status.Foreground = new SolidColorBrush(
                             Color.FromRgb(22, 122, 88)
                         );
@@ -3246,9 +3510,43 @@ namespace LlmFoundationInstaller
                     previewApp.Shutdown();
                     return 0;
                 }
+                if (args.Length == 2 &&
+                    (args[0] == "--ui-selection-json" ||
+                     args[0] == "--ui-guide-selection-json"))
+                {
+                    if (edition.product_role != "LaunchCenter")
+                    {
+                        WriteError(
+                            "Команда выбора доступна только центру запуска"
+                        );
+                        return 2;
+                    }
+                    Application selectionApp = new Application();
+                    UserControl selectionView = InstallerView.Create(
+                        bundleRoot,
+                        false
+                    );
+                    bool selected =
+                        args[0] == "--ui-guide-selection-json"
+                            ? OperatorGuideDashboard.ApplyHostSelection(
+                                selectionView,
+                                args[1]
+                            )
+                            : LaunchCenterActions.SelectTarget(
+                                selectionView,
+                                args[1]
+                            );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchCenterActions.DescribeSelection(
+                            selectionView
+                        )
+                    ));
+                    selectionApp.Shutdown();
+                    return selected ? 0 : 20;
+                }
                 if (args.Length != 0)
                 {
-                    WriteError("Unsupported command");
+                    WriteError("Неподдерживаемая команда");
                     return 2;
                 }
 

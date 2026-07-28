@@ -24,7 +24,6 @@ REQUIRED_PILOT_CHECKS = (
     "installer_to_launch_center_handoff",
     "codex_desktop",
     "codex_cli",
-    "opencode_desktop",
     "opencode_cli",
     "opencode_oauth",
     "direct_mode",

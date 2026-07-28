@@ -97,7 +97,7 @@ def _validate_stable_root(
         "hub-canary-evidence.json",
         "bundle-manifest.json",
         "components.lock.json",
-        "EMPLOYEE-INSTALL.md",
+        "ИНСТРУКЦИЯ-СОТРУДНИКУ.md",
         "SHA256SUMS",
     }
     missing = sorted(required.difference(by_name))

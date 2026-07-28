@@ -1,207 +1,152 @@
-# K-7 AI Foundation
+# K-7 — установщик и центр запуска ИИ
 
-Windows 10/11 current-user installer and daily Launch Center in two explicitly
-separated editions:
+Локальный установщик Windows 10/11 и ежедневный центр запуска в двух строго
+разделённых версиях:
 
-- **Employee** — Codex Desktop/CLI and OpenCode Desktop/CLI; distributable
-  only after the clean-PC and immutable-publication gates;
-- **Owner** — Codex, OpenCode and an owner-only Claude candidate;
-  `distribution_allowed=false` while `FULL_RELEASE_CLAUDE=NOT_PASS`.
+- **для сотрудников** — Codex Desktop/CLI и OpenCode CLI; выдача разрешается
+  только после пилота на чистом ПК и неизменяемой публикации;
+- **для владельца** — Codex, OpenCode и кандидат Claude только для владельца;
+  `distribution_allowed=false`, пока `FULL_RELEASE_CLAUDE=NOT_PASS`.
 
-Each edition is one hash-bound bundle containing Installer, Launch Center,
-`bundle-manifest.json` and the pinned sing-box runtime. Both WPF products are
-DPI-aware, require no administrator rights and never collect LLM credentials.
+Каждая версия — единый комплект с двумя EXE, `bundle-manifest.json` и
+закреплённой средой SingBox. Программы работают от текущего пользователя,
+не требуют прав администратора и не собирают учётные данные LLM.
 
-## Employee workflow
+## Что делает установщик
 
-1. Check Windows, accepted packages, and installed clients.
-2. Select `Direct`, `VPN`, `SingBox HTTP`, or `SingBox HTTPS`.
-3. Download and verify missing official clients.
-4. Show the deterministic base plan.
-5. Backup, install, run `doctor`, and rollback automatically on failure.
-6. Open the installed clients for interactive authorization.
-7. Write a local result and show `$sync-base` / rollback guidance.
+1. Проверяет Windows, принятые пакеты и установленные официальные клиенты.
+2. Позволяет выбрать нужные клиенты и маршрут.
+3. Скачивает и проверяет отсутствующие официальные клиенты.
+4. Показывает детерминированный план изменений.
+5. Создаёт резервную копию, устанавливает, запускает диагностику и при ошибке
+   автоматически восстанавливает предыдущее состояние.
+6. Открывает официальный клиент для интерактивного входа пользователя.
+7. Записывает локальный отчёт.
 
-Exact client versions are left unchanged. Older versions can be upgraded.
-Newer or different versions are never downgraded automatically; only the
-affected base is blocked. Codex Desktop uses the exact Microsoft Store Product
-ID and validates package name, publisher, architecture, and `SignatureKind`.
-No ambiguous Store/winget search is used.
+Точная поддерживаемая версия не меняется. Старую версию можно обновить.
+Более новая версия автоматически не понижается.
 
-Codex CLI `0.146.0-alpha.3.1` is installed by the `install.ps1` asset attached
-to the same official OpenAI release tag. The root installer currently published
-at `chatgpt.com/codex/install.ps1` rejects the two-part alpha suffix, so it is
-not used for this pinned version. The release-specific script is downloaded to
-staging, checked against SHA-256
-`397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f`,
-AST-checked, and only then executed with
-`-Release 0.146.0-alpha.3.1`.
+## Маршруты
 
-Foundation provides `plan`, `install`, `doctor`, `inventory`, and `rollback`.
-It rejects corrupt ZIPs, extra files, path traversal, reparse-point paths,
-protected-path overlap, incompatible engines, concurrent mutations, and
-unsupported clients before changing the target home.
+- **Напрямую** — у дочернего процесса очищаются унаследованные
+  прокси-переменные.
+- **VPN** — используется уже активная системная маршрутизация.
+- **SingBox HTTP/HTTPS** — локальный маршрут только для запущенного процесса.
 
-## Connection and credentials
+Пароль прокси защищается Windows DPAPI для текущего пользователя. Он не
+попадает в аргументы командной строки, манифесты, отчёты или логи.
 
-- **Direct** — inherited proxy variables are cleared.
-- **VPN** — uses system routing; absence of proxy is expected and never a
-  blocker.
-- **SingBox HTTP/HTTPS** — process-local routing through the pinned runtime.
+Маршрут не подтверждает право использования сервиса и не предназначен для
+обхода региона, блокировки аккаунта или защитных ограничений провайдера.
 
-Proxy credentials are protected with Windows DPAPI for the current user. They
-are passed to child processes only through temporary environment variables and
-never written to argv, manifests, evidence, or logs. Verbose `curl` is not
-used.
+## Границы данных
 
-LLM authorization remains inside Codex and OpenCode. In Owner edition Claude
-authorization also stays inside Claude itself. Existing auth, sessions,
-memories, state, projects, and external workspaces are outside the managed
-surface and remain untouched. Consumer devices never upload feedback,
-telemetry, session reports, or local changes.
+Авторизация остаётся внутри официальных клиентов. Установщик не управляет
+проектами, историей, сессиями, cookies, памятью или внешними рабочими папками.
+Потребительские устройства не отправляют изменения, отчёты или телеметрию
+обратно в репозиторий.
 
-## Distribution modes
+## Режимы сборки
 
 ```text
 -DistributionMode Preview | InternalUnsigned | PublicSigned
 ```
 
-- `Preview` — development and synthetic validation only.
-- `InternalUnsigned` — controlled employee distribution after product,
-  runtime, target and clean-PC evidence passes. Windows may show
-  `Unknown Publisher` or SmartScreen.
-- `PublicSigned` — also requires a valid timestamped Authenticode signature.
+- `Preview` — разработка и синтетические проверки.
+- `InternalUnsigned` — контролируемая внутренняя выдача после всех гейтов.
+- `PublicSigned` — дополнительно требует действующую подпись Authenticode.
 
-The internal unsigned manifest explicitly records:
+Публично подписанный вариант сейчас отложен владельцем. Это не блокирует
+внутренний неподписанный релиз после фактического пилота.
 
-```json
-{
-  "edition_id": "Employee",
-  "distribution_mode": "InternalUnsigned",
-  "owner_controlled": false,
-  "distribution_allowed": true,
-  "targets": ["codex", "opencode"]
-}
-```
+## Сборка и тесты
 
-`PublicSigned` is implemented but currently `DEFERRED_BY_OWNER`; lack of a
-certificate does not block `InternalUnsigned`.
-
-## Build and test
-
-The release build host needs Python 3.12, PowerShell 7, Windows PowerShell
-5.1, and Microsoft Visual Studio Build Tools with the Roslyn/MSBuild
-component. Roslyn deterministic compilation is mandatory; the legacy
-Framework `csc.exe` is rejected rather than producing unstable EXE bytes.
+Нужны Python 3.12, PowerShell 7, Windows PowerShell 5.1 и Roslyn из Visual
+Studio Build Tools.
 
 ```powershell
 py -3.12 -m pytest -q
 py -3.12 .\tools\run-acceptance.py
+```
 
+Предварительная сборка интерфейса:
+
+```powershell
 pwsh -NoProfile -File .\tools\build-gui.ps1 `
-  -OutputRoot .\dist\gui-preview `
+  -OutputRoot .\dist\предпросмотр `
+  -Edition Employee `
+  -ProductRole Installer `
   -DistributionMode Preview
 ```
 
-`run-acceptance.py` refuses a dirty Git worktree. Its evidence binds the
-commit, tree, tracked source groups, both PowerShell builds, test counts and
-the exact three engine files.
+`run-acceptance.py` требует чистое Git-дерево и связывает evidence с коммитом,
+деревом исходников, обеими версиями PowerShell и точными файлами движка.
 
-### Foundation 0.2.1 release
-
-The employee build never rebuilds Foundation from the current worktree. First
-prepare the exact synthetic-accepted engine bytes:
-
-```powershell
-py -3.12 .\tools\promote_foundation.py `
-  --engine-root .\.work\acceptance\engine-ps7 `
-  --acceptance-evidence .\dist\foundation-acceptance.json `
-  --output .\dist\foundation-stable-0.2.1
-```
-
-Publish those assets under `foundation-engine-v0.2.1`, then run:
-
-```powershell
-py -3.12 .\tools\verify_foundation_release.py `
-  --manifest .\dist\foundation-stable-0.2.1\release-manifest.json `
-  --asset .\dist\foundation-stable-0.2.1\foundation-engine-0.2.1.zip `
-  --output .\dist\foundation-stable-0.2.1\release-verification.json
-
-py -3.12 .\tools\create_foundation_package_acceptance.py `
-  --manifest .\dist\foundation-stable-0.2.1\release-manifest.json `
-  --evidence .\dist\foundation-stable-0.2.1\acceptance-evidence.json `
-  --release-verification `
-    .\dist\foundation-stable-0.2.1\release-verification.json `
-  --output .\dist\foundation-stable-0.2.1\package-acceptance.json
-```
-
-### Internal Employee candidate
-
-After Codex, OpenCode and Foundation package acceptance is complete, build the
-two-product edition with the exact pinned runtime:
+## Внутренний кандидат для сотрудников
 
 ```powershell
 pwsh -NoProfile -File .\tools\build-edition.ps1 `
-  -OutputRoot .\dist\employee-internal `
+  -OutputRoot .\dist\для-сотрудников `
   -Edition Employee `
   -DistributionMode InternalUnsigned `
-  -PackageRoot <accepted-codex-opencode-packages> `
-  -FoundationPackageRoot <accepted-foundation-package> `
+  -PackageRoot <принятые-пакеты-codex-opencode> `
+  -FoundationPackageRoot <принятый-пакет-foundation> `
   -ClientSourcesLock .\client-sources.lock.json `
   -RuntimeSourcesLock .\runtime-sources.lock.json `
   -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
 ```
 
-Employee edition never contains Claude or provider-eligibility evidence.
-Each target manifest must reference the same accepted Foundation engine; a
-mismatch blocks the build.
+Версия для сотрудников никогда не содержит Claude или свидетельство допуска
+провайдера Claude.
 
-### Hub canary, draft, pilot, publication
+## Релизный конвейер Employee 0.3.0
+
+Изолированный контрольный прогон без вызовов модели:
 
 ```powershell
 py -3.12 .\tools\hub_canary.py `
   --execute-approved-hub-canary `
-  --bundle .\dist\employee-internal `
-  --output .\dist\employee-hub-canary.json
-
-py -3.12 .\tools\installer_release.py `
-  --bundle .\dist\employee-internal `
-  --hub-canary .\dist\employee-hub-canary.json `
-  --output .\dist\employee-draft-0.3.0
+  --bundle .\dist\для-сотрудников `
+  --output .\dist\контрольный-прогон.json
 ```
 
-The canary uses temporary isolated homes only. The clean-PC pilot then uses
-the exact draft Installer, Launch Center and runtime. Every pilot check is
-explicitly confirmed in a PII-free record made by `pilot_evidence.py`; no
-machine name, account, IP address, token or credential is stored. Run
-`py -3.12 .\tools\pilot_evidence.py --help` for the complete explicit
-confirmation inventory. After a passing pilot:
+Подготовка точного draft-набора:
+
+```powershell
+py -3.12 .\tools\installer_release.py `
+  --bundle .\dist\для-сотрудников `
+  --hub-canary .\dist\контрольный-прогон.json `
+  --output .\dist\черновик-employee-0.3.0
+```
+
+Пилот выполняется на чистой Windows x64 без прав администратора теми же
+байтами. Он обязан проверить оба приложения, Codex/OpenCode, OAuth,
+прямой маршрут, VPN, SingBox HTTP/HTTPS, инструкцию, диагностику,
+инвентаризацию, восстановление и сохранность пользовательских данных.
+
+После подтверждённого пилота:
 
 ```powershell
 py -3.12 .\tools\pilot_release.py `
-  --draft .\dist\employee-draft-0.3.0 `
-  --pilot-evidence <pilot-evidence.json> `
-  --output .\dist\employee-stable-0.3.0
+  --draft .\dist\черновик-employee-0.3.0 `
+  --pilot-evidence <свидетельство-пилота.json> `
+  --output .\dist\стабильный-employee-0.3.0
 ```
 
-Final metadata and evidence are necessarily produced after the pilot, while
-both EXE files and the sing-box archive remain byte-for-byte identical to the
-draft and pilot inputs. Publish under tag `employee-v0.3.0`. After immutable
-publication, verify the release and every asset:
+Публикация выполняется под тегом `employee-v0.3.0`. После включения
+неизменяемости каждый удалённый файл и attestation проверяются:
 
 ```powershell
 py -3.12 .\tools\installer_release_verifier.py `
-  --stable-root .\dist\employee-stable-0.3.0 `
-  --output .\dist\employee-v0.3.0-release-verification.json
+  --stable-root .\dist\стабильный-employee-0.3.0 `
+  --output .\dist\проверка-релиза-employee-0.3.0.json
 ```
 
-`FOUNDATION_SYNTHETIC: PASS` covers fake homes only. It is not a provider
-canary, clean-PC pilot, or final Employee release.
+Синтетический PASS или hosted CI не заменяют интерактивный пилот на чистом ПК.
 
-Role-specific operation and release procedures:
+## Инструкции
 
-- [Employee operator guide](docs/EMPLOYEE-OPERATOR-GUIDE.md)
-- [Owner operating guide](docs/OWNER-OPERATOR-GUIDE.md)
+- [Инструкция сотруднику](docs/ИНСТРУКЦИЯ-СОТРУДНИКУ.md)
+- [Инструкция владельцу](docs/ИНСТРУКЦИЯ-ВЛАДЕЛЬЦУ.md)
 
-Both products also contain an embedded interactive operator dashboard opened
-with **Инструкция** (Employee) or **OPERATING GUIDE** (Owner).
+В обоих приложениях есть встроенная интерактивная кнопка **«Инструкция»**.

@@ -62,18 +62,18 @@ EXPECTED_DRAFT_VERDICTS = {
     "CLEAN_PC_PILOT": "PENDING",
     "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
 }
-INSTALL_GUIDE = """# K-7 AI Employee v0.3.0
+INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.3.0
 
 В комплекте четыре связанные позиции:
 
 - `K7-AI-Foundation-Employee-InternalUnsigned.exe` — установка и обслуживание;
 - `K7-AI-Launch-Center-Employee-InternalUnsigned.exe` — ежедневный запуск;
-- `sing-box-1.13.14-windows-amd64.zip` — hash-locked runtime маршрутов;
+- `sing-box-1.13.14-windows-amd64.zip` — среда маршрутов с проверкой хеша;
 - `bundle-manifest.json` — проверяемые SHA-256 и состав комплекта.
 
 Перед запуском сверить каждый файл с `SHA256SUMS`. Подпись пока внутренняя
-unsigned, поэтому Windows может показать Unknown Publisher или SmartScreen.
-Администратор не требуется. Employee-редакция включает только Codex и
+без цифровой подписи, поэтому Windows может показать «Неизвестный издатель»
+или SmartScreen. Администратор не требуется. Версия для сотрудников включает только Codex и
 OpenCode; Claude в этот релиз не входит.
 """
 
@@ -319,7 +319,7 @@ def prepare_draft_release(
     components_path = output / "components.lock.json"
     _write_new(components_path, _json_bytes(_components(manifest)))
     _write_new(
-        output / "EMPLOYEE-INSTALL.md",
+        output / "ИНСТРУКЦИЯ-СОТРУДНИКУ.md",
         INSTALL_GUIDE.encode("utf-8"),
     )
 
