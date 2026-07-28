@@ -413,7 +413,14 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            return value.Split('/').All(segment =>
+            string normalized = value.EndsWith(
+                "/",
+                StringComparison.Ordinal)
+                ? value.Substring(0, value.Length - 1)
+                : value;
+            return normalized.Length > 0 &&
+                !normalized.Contains("//") &&
+                normalized.Split('/').All(segment =>
                 segment.Length > 0 &&
                 segment != "." &&
                 segment != ".." &&

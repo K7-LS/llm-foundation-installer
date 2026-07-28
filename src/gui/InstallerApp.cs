@@ -2836,6 +2836,44 @@ namespace LlmFoundationInstaller
                     ));
                     return runtime.status == "VERIFIED" ? 0 : 20;
                 }
+                if (args.Length == 6 &&
+                    args[0] == "--write-singbox-config-test-json")
+                {
+                    int listenPort;
+                    if (!Int32.TryParse(args[4], out listenPort))
+                    {
+                        WriteError("Listen port is invalid");
+                        return 2;
+                    }
+                    SingBoxConfigSummary config =
+                        SingBoxConfig.WriteTestConfig(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3],
+                            listenPort,
+                            args[5]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        config
+                    ));
+                    return 0;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--test-singbox-session-json")
+                {
+                    SingBoxSessionResult session =
+                        SingBoxSession.TestCycle(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        session
+                    ));
+                    return session.status == "PASS" ? 0 : 20;
+                }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {
                     return RunSelfTest(bundleRoot);

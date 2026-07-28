@@ -1274,6 +1274,8 @@ $EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
 $LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
 $ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
 $RuntimeBootstrapSource = Join-Path $RepositoryRoot 'src\gui\RuntimeBootstrap.cs'
+$SingBoxConfigSource = Join-Path $RepositoryRoot 'src\gui\SingBoxConfig.cs'
+$SingBoxSessionSource = Join-Path $RepositoryRoot 'src\gui\SingBoxSession.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
@@ -1294,6 +1296,9 @@ $Views = @(
 ) | ForEach-Object {
     Join-Path $RepositoryRoot "src\gui\$_"
 }
+$RoutingDomains = Join-Path (
+    $RepositoryRoot
+) 'src\gui\launcher-routing-domains.json'
 $ApplicationManifest = Join-Path $RepositoryRoot 'src\gui\app.manifest'
 $ApplicationIcon = Join-Path $OutputRoot '.installer.ico'
 & (Join-Path $RepositoryRoot 'tools\build-icon.ps1') `
@@ -1313,6 +1318,7 @@ $CompilerArguments = @(
     "/resource:$TrustedResource,TrustedPackages.json",
     "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
     "/resource:$EffectiveRuntimeSourcesPath,RuntimeSources.lock.json",
+    "/resource:$RoutingDomains,LauncherRoutingDomains.json",
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
@@ -1352,6 +1358,8 @@ $CompilerArguments += @(
     $LaunchTargetSource,
     $ClientLauncherSource,
     $RuntimeBootstrapSource,
+    $SingBoxConfigSource,
+    $SingBoxSessionSource,
     $ConnectionSource,
     $ClientBootstrapSource
 )

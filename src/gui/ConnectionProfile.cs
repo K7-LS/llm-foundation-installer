@@ -447,6 +447,64 @@ namespace LlmFoundationInstaller
             };
         }
 
+        public static T WithProxyCredential<T>(
+            string home,
+            Func<ConnectionProfile, string, T> action
+        )
+        {
+            if (action == null)
+            {
+                throw new ArgumentNullException("action");
+            }
+            ConnectionProfile profile = Load(home).profile;
+            if (profile.mode != "Proxy")
+            {
+                throw new InvalidOperationException(
+                    "A saved proxy profile is required"
+                );
+            }
+            bool authenticated =
+                profile.proxy.auth.mode == "UsernamePassword";
+            byte[] encrypted = null;
+            byte[] plain = null;
+            string password = null;
+            try
+            {
+                if (authenticated)
+                {
+                    string credentialPath = Path.Combine(
+                        StateRoot(home),
+                        "connection.cred"
+                    );
+                    encrypted = Convert.FromBase64String(
+                        File.ReadAllText(
+                            credentialPath,
+                            Encoding.ASCII
+                        ).Trim()
+                    );
+                    plain = ProtectedData.Unprotect(
+                        encrypted,
+                        Entropy,
+                        DataProtectionScope.CurrentUser
+                    );
+                    password = Encoding.Unicode.GetString(plain);
+                }
+                return action(profile, password);
+            }
+            finally
+            {
+                password = null;
+                if (plain != null)
+                {
+                    Array.Clear(plain, 0, plain.Length);
+                }
+                if (encrypted != null)
+                {
+                    Array.Clear(encrypted, 0, encrypted.Length);
+                }
+            }
+        }
+
         private static string StateRoot(string home)
         {
             string fullHome = Path.GetFullPath(home);

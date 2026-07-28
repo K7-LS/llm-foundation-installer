@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "exact_domains": [
+    "accounts.google.com",
+    "challenges.cloudflare.com",
+    "js.stripe.com",
+    "workos.imgix.net"
+  ],
+  "common_suffixes": [
+    "workos.com",
+    "workoscdn.com",
+    "intercom.io",
+    "intercomcdn.com",
+    "sentry.io",
+    "statsig.com"
+  ],
+  "targets": {
+    "codex-cli": [
+      "chatgpt.com",
+      "openai.com",
+      "oaistatic.com",
+      "oaiusercontent.com",
+      "oaistatsig.com",
+      "openaimerge.com"
+    ],
+    "codex-desktop": [
+      "chatgpt.com",
+      "openai.com",
+      "oaistatic.com",
+      "oaiusercontent.com",
+      "oaistatsig.com",
+      "openaimerge.com"
+    ],
+    "claude-code": [
+      "claude.ai",
+      "claude.com",
+      "anthropic.com",
+      "claudeusercontent.com"
+    ],
+    "opencode-cli": [
+      "opencode.ai",
+      "models.dev",
+      "github.com",
+      "githubusercontent.com",
+      "npmjs.org",
+      "openai.com",
+      "oaiusercontent.com",
+      "claude.ai",
+      "anthropic.com"
+    ],
+    "opencode-desktop": [
+      "opencode.ai",
+      "models.dev",
+      "github.com",
+      "githubusercontent.com",
+      "npmjs.org",
+      "openai.com",
+      "oaiusercontent.com",
+      "claude.ai",
+      "anthropic.com"
+    ]
+  }
+}
