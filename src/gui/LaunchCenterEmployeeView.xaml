@@ -141,6 +141,25 @@
               <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
               <RadioButton x:Name="RouteHttp" GroupName="Route" Content="SingBox HTTP" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
               <RadioButton x:Name="RouteHttps" GroupName="Route" Content="SingBox HTTPS" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
+              <Grid x:Name="ProxySettings" Visibility="Collapsed" Margin="0,16,0,0">
+                <StackPanel>
+                  <TextBlock Text="НАСТРОЙКИ SING-BOX" FontFamily="Cascadia Mono" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,0,0,8" />
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="75" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyHost" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="1"><TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyPort" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyUsername" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="3"><TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource Muted}" /><PasswordBox x:Name="ProxyPassword" Height="32" Margin="0,4,0,0" /></StackPanel>
+                  </Grid>
+                  <TextBlock Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите клиент. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0" />
+                  <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button x:Name="SaveConnection" Content="Сохранить" Padding="10,6" />
+                    <Button x:Name="TestConnection" Content="Сохранить и проверить" Padding="10,6" Margin="8,0,0,0" />
+                    <Button x:Name="StopRoute" Content="Остановить маршрут" Padding="10,6" Margin="8,0,0,0" IsEnabled="False" />
+                  </StackPanel>
+                  <TextBlock x:Name="ConnectionStatus" Text="Выберите маршрут подключения." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,8,0,0" />
+                </StackPanel>
+              </Grid>
             </StackPanel>
           </Border>
           <Border Background="#071E22" CornerRadius="11" Padding="16" Margin="0,15,0,0">

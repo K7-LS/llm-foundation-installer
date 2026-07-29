@@ -2934,14 +2934,117 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
         "RoutedEventHandler checkedHandler", 1
     )[0]
 
-    assert "settings.IsEnabled = isProxy;" in update_mode
-    assert (
-        "settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;"
-        in update_mode
-    )
-    assert update_mode.index("settings.Visibility") < update_mode.index(
+    assert "contract.ProxySettings.IsEnabled = isProxy;" in update_mode
+    assert "contract.ProxySettings.Visibility = isProxy" in update_mode
+    assert update_mode.index("contract.ProxySettings.Visibility") < update_mode.index(
         "if (!isProxy)"
     )
+
+
+CONNECTION_UI_VARIANTS = [
+    ("Employee", "Installer", "InstallerEmployeeView.xaml"),
+    ("Owner", "Installer", "InstallerOwnerView.xaml"),
+    ("Employee", "LaunchCenter", "LaunchCenterEmployeeView.xaml"),
+    ("Owner", "LaunchCenter", "LaunchCenterOwnerView.xaml"),
+]
+
+
+@pytest.fixture(scope="module")
+def connection_ui_bundles(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[tuple[str, str], Path]:
+    """Build each real WPF view once for its connection-state contract."""
+    root = tmp_path_factory.mktemp("connection-ui")
+    return {
+        (edition, product_role): _build_gui_bundle(
+            root / f"{edition.lower()}-{product_role.lower()}",
+            edition=edition,
+            product_role=product_role,
+        )
+        for edition, product_role, _ in CONNECTION_UI_VARIANTS
+    }
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role", "resource"),
+    CONNECTION_UI_VARIANTS,
+)
+def test_four_view_connection_contract(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    edition: str,
+    product_role: str,
+    resource: str,
+):
+    """Changing a view route must expose the same usable HTTPS proxy form."""
+    bundle = connection_ui_bundles[(edition, product_role)]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    result = subprocess.run(
+        [str(executable), "--ui-connection-state-json", "SingBoxHttps"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, resource + ": " + result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["mode"] == "Proxy"
+    assert value["proxy_type"] == "HTTPS"
+    assert value["proxy_settings"] == "Visible"
+    assert value["fields"] == ["server", "port", "login", "password"]
+    assert value["save_enabled"] is True
+    assert value["test_enabled"] is True
+    assert value["stop_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role", "resource"),
+    [
+        ("Employee", "LaunchCenter", "LaunchCenterEmployeeView.xaml"),
+        ("Owner", "LaunchCenter", "LaunchCenterOwnerView.xaml"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("route", "mode", "proxy_type", "proxy_settings"),
+    [
+        ("Direct", "Direct", None, "Collapsed"),
+        ("VPN", "VPN", None, "Collapsed"),
+        ("SingBoxHttp", "Proxy", "HTTP", "Visible"),
+    ],
+)
+def test_launch_center_connection_state(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    edition: str,
+    product_role: str,
+    resource: str,
+    route: str,
+    mode: str,
+    proxy_type: str | None,
+    proxy_settings: str,
+):
+    """Launch Center route IDs must preserve the connection-profile mapping."""
+    bundle = connection_ui_bundles[(edition, product_role)]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    result = subprocess.run(
+        [str(executable), "--ui-connection-state-json", route],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, resource + ": " + result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["mode"] == mode
+    assert value["proxy_type"] == proxy_type
+    assert value["proxy_settings"] == proxy_settings
+    assert value["fields"] == ["server", "port", "login", "password"]
 
 
 def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: Path):
