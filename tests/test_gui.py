@@ -261,6 +261,29 @@ def _codex_cli_source_lock(path: Path, version: str = "1.0.0") -> Path:
     return path
 
 
+def _codex_store_record(path: Path, store_location: Path) -> Path:
+    _write_json(
+        path,
+        {
+            "present": True,
+            "name": "OpenAI.Codex",
+            "publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
+            "signature_kind": "Store",
+            "architecture": "X64",
+            "version": "26.721.4979.0",
+            "package_full_name": (
+                "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+            ),
+            "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
+            "install_location": str(store_location),
+            "application_id": "App",
+            "executable": "app/ChatGPT.exe",
+            "entry_point": "Windows.FullTrustApplication",
+        },
+    )
+    return path
+
+
 def _provider_eligibility_evidence(
     path: Path,
     *,
@@ -2663,6 +2686,49 @@ def test_codex_missing_client_keeps_install_available(
     }
 
 
+def test_codex_store_missing_client_guides_store_without_cli_fallback(
+    tmp_path: Path,
+):
+    bundle = _build_gui_bundle(tmp_path / "bundle")
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    staging = tmp_path / "client-staging"
+    record = tmp_path / "missing-store-record.json"
+    _write_json(record, {"present": False})
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--client-plan-store-record-json",
+            str(home),
+            "codex-desktop",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "GUIDED_STORE",
+        "client_id": "codex-desktop",
+        "supported_version": "store-current",
+        "detected_version": None,
+        "detected_state": "not_checked",
+        "action": "open_store",
+    }
+    assert not staging.exists()
+
+
 @pytest.mark.parametrize("powershell", POWERSHELLS)
 def test_gui_builder_supports_powershell_7_and_5_1(
     tmp_path: Path,
@@ -2822,25 +2888,9 @@ def test_store_only_codex_preflight_accepts_validated_store_record(
         "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
     )
     store_location.mkdir(parents=True)
-    record = tmp_path / "store-record.json"
-    _write_json(
-        record,
-        {
-            "present": True,
-            "name": "OpenAI.Codex",
-            "publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
-            "signature_kind": "Store",
-            "architecture": "X64",
-            "version": "26.721.4979.0",
-            "package_full_name": (
-                "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
-            ),
-            "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
-            "install_location": str(store_location),
-            "application_id": "App",
-            "executable": "app/ChatGPT.exe",
-            "entry_point": "Windows.FullTrustApplication",
-        },
+    record = _codex_store_record(
+        tmp_path / "store-record.json",
+        store_location,
     )
     environment = os.environ.copy()
     environment["PATH"] = str(safe_path)
@@ -2866,6 +2916,46 @@ def test_store_only_codex_preflight_accepts_validated_store_record(
     assert codex["detected_version"] == "26.721.4979.0"
     assert codex["client_state"] == "ready"
     assert codex["client_state"] != "unsupported"
+
+
+def test_store_only_codex_preflight_rejects_tampered_publisher_record(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    store_location = tmp_path / "WindowsApps" / "OpenAI.Codex-fixture"
+    store_location.mkdir(parents=True)
+    record = _codex_store_record(
+        tmp_path / "tampered-store-record.json",
+        store_location,
+    )
+    tampered = json.loads(record.read_text(encoding="utf-8"))
+    tampered["publisher"] = "CN=untrusted-fixture"
+    _write_json(record, tampered)
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert result.stdout == ""
+    assert "Store package identity differs from source lock" in result.stderr
 
 
 def test_cli_fallback_codex_preflight_accepts_detected_version(
