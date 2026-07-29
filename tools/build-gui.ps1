@@ -1521,6 +1521,9 @@ $Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
 $EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
 $EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
 $LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
+$VsCodeIntegrationSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\VsCodeIntegration.cs'
 $ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
 $RuntimeBootstrapSource = Join-Path $RepositoryRoot 'src\gui\RuntimeBootstrap.cs'
 $SingBoxConfigSource = Join-Path $RepositoryRoot 'src\gui\SingBoxConfig.cs'
@@ -1603,6 +1606,7 @@ $CompilerArguments += @(
     $EditionSource,
     $EditionThemeSource,
     $LaunchTargetSource,
+    $VsCodeIntegrationSource,
     $ClientLauncherSource,
     $RuntimeBootstrapSource,
     $SingBoxConfigSource,

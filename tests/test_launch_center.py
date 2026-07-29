@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import textwrap
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,101 @@ def _run_json(bundle: Path, *arguments: str) -> tuple[int, dict[str, object]]:
     )
     assert result.stdout.strip(), result.stderr
     return result.returncode, json.loads(result.stdout)
+
+
+def _launch_target_tags(path: Path) -> set[str]:
+    root = ET.parse(path).getroot()
+    presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xaml = "http://schemas.microsoft.com/winfx/2006/xaml"
+    launch_list = root.find(
+        f".//{{{presentation}}}ListBox"
+        f"[@{{{xaml}}}Name='LaunchTargetList']"
+    )
+    assert launch_list is not None
+    return {
+        item.attrib["Tag"]
+        for item in launch_list.findall(f"{{{presentation}}}ListBoxItem")
+    }
+
+
+def _write_test_only_client_lock(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "official_only": False,
+                "test_only": True,
+                "platform": {
+                    "os": "windows",
+                    "architecture": "x64",
+                    "minimum_build": 19041,
+                },
+                "clients": [
+                    {
+                        "id": "opencode-desktop",
+                        "target": "opencode",
+                        "display_name": "OpenCode Desktop",
+                        "role": "desktop",
+                        "required_for_base": False,
+                        "required_for_employee": True,
+                        "version": "1.0.0",
+                        "source_kind": "download",
+                        "url": (
+                            "http://127.0.0.1:43117/"
+                            "opencode-desktop.exe"
+                        ),
+                        "sha256": "0" * 64,
+                        "artifact_kind": "portable-exe",
+                        "archive_entry": None,
+                        "publisher": None,
+                        "signature_required": False,
+                        "install_mode": "managed-desktop",
+                        "detect_commands": [],
+                        "version_arguments": [],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_vscode_record(
+    path: Path,
+    **overrides: object,
+) -> None:
+    record: dict[str, object] = {
+        "executable_path": r"C:\fixture\Code.exe",
+        "signature_status": "Valid",
+        "signer_subject": (
+            "CN=Microsoft Corporation, O=Microsoft Corporation, "
+            "L=Redmond, S=Washington, C=US"
+        ),
+        "extension_publisher": "OpenAI",
+        "extension_name": "chatgpt",
+        "extension_path": (
+            r"C:\fixture\.vscode\extensions\openai.chatgpt-1.0.0"
+        ),
+        "code_running": False,
+    }
+    record.update(overrides)
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def vscode_test_bundle(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    root = tmp_path_factory.mktemp("vscode-test-bundle")
+    source_lock = root / "client-sources.lock.json"
+    _write_test_only_client_lock(source_lock)
+    return _build(
+        root / "center",
+        edition="Employee",
+        product_role="LaunchCenter",
+        client_lock=source_lock,
+    )
 
 
 def _find_csharp_compiler() -> Path | None:
@@ -154,6 +250,7 @@ def _compile_environment_probe(path: Path) -> None:
                 "codex-desktop",
                 "opencode-cli",
                 "opencode-desktop",
+                "vscode-codex",
             ],
         ),
         (
@@ -164,6 +261,7 @@ def _compile_environment_probe(path: Path) -> None:
                 "claude-code",
                 "opencode-cli",
                 "opencode-desktop",
+                "vscode-codex",
             ],
         ),
     ],
@@ -193,6 +291,198 @@ def test_product_role_exposes_edition_bound_launch_targets(
     assert center_value["product_role"] == "LaunchCenter"
     assert center_value["edition_id"] == edition
     assert center_value["targets"] == expected_targets
+
+
+def test_complete_target_catalog_matches_real_launch_center_cards(
+    tmp_path: Path,
+) -> None:
+    employee = _build(
+        tmp_path / "employee-center",
+        edition="Employee",
+        product_role="LaunchCenter",
+    )
+    owner = _build(
+        tmp_path / "owner-center",
+        edition="Owner",
+        product_role="LaunchCenter",
+    )
+    _, employee_product = _run_json(employee, "--product-json")
+    _, owner_product = _run_json(owner, "--product-json")
+    employee_targets = [
+        "codex-cli",
+        "codex-desktop",
+        "opencode-cli",
+        "opencode-desktop",
+        "vscode-codex",
+    ]
+
+    assert employee_product["targets"] == employee_targets
+    assert _launch_target_tags(
+        REPOSITORY / "src" / "gui" / "LaunchCenterEmployeeView.xaml"
+    ) == set(employee_targets)
+    assert _launch_target_tags(
+        REPOSITORY / "src" / "gui" / "LaunchCenterOwnerView.xaml"
+    ) == set(owner_product["targets"])
+
+
+def test_ui_launch_selection_json_shows_vscode_correlation(
+    tmp_path: Path,
+) -> None:
+    center = _build(
+        tmp_path / "employee-center",
+        edition="Employee",
+        product_role="LaunchCenter",
+    )
+
+    returncode, value = _run_json(
+        center,
+        "--ui-launch-selection-json",
+        "vscode-codex",
+    )
+
+    assert returncode == 0
+    assert value["selected_target"] == "vscode-codex"
+    assert value["selection_visual"] == "VISIBLE"
+    assert value["button_content"] == "Запустить VS Code →"
+    assert value["client_display"] == "VS CODE — CODEX"
+
+
+def test_vscode_trusted_record_resolves_only_from_test_only_bundle(
+    tmp_path: Path,
+    vscode_test_bundle: Path,
+) -> None:
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(record)
+
+    returncode, value = _run_json(
+        vscode_test_bundle,
+        "--resolve-vscode-record-json",
+        str(tmp_path / "home"),
+        str(record),
+    )
+
+    assert returncode == 0
+    assert value["status"] == "RESOLVED"
+    assert value["target_id"] == "vscode-codex"
+    assert value["client_id"] == "codex-desktop"
+    assert value["role"] == "desktop"
+    assert value["launch_mode"] == "executable"
+    assert value["executable_path"] == r"C:\fixture\Code.exe"
+    assert value["extension_path"] == (
+        r"C:\fixture\.vscode\extensions\openai.chatgpt-1.0.0"
+    )
+    assert value["reason"] is None
+
+
+def test_vscode_missing_extension_returns_official_install_action(
+    tmp_path: Path,
+    vscode_test_bundle: Path,
+) -> None:
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(
+        record,
+        extension_publisher=None,
+        extension_name=None,
+        extension_path=None,
+    )
+
+    returncode, value = _run_json(
+        vscode_test_bundle,
+        "--resolve-vscode-record-json",
+        str(tmp_path / "home"),
+        str(record),
+    )
+
+    assert returncode == 20
+    assert value["reason"] == "CODEX_EXTENSION_NOT_VERIFIED"
+    assert value["official_url"] == (
+        "https://marketplace.visualstudio.com/"
+        "items?itemName=OpenAI.chatgpt"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_reason"),
+    [
+        (
+            {"signature_status": "NotSigned"},
+            "VSCODE_SIGNATURE_INVALID",
+        ),
+        (
+            {
+                "signer_subject": (
+                    "CN=Contoso Corporation, O=Contoso Corporation, "
+                    "L=Redmond, S=Washington, C=US"
+                )
+            },
+            "VSCODE_PUBLISHER_INVALID",
+        ),
+        (
+            {"extension_publisher": "Contoso"},
+            "CODEX_EXTENSION_NOT_VERIFIED",
+        ),
+        (
+            {"extension_name": "codex"},
+            "CODEX_EXTENSION_NOT_VERIFIED",
+        ),
+        (
+            {"code_running": True},
+            "VSCODE_ALREADY_RUNNING",
+        ),
+    ],
+)
+def test_vscode_trust_failures_have_stable_reasons(
+    tmp_path: Path,
+    vscode_test_bundle: Path,
+    overrides: dict[str, object],
+    expected_reason: str,
+) -> None:
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(record, **overrides)
+
+    returncode, value = _run_json(
+        vscode_test_bundle,
+        "--resolve-vscode-record-json",
+        str(tmp_path / "home"),
+        str(record),
+    )
+
+    assert returncode == 20
+    assert value["status"] == "BLOCKED"
+    assert value["reason"] == expected_reason
+    if expected_reason == "CODEX_EXTENSION_NOT_VERIFIED":
+        assert value["official_url"] == (
+            "https://marketplace.visualstudio.com/"
+            "items?itemName=OpenAI.chatgpt"
+        )
+    if expected_reason == "VSCODE_ALREADY_RUNNING":
+        assert value["action"] == (
+            "Сохраните работу, закройте все окна VS Code "
+            "и повторите запуск."
+        )
+
+
+def test_vscode_test_record_command_rejects_production_source_lock(
+    tmp_path: Path,
+) -> None:
+    center = _build(
+        tmp_path / "employee-center",
+        edition="Employee",
+        product_role="LaunchCenter",
+    )
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(record)
+
+    returncode, value = _run_json(
+        center,
+        "--resolve-vscode-record-json",
+        str(tmp_path / "home"),
+        str(record),
+    )
+
+    assert returncode == 20
+    assert value["status"] == "BLOCKED"
+    assert value["reason"] == "TEST_ONLY_SOURCE_REQUIRED"
 
 
 def test_exact_managed_desktop_resolution_is_hash_bound(
@@ -287,6 +577,9 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         "sha256": payload_hash,
         "activation_id": None,
         "package_full_name": None,
+        "official_url": None,
+        "action": None,
+        "extension_path": None,
         "reason": None,
     }
 
@@ -405,6 +698,9 @@ def test_exact_managed_cli_resolution_requires_install_record(
         "sha256": executable_hash,
         "activation_id": None,
         "package_full_name": None,
+        "official_url": None,
+        "action": None,
+        "extension_path": None,
         "reason": None,
     }
 
@@ -478,6 +774,9 @@ def test_store_launch_resolution_is_manifest_and_hash_bound(
         "package_full_name": (
             "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
         ),
+        "official_url": None,
+        "action": None,
+        "extension_path": None,
         "reason": None,
     }
 

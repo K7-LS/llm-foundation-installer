@@ -1688,6 +1688,13 @@ namespace LlmFoundationInstaller
             {
                 return "Выберите клиент";
             }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "Запустить VS Code →";
+            }
             if (targetId.StartsWith(
                     "codex",
                     StringComparison.Ordinal
@@ -1718,6 +1725,13 @@ namespace LlmFoundationInstaller
             {
                 return "НЕ ВЫБРАНО";
             }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "VS CODE — CODEX";
+            }
             if (targetId.StartsWith(
                     "codex",
                     StringComparison.Ordinal
@@ -1740,6 +1754,13 @@ namespace LlmFoundationInstaller
             if (String.IsNullOrWhiteSpace(targetId))
             {
                 return "НЕ ВЫБРАН";
+            }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "OPENAI";
             }
             if (targetId.StartsWith(
                     "codex",
@@ -3312,6 +3333,20 @@ namespace LlmFoundationInstaller
                     ));
                     return resolution.status == "RESOLVED" ? 0 : 20;
                 }
+                if (args.Length == 3 &&
+                    args[0] == "--resolve-vscode-record-json")
+                {
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
                 if (args.Length == 4 &&
                     args[0] == "--launch-target-json")
                 {
@@ -3759,6 +3794,7 @@ namespace LlmFoundationInstaller
                 }
                 if (args.Length == 2 &&
                     (args[0] == "--ui-selection-json" ||
+                     args[0] == "--ui-launch-selection-json" ||
                      args[0] == "--ui-guide-selection-json"))
                 {
                     if (edition.product_role != "LaunchCenter")

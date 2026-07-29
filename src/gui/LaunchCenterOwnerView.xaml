@@ -93,9 +93,24 @@
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
+            <ListBoxItem Tag="codex-cli" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
+              <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="11">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX CLI" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="Codex в терминале" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Tag="vscode-codex" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
+              <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="11">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="VS CODE" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="VS Code — Codex" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ПРОВЕРКА" Foreground="#30BCED" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
             <ListBoxItem Tag="claude-code" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
               <Border Background="#241F1C" BorderBrush="#FC4912" BorderThickness="1" CornerRadius="6" Padding="13">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CLAUDE / ВЛАДЕЛЕЦ" FontFamily="Cascadia Mono" FontSize="11" Foreground="#FC7A4D" /><TextBlock Text="Claude" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ТОЛЬКО ВЛАДЕЛЬЦУ" Foreground="#FC7A4D" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Tag="opencode-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
+              <Border Background="#10343A" BorderBrush="#285057" BorderThickness="1" CornerRadius="6" Padding="11">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="OPENCODE DESKTOP" FontFamily="Cascadia Mono" FontSize="11" Foreground="#77CBB9" /><TextBlock Text="OpenCode Desktop" FontSize="14" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
               </Border>
             </ListBoxItem>
             <ListBoxItem Tag="opencode-cli" Style="{StaticResource ClientListItem}" Padding="0">
