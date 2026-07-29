@@ -139,7 +139,10 @@ namespace LlmFoundationInstaller
             if (failure != null)
             {
                 result.status = "FAILED";
-                result.reason = failure;
+                if (result.cleanup_verified)
+                {
+                    result.reason = failure;
+                }
             }
             return result;
         }

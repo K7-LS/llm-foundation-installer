@@ -2900,12 +2900,13 @@ namespace LlmFoundationInstaller
                     }
                     else
                     {
+                        string reason = singBox != null
+                            ? singBox.reason
+                            : (connection != null
+                                ? connection.error
+                                : "CONNECTION_TEST_FAILED");
                         contract.Status.Text =
-                            "Соединение не прошло проверку (" +
-                            (singBox != null
-                                ? singBox.reason
-                                : connection.error) +
-                            "). Offline-установка доступна.";
+                            DescribeTestFailure(reason);
                         contract.Status.Foreground = new SolidColorBrush(
                             Color.FromRgb(161, 92, 0)
                         );
@@ -2930,6 +2931,72 @@ namespace LlmFoundationInstaller
             {
                 contract.Stop.IsEnabled = false;
             }
+        }
+
+        internal static string DescribeTestFailure(string reason)
+        {
+            string stableReason = String.IsNullOrWhiteSpace(reason)
+                ? "CONNECTION_TEST_FAILED"
+                : reason;
+            string action;
+            if (stableReason == "RUNTIME_BUNDLE_ARCHIVE_MISSING")
+            {
+                action = "Распакуйте весь ZIP: архив runtime должен лежать рядом " +
+                    "с запускником.";
+            }
+            else if (
+                stableReason == "RUNTIME_ARCHIVE_INTEGRITY_FAILED" ||
+                stableReason == "RUNTIME_EXECUTABLE_INTEGRITY_FAILED" ||
+                stableReason == "RUNTIME_ARCHIVE_INVALID")
+            {
+                action = "Архив runtime повреждён. Скачайте установщик заново " +
+                    "и полностью распакуйте ZIP.";
+            }
+            else if (
+                stableReason == "RUNTIME_INSTALL_FAILED" ||
+                stableReason == "RUNTIME_ALREADY_PRESENT_INVALID" ||
+                stableReason == "RUNTIME_LAYOUT_INVALID" ||
+                stableReason == "RUNTIME_NOT_INSTALLED" ||
+                stableReason == "RUNTIME_VERIFY_FAILED" ||
+                stableReason == "RUNTIME_SOURCE_LOCK_INVALID" ||
+                stableReason == "RUNTIME_ARCHIVE_ENTRY_UNSAFE")
+            {
+                action = "Runtime SingBox не удалось установить. Запустите " +
+                    "проверку из полностью распакованного ZIP.";
+            }
+            else if (stableReason == "CONFIG_CHECK_FAILED")
+            {
+                action = "Проверьте server, port, login и password, сохраните " +
+                    "параметры и повторите проверку.";
+            }
+            else if (
+                stableReason == "LOCAL_PROXY_NOT_READY" ||
+                stableReason == "LOCAL_PORT_UNAVAILABLE" ||
+                stableReason == "RUNTIME_START_FAILED" ||
+                stableReason == "RUNTIME_EXITED_BEFORE_READY")
+            {
+                action = "SingBox не запустил локальный proxy. Закройте другой " +
+                    "VPN или proxy и повторите проверку.";
+            }
+            else if (stableReason == "ROUTE_PROBE_FAILED")
+            {
+                action = "SingBox запущен, но запрос через него не прошёл. " +
+                    "Проверьте server, port, login, password и доступность proxy.";
+            }
+            else if (
+                stableReason == "SESSION_CLEANUP_FAILED" ||
+                stableReason == "SECRET_CONFIG_REMOVE_FAILED")
+            {
+                action = "Не удалось безопасно очистить временную сессию SingBox. " +
+                    "Закройте Launch Center, убедитесь, что sing-box.exe завершён, " +
+                    "и запустите проверку снова.";
+            }
+            else
+            {
+                action = "Повторите проверку. Если ошибка сохраняется, запустите " +
+                    "Launch Center из полностью распакованного ZIP.";
+            }
+            return "Проверка не пройдена (" + stableReason + "). " + action;
         }
 
         internal static object TestConnection(

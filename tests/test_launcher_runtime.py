@@ -5,6 +5,7 @@ import http.server
 import json
 import os
 import shutil
+import stat
 import subprocess
 import textwrap
 import threading
@@ -171,6 +172,19 @@ def _compile_fake_singbox(path: Path) -> None:
                     if (args[0] != "run")
                     {
                         return 13;
+                    }
+                    if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_CLEANUP_BLOCK") == "1")
+                    {
+                        string marker = Path.Combine(
+                            Path.GetDirectoryName(args[2]),
+                            "cleanup-blocked.txt"
+                        );
+                        File.WriteAllText(marker, "blocked");
+                        File.SetAttributes(
+                            marker,
+                            FileAttributes.ReadOnly
+                        );
                     }
                     string json = File.ReadAllText(args[2]);
                     Match portMatch = Regex.Match(
@@ -841,10 +855,56 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         ]
         assert sentinel not in failed.stdout
         assert sentinel not in failed.stderr
+
+        cleanup_failed_environment = dict(broken_environment)
+        cleanup_failed_environment["K7_FAKE_CLEANUP_BLOCK"] = "1"
+        cleanup_failed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=bundle,
+            env=cleanup_failed_environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert cleanup_failed.stdout.strip(), cleanup_failed.stderr
+        cleanup_failed_value = json.loads(cleanup_failed.stdout)
+        assert cleanup_failed.returncode == 20
+        assert cleanup_failed_value["status"] == "FAILED"
+        assert cleanup_failed_value["uses_proxy"] is True
+        assert cleanup_failed_value["cleanup_verified"] is False
+        assert (
+            cleanup_failed_value["reason"]
+            == "SESSION_CLEANUP_FAILED"
+        )
+        sessions = (
+            home
+            / ".llm-foundation"
+            / "launcher-state"
+            / "sessions"
+        )
+        assert len(list(sessions.glob("*"))) == 1
     finally:
         upstream.shutdown()
         upstream.server_close()
         upstream_thread.join(timeout=5)
+        sessions = (
+            home
+            / ".llm-foundation"
+            / "launcher-state"
+            / "sessions"
+        )
+        if sessions.exists():
+            for child in sessions.rglob("*"):
+                if child.is_file():
+                    child.chmod(stat.S_IREAD | stat.S_IWRITE)
+            shutil.rmtree(sessions)
 
 
 def test_singbox_route_launches_exact_client_with_local_proxy_only(

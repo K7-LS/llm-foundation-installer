@@ -4914,6 +4914,41 @@ def test_connection_route_probe_dispatches_proxy_to_singbox(
         thread.join(timeout=5)
 
 
+def test_connection_route_failure_messages_are_russian_and_actionable() -> None:
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    compact = " ".join(source.split())
+
+    assert "DescribeTestFailure(reason)" in compact
+    expected_actions = {
+        "RUNTIME_BUNDLE_ARCHIVE_MISSING": (
+            "Распакуйте весь ZIP: архив runtime должен лежать рядом"
+        ),
+        "RUNTIME_ARCHIVE_INTEGRITY_FAILED": (
+            "Архив runtime повреждён"
+        ),
+        "RUNTIME_INSTALL_FAILED": (
+            "Runtime SingBox не удалось установить"
+        ),
+        "CONFIG_CHECK_FAILED": (
+            "Проверьте server, port, login и password"
+        ),
+        "LOCAL_PROXY_NOT_READY": (
+            "SingBox не запустил локальный proxy"
+        ),
+        "ROUTE_PROBE_FAILED": (
+            "запрос через него не прошёл"
+        ),
+        "SESSION_CLEANUP_FAILED": (
+            "Не удалось безопасно очистить временную сессию SingBox"
+        ),
+    }
+    for reason, action in expected_actions.items():
+        assert reason in source
+        assert action in source
+
+
 def test_invalid_proxy_does_not_overwrite_last_known_good_profile(
     gui_bundle: Path,
     tmp_path: Path,
