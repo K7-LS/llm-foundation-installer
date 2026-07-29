@@ -549,10 +549,20 @@ namespace LlmFoundationInstaller
             string clientId
         )
         {
+            return Plan(bundleRoot, home, clientId, null);
+        }
+
+        internal static ClientPlanResult Plan(
+            string bundleRoot,
+            string home,
+            string clientId,
+            StoreClientResult storeRecord
+        )
+        {
             ClientSource source = FindSource(bundleRoot, clientId);
             if (source.source_kind == "store")
             {
-                StoreClientResult store = ProbeStore(
+                StoreClientResult store = storeRecord ?? ProbeStore(
                     bundleRoot,
                     clientId
                 );
@@ -594,6 +604,21 @@ namespace LlmFoundationInstaller
                     detected_version = null,
                     detected_state = "missing",
                     action = "install"
+                };
+            }
+            if (String.Equals(
+                    source.target,
+                    "codex",
+                    StringComparison.Ordinal))
+            {
+                return new ClientPlanResult
+                {
+                    status = "READY",
+                    client_id = source.id,
+                    supported_version = source.version,
+                    detected_version = detected,
+                    detected_state = "detected",
+                    action = "none"
                 };
             }
             if (String.Equals(

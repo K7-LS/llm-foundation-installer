@@ -10,6 +10,7 @@ import os
 import shutil
 import struct
 import subprocess
+import textwrap
 import threading
 import zipfile
 from pathlib import Path
@@ -41,6 +42,64 @@ def _write_json(path: Path, value: object) -> None:
         json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _find_csharp_compiler() -> Path | None:
+    candidates = [
+        Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")),
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+    ]
+    matches: list[Path] = []
+    for root in candidates:
+        matches.extend(
+            root.glob(
+                "Microsoft Visual Studio/*/*/MSBuild/Current/Bin/Roslyn/csc.exe"
+            )
+        )
+    framework = Path(
+        "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    )
+    if framework.is_file():
+        matches.append(framework)
+    return sorted(matches)[0] if matches else None
+
+
+def _compile_versioned_codex(path: Path, version: str) -> None:
+    compiler = _find_csharp_compiler()
+    if compiler is None:
+        pytest.skip("C# compiler is unavailable")
+    source = path.with_suffix(".cs")
+    source.write_text(
+        textwrap.dedent(
+            f"""
+            using System;
+            public static class FixtureCodex
+            {{
+                public static int Main(string[] args)
+                {{
+                    Console.WriteLine("codex {version}");
+                    return 0;
+                }}
+            }}
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(compiler),
+            "/nologo",
+            "/target:exe",
+            f"/out:{path}",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _evidence_body_sha256(value: dict[str, object]) -> str:
@@ -177,6 +236,49 @@ def _local_client_source_lock(
                     "store_signature_kind": None,
                 }
             ],
+        },
+    )
+    return path
+
+
+def _codex_cli_source_lock(path: Path, version: str = "1.0.0") -> Path:
+    source_lock = json.loads(
+        (REPOSITORY_ROOT / "client-sources.lock.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    source_lock["official_only"] = False
+    source_lock["test_only"] = True
+    codex = next(
+        client
+        for client in source_lock["clients"]
+        if client["id"] == "codex-cli"
+    )
+    codex["version"] = version
+    codex["url"] = "http://127.0.0.1:8765/codex.ps1"
+    source_lock["clients"] = [codex]
+    _write_json(path, source_lock)
+    return path
+
+
+def _codex_store_record(path: Path, store_location: Path) -> Path:
+    _write_json(
+        path,
+        {
+            "present": True,
+            "name": "OpenAI.Codex",
+            "publisher": "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
+            "signature_kind": "Store",
+            "architecture": "X64",
+            "version": "26.721.4979.0",
+            "package_full_name": (
+                "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+            ),
+            "package_family_name": "OpenAI.Codex_2p2nqsd0c76g0",
+            "install_location": str(store_location),
+            "application_id": "App",
+            "executable": "app/ChatGPT.exe",
+            "entry_point": "Windows.FullTrustApplication",
         },
     )
     return path
@@ -2474,6 +2576,233 @@ def test_managed_desktop_newer_version_blocks_downgrade_before_download(
         thread.join(timeout=5)
 
 
+def test_codex_newer_version_is_ready_without_download(
+    tmp_path: Path,
+):
+    source_lock = _codex_cli_source_lock(
+        tmp_path / "codex-client-sources.test.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    staging = tmp_path / "client-staging"
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    plan = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--client-plan-json",
+            str(home),
+            "codex-cli",
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    payload = json.loads(plan.stdout)
+    assert payload["status"] == "READY"
+    assert payload["status"] != "BLOCKED_NO_DOWNGRADE"
+    assert payload["detected_version"] == "2.0.0"
+    assert payload["action"] == "none"
+
+    installed = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--install-client-json",
+            str(home),
+            "codex-cli",
+            str(staging),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    assert json.loads(installed.stdout)["status"] == "ALREADY_READY"
+    assert not staging.exists()
+
+
+def test_target_plan_passes_detected_codex_version_to_foundation(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    source_lock = _codex_cli_source_lock(
+        tmp_path / "codex-client-sources.test.json",
+        version="1.0.0-test",
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        package_source,
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    executable = bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    target_plan = subprocess.run(
+        [
+            str(executable),
+            "--target-client-plan-json",
+            str(home),
+            "codex",
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert target_plan.returncode == 0, (
+        target_plan.stdout + target_plan.stderr
+    )
+    cli = json.loads(target_plan.stdout)["clients"][0]
+    assert cli["client_id"] == "codex-cli"
+    assert cli["detected_version"] == "2.0.0"
+
+    foundation = subprocess.run(
+        [
+            str(executable),
+            "--workflow-json",
+            "plan",
+            "codex",
+            str(home),
+            cli["detected_version"],
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+
+    assert foundation.returncode == 0, foundation.stdout + foundation.stderr
+    assert json.loads(foundation.stdout)["status"] == "READY"
+
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    assert "row.detected_version = verified.clients" in source
+    assert "cli.version;" not in source
+
+
+def test_codex_missing_client_keeps_install_available(
+    tmp_path: Path,
+):
+    source_lock = _codex_cli_source_lock(
+        tmp_path / "codex-client-sources.test.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--client-plan-json",
+            str(home),
+            "codex-cli",
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "INSTALL_AVAILABLE",
+        "client_id": "codex-cli",
+        "supported_version": "1.0.0",
+        "detected_version": None,
+        "detected_state": "missing",
+        "action": "install",
+    }
+
+
+def test_codex_store_missing_client_guides_store_without_cli_fallback(
+    tmp_path: Path,
+):
+    bundle = _build_gui_bundle(tmp_path / "bundle")
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    record = tmp_path / "missing-store-record.json"
+    _write_json(record, {"present": False})
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--client-plan-store-record-json",
+            str(home),
+            "codex-desktop",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "status": "GUIDED_STORE",
+        "client_id": "codex-desktop",
+        "supported_version": "store-current",
+        "detected_version": None,
+        "detected_state": "not_checked",
+        "action": "open_store",
+    }
+    assert list(home.iterdir()) == []
+
+
 @pytest.mark.parametrize("powershell", POWERSHELLS)
 def test_gui_builder_supports_powershell_7_and_5_1(
     tmp_path: Path,
@@ -2559,6 +2888,62 @@ def test_gui_can_render_employee_facing_preview(gui_bundle: Path, tmp_path: Path
     assert (width, height) == (1440, 900)
 
 
+@pytest.mark.parametrize(
+    ("edition", "resource"),
+    [
+        ("employee", "InstallerEmployeeView.xaml"),
+        ("owner", "InstallerOwnerView.xaml"),
+    ],
+)
+def test_singbox_connection_ui_contract_is_consistent_in_both_editions(
+    edition: str,
+    resource: str,
+):
+    """SingBox must reveal safely serializable proxy settings in every edition."""
+    xaml = (REPOSITORY_ROOT / "src" / "gui" / resource).read_text(
+        encoding="utf-8"
+    )
+
+    for technical_name in (
+        "ProxyMode",
+        "ProxySettings",
+        "ProxyType",
+        "ProxyHost",
+        "ProxyPort",
+        "ProxyAuth",
+        "ProxyUsername",
+        "ProxyPassword",
+        "TestConnection",
+    ):
+        assert f'x:Name="{technical_name}"' in xaml, edition
+    assert 'Visibility="Collapsed"' in xaml, edition
+    assert 'Content="HTTP" Tag="HTTP"' in xaml, edition
+    assert 'Content="HTTPS" Tag="HTTPS"' in xaml, edition
+    assert 'Tag="None"' in xaml, edition
+    assert 'Tag="UsernamePassword"' in xaml, edition
+    assert "Сохранить и проверить" in xaml, edition
+    assert "Launch Center сам запускает и останавливает sing-box" in xaml, edition
+
+
+def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
+    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
+        encoding="utf-8"
+    )
+
+    update_mode = source.split("Action updateMode = delegate", 1)[1].split(
+        "RoutedEventHandler checkedHandler", 1
+    )[0]
+
+    assert "settings.IsEnabled = isProxy;" in update_mode
+    assert (
+        "settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;"
+        in update_mode
+    )
+    assert update_mode.index("settings.Visibility") < update_mode.index(
+        "if (!isProxy)"
+    )
+
+
 def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: Path):
     executable = gui_bundle / "LLMFoundationInstaller.exe"
     result = subprocess.run(
@@ -2619,6 +3004,190 @@ def test_gui_preflight_checks_clients_without_claiming_missing_packages(
         == (row["client_state"] == "present_unbound")
         for row in payload["targets"]
     )
+
+
+def test_store_only_codex_preflight_accepts_validated_store_record(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    store_location = tmp_path / "WindowsApps" / (
+        "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+    )
+    store_location.mkdir(parents=True)
+    record = _codex_store_record(
+        tmp_path / "store-record.json",
+        store_location,
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    codex = next(row for row in payload["targets"] if row["id"] == "codex")
+    assert codex["detected_version"] == "26.721.4979.0"
+    assert codex["client_state"] == "ready"
+    assert codex["client_state"] != "unsupported"
+
+
+def test_store_only_codex_preflight_rejects_tampered_publisher_record(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    store_location = tmp_path / "WindowsApps" / "OpenAI.Codex-fixture"
+    store_location.mkdir(parents=True)
+    record = _codex_store_record(
+        tmp_path / "tampered-store-record.json",
+        store_location,
+    )
+    tampered = json.loads(record.read_text(encoding="utf-8"))
+    tampered["publisher"] = "CN=untrusted-fixture"
+    _write_json(record, tampered)
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert result.stdout == ""
+    assert "Store package identity differs from source lock" in result.stderr
+
+
+def test_cli_fallback_codex_preflight_accepts_detected_version(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    record = tmp_path / "missing-store-record.json"
+    _write_json(record, {"present": False})
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    codex = next(row for row in payload["targets"] if row["id"] == "codex")
+    assert codex["detected_version"] == "2.0.0"
+    assert codex["client_state"] == "ready"
+    assert codex["client_state"] != "unsupported"
+
+
+def test_validated_store_codex_preflight_has_precedence_over_cli(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    store_location = tmp_path / "WindowsApps" / (
+        "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+    )
+    store_location.mkdir(parents=True)
+    record = _codex_store_record(
+        tmp_path / "store-record.json",
+        store_location,
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    codex = next(row for row in payload["targets"] if row["id"] == "codex")
+    assert codex["detected_version"] == "26.721.4979.0"
+    assert codex["detected_version"] != "2.0.0"
+    assert codex["client_state"] == "ready"
+
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    foundation = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--workflow-json",
+            "plan",
+            "codex",
+            str(home),
+            codex["detected_version"],
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+    assert foundation.returncode == 0, foundation.stdout + foundation.stderr
+    assert json.loads(foundation.stdout)["status"] == "READY"
 
 
 def test_platform_preflight_accepts_only_windows_x64_build_19041_or_newer(
@@ -2763,10 +3332,18 @@ def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
     package_source = tmp_path / "package-source"
     _accepted_package(package_source)
     bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    record = tmp_path / "missing-store-record.json"
+    _write_json(record, {"present": False})
     environment = os.environ.copy()
-    environment["PATH"] = ""
+    environment["PATH"] = str(safe_path)
     result = subprocess.run(
-        [str(bundle / "LLMFoundationInstaller.exe"), "--preflight-json"],
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
         cwd=bundle,
         env=environment,
         capture_output=True,
@@ -3804,7 +4381,7 @@ def test_gui_executable_is_a_standalone_installer_payload(tmp_path: Path):
     assert (home / ".codex" / "AGENTS.md").is_file()
 
 
-def test_gui_workflow_fails_closed_on_wrong_client_version(tmp_path: Path):
+def test_gui_workflow_fails_closed_on_malformed_client_version(tmp_path: Path):
     package_source = tmp_path / "package-source"
     _accepted_package(package_source)
     bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
@@ -3818,7 +4395,7 @@ def test_gui_workflow_fails_closed_on_wrong_client_version(tmp_path: Path):
             "plan",
             "codex",
             str(home),
-            "0.0.0-wrong",
+            "0.0",
         ],
         cwd=bundle,
         capture_output=True,
@@ -4220,7 +4797,7 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
     ).read_text(encoding="utf-8")
     for required in (
         "ClientBootstrap.PlanTarget",
-        "ClientBootstrap.RequiredSourcesForTarget",
+        "verified.clients.First",
         "ClientBootstrap.Install",
         "ClientBootstrap.OpenStoreSource",
         "RunClientBootstrapAsync",

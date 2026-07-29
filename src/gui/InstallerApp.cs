@@ -38,6 +38,12 @@ namespace LlmFoundationInstaller
         public string client_state { get; set; }
     }
 
+    internal sealed class ClientDetectionResult
+    {
+        public string version { get; set; }
+        public string source { get; set; }
+    }
+
     internal sealed class TrustedFile
     {
         public string relative_path { get; set; }
@@ -195,6 +201,15 @@ namespace LlmFoundationInstaller
             bool detectClients = false
         )
         {
+            return Inspect(bundleRoot, detectClients, null);
+        }
+
+        internal static CatalogResult Inspect(
+            string bundleRoot,
+            bool detectClients,
+            StoreClientResult storeRecord
+        )
+        {
             EditionProfile edition = EditionProfile.LoadEmbedded();
             ProviderEligibilityRecord eligibility;
             Dictionary<string, TrustedPackage> trusted =
@@ -236,16 +251,21 @@ namespace LlmFoundationInstaller
                     : package.supported_version;
                 if (detectClients)
                 {
-                    detected = ClientDetector.DetectVersion(definition[2]);
+                    ClientDetectionResult detection = definition[0] == "codex"
+                        ? DetectCodex(bundleRoot, storeRecord)
+                        : DetectCli(definition[2]);
+                    detected = detection.version;
                     clientState = detected == null
                         ? "missing"
                         : (state != "accepted"
                             ? "present_unbound"
-                            : (String.Equals(
-                                detected,
-                                supported,
-                                StringComparison.Ordinal
-                            ) ? "ready" : "unsupported"));
+                            : (definition[0] == "codex"
+                                ? "ready"
+                                : (String.Equals(
+                                    detected,
+                                    supported,
+                                    StringComparison.Ordinal
+                                ) ? "ready" : "unsupported")));
                 }
                 targets.Add(new TargetRow
                 {
@@ -274,6 +294,41 @@ namespace LlmFoundationInstaller
                     : "Required edition packages are missing or changed",
                 provider_eligibility = eligibilityState
             };
+        }
+
+        private static ClientDetectionResult DetectCli(string clientId)
+        {
+            return new ClientDetectionResult
+            {
+                version = ClientDetector.DetectVersion(clientId),
+                source = "cli"
+            };
+        }
+
+        private static ClientDetectionResult DetectCodex(
+            string bundleRoot,
+            StoreClientResult storeRecord
+        )
+        {
+            try
+            {
+                StoreClientResult store = storeRecord ??
+                    ClientBootstrap.ProbeStore(bundleRoot, "codex-desktop");
+                if (store != null && store.status == "READY" &&
+                    !String.IsNullOrWhiteSpace(store.version))
+                {
+                    return new ClientDetectionResult
+                    {
+                        version = store.version,
+                        source = "store"
+                    };
+                }
+            }
+            catch
+            {
+                // A Store probe failure is treated as a missing Store client.
+            }
+            return DetectCli("codex-cli");
         }
 
         public static string[] TargetIds()
@@ -1174,8 +1229,12 @@ namespace LlmFoundationInstaller
                             : Color.FromRgb(161, 92, 0)
                     );
                     status.ToolTip = row.package_state == "accepted"
-                        ? "Пакет проверен. Поддерживаемая версия клиента: " +
-                            row.supported_version
+                        ? (row.id == "codex" &&
+                            !String.IsNullOrWhiteSpace(row.detected_version)
+                            ? "Пакет проверен. Обнаруженная версия клиента: " +
+                                row.detected_version
+                            : "Пакет проверен. Поддерживаемая версия клиента: " +
+                                row.supported_version)
                         : (row.package_state == "owner_candidate"
                             ? "Пакет доступен только в версии владельца. Установщик не подтверждает допуск провайдера."
                             : (row.package_state == "policy_blocked"
@@ -2004,13 +2063,9 @@ namespace LlmFoundationInstaller
                         );
                         continue;
                     }
-                    ClientSource cli =
-                        ClientBootstrap.RequiredSourcesForTarget(
-                            bundleRoot,
-                            row.id
-                        ).First(source =>
-                            source.role == "cli");
-                    row.detected_version = cli.version;
+                    row.detected_version = verified.clients.First(plan =>
+                        plan.client_id == row.client_id
+                    ).detected_version;
                     row.client_state = "ready";
                     clientReady.Add(row);
                 }
@@ -2634,6 +2689,7 @@ namespace LlmFoundationInstaller
             {
                 bool isProxy = proxy.IsChecked == true;
                 settings.IsEnabled = isProxy;
+                settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;
                 if (!isProxy)
                 {
                     status.Text = vpn.IsChecked == true
@@ -3266,6 +3322,28 @@ namespace LlmFoundationInstaller
                     ));
                     return 0;
                 }
+                if (args.Length == 2 &&
+                    args[0] == "--preflight-store-record-json")
+                {
+                    try
+                    {
+                        StoreClientResult store =
+                            ClientBootstrap.ValidateStoreRecord(
+                                bundleRoot,
+                                "codex-desktop",
+                                args[1]
+                            );
+                        WriteOutput(new JavaScriptSerializer().Serialize(
+                            ProductCatalog.Inspect(bundleRoot, true, store)
+                        ));
+                        return 0;
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        WriteError(exception.Message);
+                        return 2;
+                    }
+                }
                 if (args.Length == 1 && args[0] == "--platform-json")
                 {
                     PlatformCompatibilityResult platform =
@@ -3367,6 +3445,34 @@ namespace LlmFoundationInstaller
                     return plan.status == "BLOCKED_NO_DOWNGRADE"
                         ? 20
                         : 0;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--client-plan-store-record-json")
+                {
+                    try
+                    {
+                        StoreClientResult store =
+                            ClientBootstrap.ValidateStoreRecord(
+                                bundleRoot,
+                                args[2],
+                                args[3]
+                            );
+                        ClientPlanResult plan = ClientBootstrap.Plan(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            store
+                        );
+                        WriteOutput(new JavaScriptSerializer().Serialize(plan));
+                        return plan.status == "BLOCKED_NO_DOWNGRADE"
+                            ? 20
+                            : 0;
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        WriteError(exception.Message);
+                        return 2;
+                    }
                 }
                 if (args.Length == 3 &&
                     args[0] == "--target-client-plan-json")

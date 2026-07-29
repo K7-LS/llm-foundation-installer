@@ -216,22 +216,34 @@
             </Grid>
           </Border>
           <Grid x:Name="ProxySettings" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="100" /><ColumnDefinition Width="*" /><ColumnDefinition Width="90" />
               <ColumnDefinition Width="110" /><ColumnDefinition Width="130" /><ColumnDefinition Width="130" />
             </Grid.ColumnDefinitions>
-            <ComboBox x:Name="ProxyType" Grid.Column="0" Height="36" SelectedIndex="0" Margin="0,0,8,0"><ComboBoxItem Content="HTTP" /><ComboBoxItem Content="HTTPS" /></ComboBox>
-            <TextBox x:Name="ProxyHost" Grid.Column="1" Height="36" Padding="9,6" Margin="0,0,8,0" ToolTip="Адрес" />
-            <TextBox x:Name="ProxyPort" Grid.Column="2" Height="36" Padding="9,6" Margin="0,0,8,0" ToolTip="Порт" />
-            <ComboBox x:Name="ProxyAuth" Grid.Column="3" Height="36" SelectedIndex="0" Margin="0,0,8,0"><ComboBoxItem Content="Без входа" /><ComboBoxItem Content="Логин" /></ComboBox>
-            <TextBox x:Name="ProxyUsername" Grid.Column="4" Height="36" Padding="9,6" Margin="0,0,8,0" IsEnabled="False" ToolTip="Логин" />
-            <PasswordBox x:Name="ProxyPassword" Grid.Column="5" Height="36" Padding="9,6" IsEnabled="False" ToolTip="Пароль" />
+            <TextBlock Grid.Column="0" Text="Тип прокси" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <TextBlock Grid.Column="1" Text="Адрес сервера" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <TextBlock Grid.Column="2" Text="Порт" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <TextBlock Grid.Column="3" Text="Авторизация" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <TextBlock Grid.Column="4" Text="Логин" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <TextBlock Grid.Column="5" Text="Пароль" Style="{StaticResource Label}" Margin="0,0,8,4" />
+            <ComboBox x:Name="ProxyType" Grid.Row="1" Grid.Column="0" Height="36" SelectedIndex="0" Margin="0,0,8,0"><ComboBoxItem Content="HTTP" Tag="HTTP" /><ComboBoxItem Content="HTTPS" Tag="HTTPS" /></ComboBox>
+            <TextBox x:Name="ProxyHost" Grid.Row="1" Grid.Column="1" Height="36" Padding="9,6" Margin="0,0,8,0" ToolTip="Адрес" />
+            <TextBox x:Name="ProxyPort" Grid.Row="1" Grid.Column="2" Height="36" Padding="9,6" Margin="0,0,8,0" ToolTip="Порт" />
+            <ComboBox x:Name="ProxyAuth" Grid.Row="1" Grid.Column="3" Height="36" SelectedIndex="0" Margin="0,0,8,0"><ComboBoxItem Content="Без входа" Tag="None" /><ComboBoxItem Content="Логин" Tag="UsernamePassword" /></ComboBox>
+            <TextBox x:Name="ProxyUsername" Grid.Row="1" Grid.Column="4" Height="36" Padding="9,6" Margin="0,0,8,0" IsEnabled="False" ToolTip="Логин" />
+            <PasswordBox x:Name="ProxyPassword" Grid.Row="1" Grid.Column="5" Height="36" Padding="9,6" IsEnabled="False" ToolTip="Пароль" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,0" Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите маршрут в Launch Center. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." />
           </Grid>
           <Grid Grid.Row="3">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <TextBlock x:Name="ConnectionStatus" Text="Напрямую · готово к локальной проверке" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
             <Button x:Name="TestConnection" Grid.Column="1" Content="Тест маршрута" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" />
-            <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить" Style="{StaticResource SecondaryButton}" />
+            <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить и проверить" Style="{StaticResource SecondaryButton}" />
           </Grid>
         </Grid>
       </Border>

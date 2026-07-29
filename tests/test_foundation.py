@@ -162,7 +162,7 @@ def _run(
     *,
     package: Path | None = None,
     target: str | None = None,
-    client: str = SUPPORTED_CLIENT,
+    client: str | None = SUPPORTED_CLIENT,
     client_id: str = "codex-cli",
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -182,7 +182,7 @@ def _run(
         arguments.extend(["-Package", str(package)])
     if target is not None:
         arguments.extend(["-Target", target])
-    if client:
+    if client is not None:
         arguments.extend(["-ClientId", client_id])
         arguments.extend(["-ClientVersion", client])
     environment = os.environ.copy()
@@ -561,22 +561,39 @@ def test_environment_change_is_restored_after_install_failure(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
-def test_unsupported_client_and_downgrade_fail_closed(
+def test_external_client_versions_and_downgrade_fail_closed(
     engine_root, tmp_path, executable
 ):
     home = tmp_path / f"version-{Path(executable).stem}"
     home.mkdir()
     package_v2 = _package(tmp_path / f"v2-{Path(executable).stem}.zip", version="2.0.0")
-    unsupported = _run(
+    external = _run(
         executable,
         engine_root,
         "plan",
         home,
         package=package_v2,
-        client="0.145.0",
+        client="2.0.0",
     )
-    assert unsupported.returncode == 10
-    assert _json(unsupported)["code"] == "UNSUPPORTED_CLIENT"
+    assert external.returncode == 0, external.stderr
+    assert _json(external)["status"] == "READY"
+
+    for client_id, client in (
+        ("other-client", SUPPORTED_CLIENT),
+        ("codex-cli", "2.0"),
+        ("codex-cli", ""),
+    ):
+        unsupported = _run(
+            executable,
+            engine_root,
+            "plan",
+            home,
+            package=package_v2,
+            client_id=client_id,
+            client=client,
+        )
+        assert unsupported.returncode == 10
+        assert _json(unsupported)["code"] == "UNSUPPORTED_CLIENT"
 
     installed = _run(executable, engine_root, "install", home, package=package_v2)
     assert installed.returncode == 0, installed.stderr
