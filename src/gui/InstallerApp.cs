@@ -3054,7 +3054,9 @@ namespace LlmFoundationInstaller
             if (contract.Proxy == null &&
                 (contract.Http == null || contract.Https == null))
             {
-                throw new InvalidOperationException("Proxy route controls are missing");
+                throw new InvalidOperationException(
+                    "Не найдены элементы маршрута прокси"
+                );
             }
             contract.ProxySettings = Required<Grid>(view, "ProxySettings");
             contract.ProxyType = Optional<ComboBox>(view, "ProxyType");
@@ -3077,7 +3079,7 @@ namespace LlmFoundationInstaller
             if (control == null)
             {
                 throw new InvalidOperationException(
-                    "Connection control is missing: " + String.Join("/", names)
+                    "Не найден элемент подключения: " + String.Join("/", names)
                 );
             }
             return control;

@@ -2941,6 +2941,17 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
     )
 
 
+def test_connection_ui_contract_diagnostics_are_localized_for_users():
+    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Не найдены элементы маршрута прокси" in source
+    assert "Не найден элемент подключения: " in source
+    assert "Proxy route controls are missing" not in source
+    assert "Connection control is missing: " not in source
+
+
 CONNECTION_UI_VARIANTS = [
     ("Employee", "Installer", "InstallerEmployeeView.xaml"),
     ("Owner", "Installer", "InstallerOwnerView.xaml"),
