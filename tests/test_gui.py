@@ -2706,8 +2706,8 @@ def test_target_plan_passes_detected_codex_version_to_foundation(
         timeout=60,
     )
 
-    assert foundation.returncode == 10
-    assert json.loads(foundation.stdout)["code"] == "UNSUPPORTED_CLIENT"
+    assert foundation.returncode == 0, foundation.stdout + foundation.stderr
+    assert json.loads(foundation.stdout)["status"] == "READY"
 
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
@@ -3166,6 +3166,28 @@ def test_validated_store_codex_preflight_has_precedence_over_cli(
     assert codex["detected_version"] == "26.721.4979.0"
     assert codex["detected_version"] != "2.0.0"
     assert codex["client_state"] == "ready"
+
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    foundation = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--workflow-json",
+            "plan",
+            "codex",
+            str(home),
+            codex["detected_version"],
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+    assert foundation.returncode == 0, foundation.stdout + foundation.stderr
+    assert json.loads(foundation.stdout)["status"] == "READY"
 
 
 def test_platform_preflight_accepts_only_windows_x64_build_19041_or_newer(
@@ -4359,7 +4381,7 @@ def test_gui_executable_is_a_standalone_installer_payload(tmp_path: Path):
     assert (home / ".codex" / "AGENTS.md").is_file()
 
 
-def test_gui_workflow_fails_closed_on_wrong_client_version(tmp_path: Path):
+def test_gui_workflow_fails_closed_on_malformed_client_version(tmp_path: Path):
     package_source = tmp_path / "package-source"
     _accepted_package(package_source)
     bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
@@ -4373,7 +4395,7 @@ def test_gui_workflow_fails_closed_on_wrong_client_version(tmp_path: Path):
             "plan",
             "codex",
             str(home),
-            "0.0.0-wrong",
+            "0.0",
         ],
         cwd=bundle,
         capture_output=True,

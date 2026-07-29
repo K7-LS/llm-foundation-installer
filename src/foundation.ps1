@@ -749,10 +749,16 @@ function Assert-ClientContract {
             'Client identity and version evidence are required'
         )
     }
-    if ($ActualId -cne [string]$Expected.id -or
-        $ActualVersion -cne [string]$Expected.supported_version) {
+    if ($ActualId -cne [string]$Expected.id) {
         Throw-Foundation 'UNSUPPORTED_CLIENT' (
             "Supported client is $($Expected.id) $($Expected.supported_version)"
+        )
+    }
+    if ($ActualVersion.Length -gt 128 -or
+        $ActualVersion -notmatch
+            '^[0-9]+(?:\.[0-9]+){2,7}(?:-[0-9A-Za-z.-]+)?$') {
+        Throw-Foundation 'UNSUPPORTED_CLIENT' (
+            'Client version evidence is invalid'
         )
     }
 }
