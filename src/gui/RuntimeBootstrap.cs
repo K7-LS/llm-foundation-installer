@@ -280,6 +280,16 @@ namespace LlmFoundationInstaller
             return Verify(bundleRoot, home);
         }
 
+        public static string FailureReason(
+            RuntimeBootstrapResult result
+        )
+        {
+            return result != null &&
+                !String.IsNullOrWhiteSpace(result.reason)
+                ? result.reason
+                : "RUNTIME_NOT_VERIFIED";
+        }
+
         public static RuntimeBootstrapResult Verify(
             string bundleRoot,
             string home

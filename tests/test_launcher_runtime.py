@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
 import os
 import shutil
 import subprocess
 import textwrap
+import threading
 import zipfile
 from pathlib import Path
 
@@ -117,6 +119,7 @@ def _compile_fake_singbox(path: Path) -> None:
             using System.IO;
             using System.Net;
             using System.Net.Sockets;
+            using System.Text;
             using System.Text.RegularExpressions;
             using System.Threading;
             public static class FakeSingBox
@@ -186,8 +189,106 @@ def _compile_fake_singbox(path: Path) -> None:
                     listener.Start();
                     while (true)
                     {
-                        Thread.Sleep(250);
+                        using (TcpClient client = listener.AcceptTcpClient())
+                        {
+                            Forward(client);
+                        }
                     }
+                }
+
+                private static void Forward(TcpClient client)
+                {
+                    NetworkStream stream = client.GetStream();
+                    string headers = ReadHeaders(stream);
+                    if (String.IsNullOrWhiteSpace(headers))
+                    {
+                        return;
+                    }
+                    if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_PROXY_BROKEN") == "1")
+                    {
+                        return;
+                    }
+                    string firstLine = headers.Split(
+                        new[] { "\r\n" },
+                        StringSplitOptions.None
+                    )[0];
+                    string[] parts = firstLine.Split(' ');
+                    Uri target;
+                    if (parts.Length != 3 ||
+                        !Uri.TryCreate(
+                            parts[1],
+                            UriKind.Absolute,
+                            out target))
+                    {
+                        return;
+                    }
+                    string upstreamPort =
+                        Environment.GetEnvironmentVariable(
+                            "K7_FAKE_UPSTREAM_PORT");
+                    Uri upstreamTarget = String.IsNullOrEmpty(upstreamPort)
+                        ? target
+                        : new Uri(
+                            "http://127.0.0.1:" + upstreamPort +
+                            target.PathAndQuery
+                        );
+                    HttpWebRequest request =
+                        (HttpWebRequest)WebRequest.Create(upstreamTarget);
+                    request.Method = "GET";
+                    request.Proxy = null;
+                    request.Timeout = 5000;
+                    using (HttpWebResponse response =
+                        (HttpWebResponse)request.GetResponse())
+                    using (Stream input = response.GetResponseStream())
+                    using (MemoryStream body = new MemoryStream())
+                    {
+                        input.CopyTo(body);
+                        string forwardLog =
+                            Environment.GetEnvironmentVariable(
+                                "K7_FAKE_FORWARD_LOG");
+                        if (!String.IsNullOrEmpty(forwardLog))
+                        {
+                            File.AppendAllText(
+                                forwardLog,
+                                target.AbsolutePath + "\n"
+                            );
+                        }
+                        byte[] payload = body.ToArray();
+                        byte[] prefix = Encoding.ASCII.GetBytes(
+                            "HTTP/1.1 " +
+                            ((int)response.StatusCode).ToString() +
+                            " OK\r\nContent-Length: " +
+                            payload.Length.ToString() +
+                            "\r\nConnection: close\r\n\r\n"
+                        );
+                        stream.Write(prefix, 0, prefix.Length);
+                        stream.Write(payload, 0, payload.Length);
+                        stream.Flush();
+                    }
+                }
+
+                private static string ReadHeaders(NetworkStream stream)
+                {
+                    MemoryStream buffer = new MemoryStream();
+                    int matched = 0;
+                    byte[] marker = new byte[] { 13, 10, 13, 10 };
+                    while (buffer.Length < 65536)
+                    {
+                        int value = stream.ReadByte();
+                        if (value < 0)
+                        {
+                            break;
+                        }
+                        buffer.WriteByte((byte)value);
+                        matched = value == marker[matched]
+                            ? matched + 1
+                            : (value == marker[0] ? 1 : 0);
+                        if (matched == marker.Length)
+                        {
+                            break;
+                        }
+                    }
+                    return Encoding.ASCII.GetString(buffer.ToArray());
                 }
             }
             """
@@ -537,6 +638,213 @@ def test_singbox_session_owns_runtime_and_removes_secret_config(
             / "sessions"
         ).glob("*")
     )
+
+
+def test_singbox_session_surfaces_concrete_runtime_reason(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "sing-box-fixture.zip"
+    entry = "sing-box-1.13.14-windows-amd64/sing-box.exe"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.writestr(entry, b"fake-sing-box-runtime\n")
+    lock = tmp_path / "runtime.lock.json"
+    _write_runtime_lock(lock, archive, entry)
+    bundle = _build(tmp_path / "center", lock)
+
+    missing_home = tmp_path / "missing-home"
+    missing_home.mkdir()
+    missing_code, missing = _run_json(
+        bundle,
+        "--test-singbox-session-json",
+        str(missing_home),
+        "connection-test",
+        "SingBoxHttp",
+    )
+    assert missing_code == 20
+    assert missing["reason"] == "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+
+    shutil.copy2(archive, bundle / archive.name)
+    tampered_home = tmp_path / "tampered-home"
+    tampered_home.mkdir()
+    installed_code, installed = _run_json(
+        bundle,
+        "--ensure-runtime-json",
+        str(tampered_home),
+    )
+    assert installed_code == 0
+    assert installed["status"] == "VERIFIED"
+    (
+        tampered_home
+        / ".llm-foundation"
+        / "runtimes"
+        / "sing-box"
+        / "1.13.14"
+        / "source.zip"
+    ).write_bytes(b"tampered")
+
+    tampered_code, tampered = _run_json(
+        bundle,
+        "--test-singbox-session-json",
+        str(tampered_home),
+        "connection-test",
+        "SingBoxHttp",
+    )
+    assert tampered_code == 20
+    assert tampered["reason"] == "RUNTIME_ARCHIVE_INTEGRITY_FAILED"
+
+
+def test_singbox_route_probe_forwards_real_local_http_request(
+    tmp_path: Path,
+) -> None:
+    class Upstream(http.server.BaseHTTPRequestHandler):
+        received_paths: list[str] = []
+
+        def do_GET(self) -> None:
+            type(self).received_paths.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"route-ok")
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    fake = tmp_path / "sing-box.exe"
+    _compile_fake_singbox(fake)
+    archive = tmp_path / "sing-box-fixture.zip"
+    entry = "sing-box-1.13.14-windows-amd64/sing-box.exe"
+    with zipfile.ZipFile(archive, "w") as package:
+        package.write(fake, entry)
+    lock = tmp_path / "runtime.lock.json"
+    _write_runtime_lock(lock, archive, entry)
+    bundle = _build(tmp_path / "center", lock)
+    shutil.copy2(archive, bundle / archive.name)
+    home = tmp_path / "home"
+    home.mkdir()
+    profile = tmp_path / "connection.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mode": "Proxy",
+                "proxy": {
+                    "type": "HTTP",
+                    "host": "proxy.example.test",
+                    "port": 8080,
+                    "auth": {
+                        "mode": "UsernamePassword",
+                        "username": "fixture-user",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    sentinel = "Route-Probe-Password-Must-Stay-Secret!"
+    saved = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--save-connection-json",
+            str(home),
+            str(profile),
+        ],
+        cwd=bundle,
+        input=sentinel + "\n",
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert saved.returncode == 0, saved.stdout + saved.stderr
+    assert sentinel not in saved.stdout
+    assert sentinel not in saved.stderr
+
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    upstream_thread = threading.Thread(
+        target=upstream.serve_forever,
+        daemon=True,
+    )
+    upstream_thread.start()
+    endpoint = "http://route-check.invalid/route-check"
+    forward_log = tmp_path / "forwarded.txt"
+    environment = dict(os.environ)
+    environment["K7_FAKE_FORWARD_LOG"] = str(forward_log)
+    environment["K7_FAKE_UPSTREAM_PORT"] = str(upstream.server_port)
+    try:
+        result = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=bundle,
+            env=environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert result.stdout.strip(), result.stderr
+        value = json.loads(result.stdout)
+        assert result.returncode == 0
+        assert value["status"] == "PASS"
+        assert value["uses_proxy"] is True
+        assert value["cleanup_verified"] is True
+        assert value["lifecycle"][-2:] == [
+            "ROUTE_PROBE_PASS",
+            "CLEANUP_VERIFIED",
+        ]
+        assert Upstream.received_paths == ["/route-check"]
+        assert forward_log.read_text(encoding="utf-8").splitlines() == [
+            "/route-check"
+        ]
+        assert sentinel not in result.stdout
+        assert sentinel not in result.stderr
+        assert not list(
+            (
+                home
+                / ".llm-foundation"
+                / "launcher-state"
+                / "sessions"
+            ).glob("*")
+        )
+
+        broken_environment = dict(environment)
+        broken_environment["K7_FAKE_PROXY_BROKEN"] = "1"
+        failed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=bundle,
+            env=broken_environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert failed.stdout.strip(), failed.stderr
+        failed_value = json.loads(failed.stdout)
+        assert failed.returncode == 20
+        assert failed_value["status"] == "FAILED"
+        assert failed_value["uses_proxy"] is True
+        assert failed_value["reason"] == "ROUTE_PROBE_FAILED"
+        assert failed_value["cleanup_verified"] is True
+        assert Upstream.received_paths == ["/route-check"]
+        assert forward_log.read_text(encoding="utf-8").splitlines() == [
+            "/route-check"
+        ]
+        assert sentinel not in failed.stdout
+        assert sentinel not in failed.stderr
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=5)
 
 
 def test_singbox_route_launches_exact_client_with_local_proxy_only(

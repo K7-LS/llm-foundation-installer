@@ -2846,30 +2846,52 @@ namespace LlmFoundationInstaller
                 contract.Test.IsEnabled = false;
                 contract.Save.IsEnabled = false;
                 object originalContent = contract.Test.Content;
+                string route = contract.IsProxy
+                    ? (contract.SelectedProxyType() == "HTTPS"
+                        ? "SingBoxHttps"
+                        : "SingBoxHttp")
+                    : contract.Mode;
                 contract.Test.Content = "Проверка…";
-                contract.Status.Text = "Проверяем доступ к GitHub через выбранный режим…";
+                contract.Status.Text = contract.IsProxy
+                    ? "Запускаем SingBox и проверяем маршрут сквозным запросом…"
+                    : "Проверяем доступ к GitHub через выбранный режим…";
                 contract.Status.Foreground = new SolidColorBrush(
                     Color.FromRgb(49, 87, 199)
                 );
                 try
                 {
-                    ConnectionProbeResult result = await Task.Run(
+                    object result = await Task.Run(
                         delegate
                         {
-                            return ConnectionProbe.Run(
+                            return TestConnection(
+                                bundleRoot,
                                 UserHome(),
+                                route,
                                 "https://api.github.com/meta"
                             );
                         }
                     );
-                    if (result.status == "READY")
+                    SingBoxSessionResult singBox =
+                        result as SingBoxSessionResult;
+                    ConnectionProbeResult connection =
+                        result as ConnectionProbeResult;
+                    if (singBox != null && singBox.status == "PASS")
+                    {
+                        contract.Status.Text =
+                            "Маршрут SingBox проверен сквозным запросом.";
+                        contract.Status.Foreground = new SolidColorBrush(
+                            Color.FromRgb(22, 122, 88)
+                        );
+                    }
+                    else if (connection != null &&
+                        connection.status == "READY")
                     {
                         contract.Status.Text = "Соединение проверено: " +
-                            result.mode +
-                            (result.uses_proxy
-                                ? " / " + result.proxy_type
+                            connection.mode +
+                            (connection.uses_proxy
+                                ? " / " + connection.proxy_type
                                 : "") +
-                            " · " + result.elapsed_ms.ToString(
+                            " · " + connection.elapsed_ms.ToString(
                                 CultureInfo.InvariantCulture
                             ) + " мс.";
                         contract.Status.Foreground = new SolidColorBrush(
@@ -2880,7 +2902,10 @@ namespace LlmFoundationInstaller
                     {
                         contract.Status.Text =
                             "Соединение не прошло проверку (" +
-                            result.error + "). Offline-установка доступна.";
+                            (singBox != null
+                                ? singBox.reason
+                                : connection.error) +
+                            "). Offline-установка доступна.";
                         contract.Status.Foreground = new SolidColorBrush(
                             Color.FromRgb(161, 92, 0)
                         );
@@ -2905,6 +2930,32 @@ namespace LlmFoundationInstaller
             {
                 contract.Stop.IsEnabled = false;
             }
+        }
+
+        internal static object TestConnection(
+            string bundleRoot,
+            string home,
+            string route,
+            string endpoint
+        )
+        {
+            if (route == "SingBoxHttp" ||
+                route == "SingBoxHttps")
+            {
+                return SingBoxSession.TestRoute(
+                    bundleRoot,
+                    home,
+                    route,
+                    endpoint
+                );
+            }
+            if (route == "Direct" || route == "VPN")
+            {
+                return ConnectionProbe.Run(home, endpoint);
+            }
+            throw new InvalidOperationException(
+                "CONNECTION_ROUTE_INVALID"
+            );
         }
 
         internal static bool ApplyRoute(UserControl view, string route)
@@ -3627,6 +3678,44 @@ namespace LlmFoundationInstaller
                         config
                     ));
                     return 0;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--test-singbox-route-json")
+                {
+                    SingBoxSessionResult route =
+                        SingBoxSession.TestRoute(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        route
+                    ));
+                    return route.status == "PASS" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--test-connection-route-json")
+                {
+                    object route = ConnectionUi.TestConnection(
+                        bundleRoot,
+                        args[1],
+                        args[2],
+                        args[3]
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        route
+                    ));
+                    SingBoxSessionResult singBox =
+                        route as SingBoxSessionResult;
+                    ConnectionProbeResult connection =
+                        route as ConnectionProbeResult;
+                    return (singBox != null &&
+                            singBox.status == "PASS") ||
+                        (connection != null &&
+                            connection.status == "READY")
+                        ? 0
+                        : 20;
                 }
                 if (args.Length == 4 &&
                     args[0] == "--test-singbox-session-json")

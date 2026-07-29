@@ -4790,6 +4790,130 @@ def test_connection_probe_uses_saved_direct_profile_in_a_real_child_process(
         thread.join(timeout=5)
 
 
+def test_connection_route_probe_dispatches_proxy_to_singbox(
+    gui_bundle: Path,
+    tmp_path: Path,
+) -> None:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        executable = gui_bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "route-probe-home"
+        home.mkdir()
+        profile = tmp_path / "route-probe-proxy.json"
+        _write_json(
+            profile,
+            {
+                "schema_version": 1,
+                "mode": "Proxy",
+                "proxy": {
+                    "type": "HTTP",
+                    "host": "proxy.example.test",
+                    "port": 8080,
+                    "auth": {"mode": "None", "username": None},
+                },
+            },
+        )
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-connection-json",
+                str(home),
+                str(profile),
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        endpoint = f"http://127.0.0.1:{server.server_port}/route-check"
+
+        proxy_probe = subprocess.run(
+            [
+                str(executable),
+                "--test-connection-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert proxy_probe.stdout.strip(), proxy_probe.stderr
+        proxy_value = json.loads(proxy_probe.stdout)
+        assert proxy_probe.returncode == 20
+        assert proxy_value["status"] == "FAILED"
+        assert proxy_value["uses_proxy"] is True
+        assert (
+            proxy_value["reason"]
+            == "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+        )
+
+        direct_profile = tmp_path / "route-probe-direct.json"
+        _write_json(
+            direct_profile,
+            {"schema_version": 1, "mode": "Direct", "proxy": None},
+        )
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-connection-json",
+                str(home),
+                str(direct_profile),
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        direct_probe = subprocess.run(
+            [
+                str(executable),
+                "--test-connection-route-json",
+                str(home),
+                "Direct",
+                endpoint,
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert direct_probe.returncode == 0, (
+            direct_probe.stdout + direct_probe.stderr
+        )
+        direct_value = json.loads(direct_probe.stdout)
+        assert direct_value["status"] == "READY"
+        assert direct_value["uses_proxy"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_invalid_proxy_does_not_overwrite_last_known_good_profile(
     gui_bundle: Path,
     tmp_path: Path,
