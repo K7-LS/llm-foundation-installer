@@ -2693,6 +2693,7 @@ namespace LlmFoundationInstaller
             {
                 bool isProxy = proxy.IsChecked == true;
                 settings.IsEnabled = isProxy;
+                settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;
                 if (!isProxy)
                 {
                     status.Text = vpn.IsChecked == true

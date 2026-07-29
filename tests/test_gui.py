@@ -2813,6 +2813,43 @@ def test_gui_can_render_employee_facing_preview(gui_bundle: Path, tmp_path: Path
     assert (width, height) == (1440, 900)
 
 
+@pytest.mark.parametrize(
+    ("edition", "resource"),
+    [
+        ("employee", "InstallerEmployeeView.xaml"),
+        ("owner", "InstallerOwnerView.xaml"),
+    ],
+)
+def test_singbox_connection_ui_contract_is_consistent_in_both_editions(
+    edition: str,
+    resource: str,
+):
+    """SingBox must reveal safely serializable proxy settings in every edition."""
+    xaml = (REPOSITORY_ROOT / "src" / "gui" / resource).read_text(
+        encoding="utf-8"
+    )
+
+    assert 'x:Name="ProxySettings"' in xaml, edition
+    assert 'Visibility="Collapsed"' in xaml, edition
+    assert 'Content="HTTP" Tag="HTTP"' in xaml, edition
+    assert 'Content="HTTPS" Tag="HTTPS"' in xaml, edition
+    assert 'Tag="None"' in xaml, edition
+    assert 'Tag="UsernamePassword"' in xaml, edition
+    assert "Сохранить и проверить" in xaml, edition
+    assert "Launch Center сам запускает и останавливает sing-box" in xaml, edition
+
+
+def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
+    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        "settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;"
+        in source
+    )
+
+
 def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: Path):
     executable = gui_bundle / "LLMFoundationInstaller.exe"
     result = subprocess.run(
