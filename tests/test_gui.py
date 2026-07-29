@@ -2829,7 +2829,18 @@ def test_singbox_connection_ui_contract_is_consistent_in_both_editions(
         encoding="utf-8"
     )
 
-    assert 'x:Name="ProxySettings"' in xaml, edition
+    for technical_name in (
+        "ProxyMode",
+        "ProxySettings",
+        "ProxyType",
+        "ProxyHost",
+        "ProxyPort",
+        "ProxyAuth",
+        "ProxyUsername",
+        "ProxyPassword",
+        "TestConnection",
+    ):
+        assert f'x:Name="{technical_name}"' in xaml, edition
     assert 'Visibility="Collapsed"' in xaml, edition
     assert 'Content="HTTP" Tag="HTTP"' in xaml, edition
     assert 'Content="HTTPS" Tag="HTTPS"' in xaml, edition
@@ -2844,9 +2855,17 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
         encoding="utf-8"
     )
 
+    update_mode = source.split("Action updateMode = delegate", 1)[1].split(
+        "RoutedEventHandler checkedHandler", 1
+    )[0]
+
+    assert "settings.IsEnabled = isProxy;" in update_mode
     assert (
         "settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;"
-        in source
+        in update_mode
+    )
+    assert update_mode.index("settings.Visibility") < update_mode.index(
+        "if (!isProxy)"
     )
 
 
