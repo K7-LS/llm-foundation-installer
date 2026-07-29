@@ -3192,10 +3192,18 @@ def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
     package_source = tmp_path / "package-source"
     _accepted_package(package_source)
     bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    record = tmp_path / "missing-store-record.json"
+    _write_json(record, {"present": False})
     environment = os.environ.copy()
-    environment["PATH"] = ""
+    environment["PATH"] = str(safe_path)
     result = subprocess.run(
-        [str(bundle / "LLMFoundationInstaller.exe"), "--preflight-json"],
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
         cwd=bundle,
         env=environment,
         capture_output=True,
