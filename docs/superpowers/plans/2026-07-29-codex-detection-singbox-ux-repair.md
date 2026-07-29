@@ -15,6 +15,7 @@
 - Любая найденная версия установленного Codex отображается и принимается; скачивание разрешено только при отсутствии клиента и остаётся привязанным к существующему официальному source lock.
 - `BLOCKED_NO_DOWNGRADE` нельзя возвращать для уже найденного Codex.
 - Все новые пользовательские тексты — на русском; технические contract IDs/`Tag` не локализуются.
+- Hermetic Store-тесты используют только unadvertised `--preflight-store-record-json <record-path>` и `--client-plan-store-record-json <home> <client-id> <record-path>`; оба обязаны применять существующие schema и identity validation и входить в общий каталог/Plan path, не меняя normal preflight или source lock.
 - `employee-v0.3.0` остаётся запрещён до PII-free physical clean-PC pilot. Новый prerelease — только повторная проверка рабочего ПК.
 
 ## Карта файлов
@@ -40,7 +41,12 @@
 
 - [ ] **Шаг 1: Добавить failing tests для Store-only и CLI-fallback определения.**
 
-  Создать fixture-запуск с безопасным тестовым `PATH` без `codex.exe` и подменённым результатом Store probe через существующий JSON-record path/CLI mode. Проверить структуру результата:
+  Создать fixture-запуск с безопасным тестовым `PATH` без `codex.exe` и Store
+  record через test-only `--preflight-store-record-json <record-path>`.
+  Проверить структуру результата; добавить tampered publisher/package-family
+  record, который должен завершиться отказом без catalog output. Второй тест
+  оставляет Store record missing и передаёт fixture `codex.exe --version`; он
+  проверяет CLI fallback и ту же форму результата.
 
   ```python
   codex = next(row for row in payload["targets"] if row["id"] == "codex")
@@ -48,8 +54,6 @@
   assert codex["client_state"] == "ready"
   assert codex["client_state"] != "unsupported"
   ```
-
-  Второй тест оставляет Store probe missing и передаёт fixture `codex.exe --version`; он проверяет CLI fallback и ту же форму результата.
 
 - [ ] **Шаг 2: Запустить новые RED-тесты.**
 
@@ -63,7 +67,10 @@
 
 - [ ] **Шаг 3: Добавить failing tests для несовпадающей и отсутствующей версии.**
 
-  Закрепить, что Store или CLI версия `2.0.0` при source version `1.0.0` даёт `READY`/accepted-installed action и не запускает download. Закрепить, что полный absence отдаёт существующую установочную ветку. Переписать старые downgrade assertions только там, где они относятся к Codex:
+  Закрепить, что Store или CLI версия `2.0.0` при source version `1.0.0` даёт `READY`/accepted-installed action и не запускает download. Закрепить Store
+  `present:false` через `--client-plan-store-record-json <home> codex-desktop
+  <record>`: `GUIDED_STORE`, `open_store`, пустой supplied home и нет CLI
+  fallback. Переписать старые downgrade assertions только там, где они относятся к Codex:
 
   ```python
   assert payload["status"] != "BLOCKED_NO_DOWNGRADE"
@@ -97,7 +104,7 @@
 
 **Интерфейсы:**
 - Consumes: `ClientBootstrap.ProbeStore(bundleRoot, "codex-desktop") -> StoreClientResult`, `ClientDetector.DetectVersion("codex-cli") -> string|null`.
-- Produces: `ClientDetectionResult { version, source }` в общем code path; `ProductCatalog` и `ClientBootstrap.Plan` согласованно различают installed/missing и не понижают Codex.
+- Produces: `ClientDetectionResult { version, source }` в общем code path; `ProductCatalog` и `ClientBootstrap.Plan` согласованно различают installed/missing и не понижают Codex. Test-only record commands вводят validated record только в эти же пути.
 
 - [ ] **Шаг 1: Ввести минимальный общий результат определения Codex.**
 
@@ -118,6 +125,13 @@
 - [ ] **Шаг 3: Исправить Plan/Install для уже найденного Codex.**
 
   В `ClientBootstrap.Plan` при source id, относящемся к Codex, вернуть `READY` с `action = "none"` для любой непустой detected version. В `Install` не вызывать download при этом `READY`. Не менять fail-closed downgrade logic других клиентов.
+
+  Добавить только тестовые CLI: `--preflight-store-record-json <record-path>`
+  вызывает `ProductCatalog.Inspect` с validated record, а
+  `--client-plan-store-record-json <home> <client-id> <record-path>` вызывает
+  тот же `ClientBootstrap.Plan` с validated Store result. `present:false`
+  должен вернуть `GUIDED_STORE` и `action = "open_store"`; normal commands
+  сохраняют реальный Store probe.
 
 - [ ] **Шаг 4: Запустить Task 1 tests до green.**
 

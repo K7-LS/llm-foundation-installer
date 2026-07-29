@@ -67,6 +67,13 @@ RED-регрессии должны покрыть:
    имеет правильный `Tag`, профиль сохраняется и текст инструкции присутствует.
 6. Direct/VPN скрывают блок, SingBox раскрывает его повторно.
 
+Для hermetic Store-regрессий допустимы только два неаффектирующих обычный
+пользовательский запуск test-only CLI: `--preflight-store-record-json
+<record-path>` и `--client-plan-store-record-json <home> <client-id>
+<record-path>`. Оба используют существующую schema и identity validation
+Store-record, затем входят в тот же каталог/Plan path; они не меняют source
+lock, разрешение установки или normal `--preflight-json`.
+
 После реализации обязательны focused и полный набор тестов, сборка обеих
 edition, визуальный QA на реальных PNG обеих форм, protected-main CI и новый
 immutable prerelease. Новый prerelease предназначен только для повторной
