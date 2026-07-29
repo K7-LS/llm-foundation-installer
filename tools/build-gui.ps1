@@ -1528,6 +1528,9 @@ $ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
 $RuntimeBootstrapSource = Join-Path $RepositoryRoot 'src\gui\RuntimeBootstrap.cs'
 $SingBoxConfigSource = Join-Path $RepositoryRoot 'src\gui\SingBoxConfig.cs'
 $SingBoxSessionSource = Join-Path $RepositoryRoot 'src\gui\SingBoxSession.cs'
+$SystemProxyLeaseSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\SystemProxyLease.cs'
 $OperatorGuideSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\OperatorGuideDashboard.cs'
@@ -1611,6 +1614,7 @@ $CompilerArguments += @(
     $RuntimeBootstrapSource,
     $SingBoxConfigSource,
     $SingBoxSessionSource,
+    $SystemProxyLeaseSource,
     $OperatorGuideSource,
     $ConnectionSource,
     $ClientBootstrapSource

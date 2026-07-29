@@ -255,8 +255,22 @@ namespace LlmFoundationInstaller
                         {
                             { "schema_version", 1 },
                             { "nonce", nonce },
+                            {
+                                "owner_pid",
+                                Process.GetCurrentProcess().Id
+                            },
                             { "process_id", process.Id },
-                            { "listen_port", port }
+                            { "listen_port", port },
+                            {
+                                "executable_path",
+                                runtime.executable_path
+                            },
+                            {
+                                "executable_sha256",
+                                BundleIntegrity.Sha256(
+                                    runtime.executable_path
+                                )
+                            }
                         }
                     ) + "\n",
                     new UTF8Encoding(false)
@@ -350,6 +364,179 @@ namespace LlmFoundationInstaller
                 lifecycle = running.lifecycle,
                 reason = cleanup ? null : "SESSION_CLEANUP_FAILED"
             };
+        }
+
+        public static SingBoxSessionResult RecoverOwnedSessions(
+            string home
+        )
+        {
+            List<string> lifecycle = new List<string>();
+            string sessionsRoot;
+            try
+            {
+                sessionsRoot = Path.Combine(
+                    Path.GetFullPath(home),
+                    ".llm-foundation",
+                    "launcher-state",
+                    "sessions"
+                );
+            }
+            catch
+            {
+                return Failed(
+                    0,
+                    lifecycle,
+                    false,
+                    "OWNED_SESSION_RECOVERY_FAILED"
+                );
+            }
+            if (!Directory.Exists(sessionsRoot))
+            {
+                return new SingBoxSessionResult
+                {
+                    status = "PASS",
+                    listen_port = 0,
+                    uses_proxy = false,
+                    cleanup_verified = true,
+                    secret_redacted = true,
+                    lifecycle = lifecycle,
+                    reason = null
+                };
+            }
+            try
+            {
+                foreach (string sessionRoot in Directory.GetDirectories(
+                    sessionsRoot
+                ))
+                {
+                    if ((File.GetAttributes(sessionRoot) &
+                            FileAttributes.ReparsePoint) != 0)
+                    {
+                        throw new InvalidOperationException(
+                            "OWNED_SESSION_MISMATCH"
+                        );
+                    }
+                    string statePath = Path.Combine(
+                        sessionRoot,
+                        "owned-state.json"
+                    );
+                    if (!File.Exists(statePath))
+                    {
+                        throw new InvalidOperationException(
+                            "OWNED_SESSION_MISMATCH"
+                        );
+                    }
+                    Dictionary<string, object> state =
+                        new JavaScriptSerializer().Deserialize<
+                            Dictionary<string, object>
+                        >(
+                            File.ReadAllText(
+                                statePath,
+                                new UTF8Encoding(false, true)
+                            )
+                        );
+                    int schema = Convert.ToInt32(
+                        state["schema_version"]
+                    );
+                    int processId = Convert.ToInt32(
+                        state["process_id"]
+                    );
+                    string nonce = state["nonce"] as string;
+                    string executablePath =
+                        state["executable_path"] as string;
+                    string executableSha256 =
+                        state["executable_sha256"] as string;
+                    if (schema != 1 ||
+                        processId < 1 ||
+                        String.IsNullOrWhiteSpace(nonce) ||
+                        String.IsNullOrWhiteSpace(executablePath) ||
+                        String.IsNullOrWhiteSpace(executableSha256) ||
+                        !File.Exists(executablePath) ||
+                        !String.Equals(
+                            BundleIntegrity.Sha256(executablePath),
+                            executableSha256,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "OWNED_SESSION_MISMATCH"
+                        );
+                    }
+                    Process process = null;
+                    try
+                    {
+                        process = Process.GetProcessById(processId);
+                    }
+                    catch (ArgumentException)
+                    {
+                        process = null;
+                    }
+                    if (process != null)
+                    {
+                        using (process)
+                        {
+                            string runningPath = process.MainModule
+                                .FileName;
+                            if (!String.Equals(
+                                    Path.GetFullPath(runningPath),
+                                    Path.GetFullPath(executablePath),
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidOperationException(
+                                    "OWNED_SESSION_MISMATCH"
+                                );
+                            }
+                            if (!process.HasExited)
+                            {
+                                process.Kill();
+                                process.WaitForExit(10000);
+                            }
+                            if (!process.HasExited)
+                            {
+                                throw new InvalidOperationException(
+                                    "OWNED_SESSION_RECOVERY_FAILED"
+                                );
+                            }
+                        }
+                        lifecycle.Add("RUNTIME_STOPPED");
+                    }
+                    Directory.Delete(sessionRoot, true);
+                    if (Directory.Exists(sessionRoot))
+                    {
+                        throw new InvalidOperationException(
+                            "OWNED_SESSION_RECOVERY_FAILED"
+                        );
+                    }
+                    lifecycle.Add("TEMP_REMOVED");
+                }
+                return new SingBoxSessionResult
+                {
+                    status = "PASS",
+                    listen_port = 0,
+                    uses_proxy = false,
+                    cleanup_verified = true,
+                    secret_redacted = true,
+                    lifecycle = lifecycle,
+                    reason = null
+                };
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Failed(
+                    0,
+                    lifecycle,
+                    false,
+                    exception.Message
+                );
+            }
+            catch
+            {
+                return Failed(
+                    0,
+                    lifecycle,
+                    false,
+                    "OWNED_SESSION_RECOVERY_FAILED"
+                );
+            }
         }
 
         private static int RunCheck(

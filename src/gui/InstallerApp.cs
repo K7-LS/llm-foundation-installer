@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -1439,6 +1440,7 @@ namespace LlmFoundationInstaller
             Button officialLink = view.FindName(
                 "LaunchOfficialLink"
             ) as Button;
+            Button stopRoute = view.FindName("StopRoute") as Button;
             if (targetList == null || launch == null)
             {
                 return;
@@ -1592,6 +1594,12 @@ namespace LlmFoundationInstaller
                     return;
                 }
                 launch.IsEnabled = false;
+                if (stopRoute != null)
+                {
+                    stopRoute.IsEnabled =
+                        route == "SingBoxHttp" ||
+                        route == "SingBoxHttps";
+                }
                 if (routeStatus != null)
                 {
                     routeStatus.Text = RouteLabel(route) +
@@ -1625,6 +1633,10 @@ namespace LlmFoundationInstaller
                     rollbackStatus.Text = result.cleanup_verified
                         ? "Очистка подтверждена"
                         : "Очистка не подтверждена";
+                }
+                if (stopRoute != null)
+                {
+                    stopRoute.IsEnabled = false;
                 }
                 refreshLabel();
             };
@@ -2930,6 +2942,30 @@ namespace LlmFoundationInstaller
             if (contract.Stop != null)
             {
                 contract.Stop.IsEnabled = false;
+                contract.Stop.Click += async delegate
+                {
+                    contract.Stop.IsEnabled = false;
+                    contract.Status.Text =
+                        "Останавливаем маршрут SingBox и восстанавливаем системный прокси…";
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(49, 87, 199)
+                    );
+                    SingBoxSessionResult stopped = await Task.Run(
+                        delegate
+                        {
+                            return ClientLauncher.StopActiveRoute();
+                        }
+                    );
+                    contract.Status.Text = stopped.cleanup_verified
+                        ? "Маршрут SingBox остановлен. Системный прокси восстановлен."
+                        : "Маршрут остановлен не полностью: " +
+                            (stopped.reason ?? "проверьте системный прокси вручную.");
+                    contract.Status.Foreground = new SolidColorBrush(
+                        stopped.cleanup_verified
+                            ? Color.FromRgb(22, 122, 88)
+                            : Color.FromRgb(161, 92, 0)
+                    );
+                };
             }
         }
 
@@ -3798,6 +3834,222 @@ namespace LlmFoundationInstaller
                         session
                     ));
                     return session.status == "PASS" ? 0 : 20;
+                }
+                if ((args.Length == 3 || args.Length == 4) &&
+                    args[0] == "--system-proxy-watchdog")
+                {
+                    int ownerPid;
+                    if (!Int32.TryParse(args[1], out ownerPid))
+                    {
+                        WriteError("Некорректный PID владельца");
+                        return 2;
+                    }
+                    ProxyRecoveryResult watchdogResult;
+                    if (args.Length == 4)
+                    {
+                        if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                            !SystemProxyLease
+                                .IsAllowedTestRegistrySubkey(args[3]))
+                        {
+                            WriteError(
+                                "Тест системного proxy запрещён для production"
+                            );
+                            return 2;
+                        }
+                        watchdogResult = SystemProxyLease.Watchdog(
+                            ownerPid,
+                            args[2],
+                            args[3]
+                        );
+                    }
+                    else
+                    {
+                        watchdogResult = SystemProxyLease.Watchdog(
+                            ownerPid,
+                            args[2]
+                        );
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        watchdogResult
+                    ));
+                    return watchdogResult.cleanup_verified ? 0 : 20;
+                }
+                if ((args.Length == 5 || args.Length == 6) &&
+                    args[0] == "--system-proxy-test-json")
+                {
+                    if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                        !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                            args[3]))
+                    {
+                        WriteError(
+                            "Тест системного proxy запрещён для production"
+                        );
+                        return 2;
+                    }
+                    int port;
+                    if (!Int32.TryParse(args[4], out port))
+                    {
+                        WriteError("Некорректный локальный порт");
+                        return 2;
+                    }
+                    ProxyRecoveryResult proxyResult;
+                    if (args[1] == "normal-cycle" &&
+                        args.Length == 5)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                        if (proxyResult.status == "ACQUIRED")
+                        {
+                            proxyResult =
+                                SystemProxyLease.StopActiveRoute();
+                        }
+                    }
+                    else if (args[1] == "hold" &&
+                        args.Length == 6)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                        if (proxyResult.status == "ACQUIRED")
+                        {
+                            DateTime deadline = DateTime.UtcNow
+                                .AddSeconds(60);
+                            while (!File.Exists(args[5]) &&
+                                DateTime.UtcNow < deadline)
+                            {
+                                Thread.Sleep(50);
+                            }
+                            proxyResult =
+                                SystemProxyLease.StopActiveRoute();
+                        }
+                    }
+                    else if (args[1] == "acquire" &&
+                        args.Length == 5)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                    }
+                    else
+                    {
+                        WriteError(
+                            "Неподдерживаемый тест системного proxy"
+                        );
+                        return 2;
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        proxyResult
+                    ));
+                    return proxyResult.cleanup_verified &&
+                        (proxyResult.status == "ACQUIRED" ||
+                            proxyResult.status == "RESTORED")
+                        ? 0
+                        : 20;
+                }
+                if ((args.Length == 6 || args.Length == 7) &&
+                    args[0] == "--test-appx-singbox-json")
+                {
+                    if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                        !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                            args[3]))
+                    {
+                        WriteError(
+                            "Тест AppX-маршрута запрещён для production"
+                        );
+                        return 2;
+                    }
+                    string expectedFixture = Path.GetFullPath(
+                        Path.Combine(
+                            Environment.GetFolderPath(
+                                Environment.SpecialFolder.Windows
+                            ),
+                            "System32",
+                            "cmd.exe"
+                        )
+                    );
+                    string fixture = Path.GetFullPath(args[4]);
+                    if (!String.Equals(
+                            fixture,
+                            expectedFixture,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !File.Exists(fixture))
+                    {
+                        WriteError(
+                            "Разрешён только системный подписанный fixture"
+                        );
+                        return 2;
+                    }
+                    bool activationFailure =
+                        args[5] == "activation-failure";
+                    if (!activationFailure &&
+                        args[5] != "success")
+                    {
+                        WriteError("Некорректный режим AppX-теста");
+                        return 2;
+                    }
+                    Thread stopThread = null;
+                    if (args.Length == 7)
+                    {
+                        string stopSignal = Path.GetFullPath(args[6]);
+                        stopThread = new Thread(
+                            new ThreadStart(delegate
+                            {
+                                DateTime deadline = DateTime.UtcNow
+                                    .AddSeconds(60);
+                                while (!File.Exists(stopSignal) &&
+                                    DateTime.UtcNow < deadline)
+                                {
+                                    Thread.Sleep(50);
+                                }
+                                if (File.Exists(stopSignal))
+                                {
+                                    ClientLauncher.StopActiveRoute();
+                                }
+                            })
+                        );
+                        stopThread.IsBackground = true;
+                        stopThread.Start();
+                    }
+                    LaunchTargetResolution testTarget =
+                        new LaunchTargetResolution
+                        {
+                            status = "RESOLVED",
+                            target_id = "codex-desktop",
+                            client_id = "codex-desktop",
+                            role = "desktop",
+                            launch_mode = "appx",
+                            executable_path = fixture,
+                            sha256 = BundleIntegrity.Sha256(fixture),
+                            activation_id = "K7AITest!App",
+                            package_full_name = "K7AITest"
+                        };
+                    LauncherSessionResult appx =
+                        ClientLauncher.StartAppxThroughSingBoxForTest(
+                            testTarget,
+                            args[2],
+                            bundleRoot,
+                            args[1],
+                            args[3],
+                            Environment.GetEnvironmentVariable(
+                                "K7_APPX_FIXTURE_ARGS"
+                            ),
+                            activationFailure
+                        );
+                    if (stopThread != null)
+                    {
+                        stopThread.Join(5000);
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        appx
+                    ));
+                    return appx.status == "PASS" ? 0 : 20;
                 }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {

@@ -951,11 +951,22 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
     source = (
         REPOSITORY / "src" / "gui" / "ClientLauncher.cs"
     ).read_text(encoding="utf-8")
+    installer_source = (
+        REPOSITORY / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    proxy_source = (
+        REPOSITORY / "src" / "gui" / "SystemProxyLease.cs"
+    ).read_text(encoding="utf-8")
 
     assert "IApplicationActivationManager" in source
     assert "ActivateApplication" in source
     assert "Process.GetProcessById" in source
-    assert "PROCESS_PROXY_NOT_SUPPORTED" in source
+    assert "PROCESS_PROXY_NOT_SUPPORTED" not in source
+    assert "SystemProxyLease.Acquire" in source
+    assert "public static SingBoxSessionResult StopActiveRoute()" in source
+    assert "contract.Stop.Click +=" in installer_source
+    assert "ClientLauncher.StopActiveRoute()" in installer_source
+    assert "InternetSetOption" in proxy_source
 
 
 @pytest.mark.parametrize("route", ["Direct", "VPN"])
