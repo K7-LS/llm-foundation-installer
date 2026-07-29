@@ -2641,6 +2641,81 @@ def test_codex_newer_version_is_ready_without_download(
     assert not staging.exists()
 
 
+def test_target_plan_passes_detected_codex_version_to_foundation(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    source_lock = _codex_cli_source_lock(
+        tmp_path / "codex-client-sources.test.json",
+        version="1.0.0-test",
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        package_source,
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    executable = bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    target_plan = subprocess.run(
+        [
+            str(executable),
+            "--target-client-plan-json",
+            str(home),
+            "codex",
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert target_plan.returncode == 0, (
+        target_plan.stdout + target_plan.stderr
+    )
+    cli = json.loads(target_plan.stdout)["clients"][0]
+    assert cli["client_id"] == "codex-cli"
+    assert cli["detected_version"] == "2.0.0"
+
+    foundation = subprocess.run(
+        [
+            str(executable),
+            "--workflow-json",
+            "plan",
+            "codex",
+            str(home),
+            cli["detected_version"],
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+
+    assert foundation.returncode == 10
+    assert json.loads(foundation.stdout)["code"] == "UNSUPPORTED_CLIENT"
+
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    assert "row.detected_version = verified.clients" in source
+    assert "cli.version;" not in source
+
+
 def test_codex_missing_client_keeps_install_available(
     tmp_path: Path,
 ):
@@ -3048,6 +3123,49 @@ def test_cli_fallback_codex_preflight_accepts_detected_version(
     assert codex["detected_version"] == "2.0.0"
     assert codex["client_state"] == "ready"
     assert codex["client_state"] != "unsupported"
+
+
+def test_validated_store_codex_preflight_has_precedence_over_cli(
+    tmp_path: Path,
+):
+    package_source = tmp_path / "package-source"
+    _accepted_package(package_source)
+    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
+    store_location = tmp_path / "WindowsApps" / (
+        "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
+    )
+    store_location.mkdir(parents=True)
+    record = _codex_store_record(
+        tmp_path / "store-record.json",
+        store_location,
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    result = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--preflight-store-record-json",
+            str(record),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    codex = next(row for row in payload["targets"] if row["id"] == "codex")
+    assert codex["detected_version"] == "26.721.4979.0"
+    assert codex["detected_version"] != "2.0.0"
+    assert codex["client_state"] == "ready"
 
 
 def test_platform_preflight_accepts_only_windows_x64_build_19041_or_newer(
@@ -4657,7 +4775,7 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
     ).read_text(encoding="utf-8")
     for required in (
         "ClientBootstrap.PlanTarget",
-        "ClientBootstrap.RequiredSourcesForTarget",
+        "verified.clients.First",
         "ClientBootstrap.Install",
         "ClientBootstrap.OpenStoreSource",
         "RunClientBootstrapAsync",

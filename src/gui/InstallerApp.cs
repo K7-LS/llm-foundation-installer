@@ -2063,13 +2063,9 @@ namespace LlmFoundationInstaller
                         );
                         continue;
                     }
-                    ClientSource cli =
-                        ClientBootstrap.RequiredSourcesForTarget(
-                            bundleRoot,
-                            row.id
-                        ).First(source =>
-                            source.role == "cli");
-                    row.detected_version = cli.version;
+                    row.detected_version = verified.clients.First(plan =>
+                        plan.client_id == row.client_id
+                    ).detected_version;
                     row.client_state = "ready";
                     clientReady.Add(row);
                 }
