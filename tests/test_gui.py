@@ -2694,7 +2694,6 @@ def test_codex_store_missing_client_guides_store_without_cli_fallback(
     home.mkdir()
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
-    staging = tmp_path / "client-staging"
     record = tmp_path / "missing-store-record.json"
     _write_json(record, {"present": False})
     environment = os.environ.copy()
@@ -2726,7 +2725,7 @@ def test_codex_store_missing_client_guides_store_without_cli_fallback(
         "detected_state": "not_checked",
         "action": "open_store",
     }
-    assert not staging.exists()
+    assert list(home.iterdir()) == []
 
 
 @pytest.mark.parametrize("powershell", POWERSHELLS)
