@@ -29,12 +29,15 @@ namespace LlmFoundationInstaller
 
     internal static class VsCodeIntegration
     {
-        private const string MarketplaceUrl =
+        internal const string OfficialMarketplaceUrl =
             "https://marketplace.visualstudio.com/" +
             "items?itemName=OpenAI.chatgpt";
         private const string CloseAction =
             "Сохраните работу, закройте все окна VS Code " +
             "и повторите запуск.";
+        private const string ExtensionIdAction =
+            "Идентификатор расширения OpenAI.chatgpt не обнаружен. " +
+            "Откройте страницу Marketplace и установите расширение вручную.";
         private static readonly Guid GenericVerifyAction =
             new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
@@ -85,6 +88,19 @@ namespace LlmFoundationInstaller
                 return Blocked("VSCODE_NOT_FOUND", null, null);
             }
 
+            string hashBefore;
+            try
+            {
+                hashBefore = BundleIntegrity.Sha256(executable);
+            }
+            catch
+            {
+                return Blocked(
+                    "VSCODE_INTEGRITY_CHANGED",
+                    null,
+                    null
+                );
+            }
             string signatureStatus;
             string signerSubject;
             InspectSignature(
@@ -92,6 +108,30 @@ namespace LlmFoundationInstaller
                 out signatureStatus,
                 out signerSubject
             );
+            string hashAfter;
+            try
+            {
+                hashAfter = BundleIntegrity.Sha256(executable);
+            }
+            catch
+            {
+                return Blocked(
+                    "VSCODE_INTEGRITY_CHANGED",
+                    null,
+                    null
+                );
+            }
+            if (!String.Equals(
+                    hashBefore,
+                    hashAfter,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Blocked(
+                    "VSCODE_INTEGRITY_CHANGED",
+                    null,
+                    null
+                );
+            }
             string extensionPublisher;
             string extensionName;
             string extensionPath;
@@ -110,7 +150,7 @@ namespace LlmFoundationInstaller
                 extension_name = extensionName,
                 extension_path = extensionPath,
                 code_running = IsCodeRunning()
-            });
+            }, hashAfter);
         }
 
         internal static LaunchTargetResolution ResolveTestRecord(
@@ -132,7 +172,88 @@ namespace LlmFoundationInstaller
             {
                 Path.GetFullPath(home);
                 VsCodeTrustRecord record = LoadTestRecord(recordPath);
-                return Evaluate(record);
+                return Evaluate(record, null);
+            }
+            catch
+            {
+                return Blocked(
+                    "VSCODE_TEST_RECORD_INVALID",
+                    null,
+                    null
+                );
+            }
+        }
+
+        internal static LaunchTargetResolution ResolveMutatingTestRecord(
+            string bundleRoot,
+            string home,
+            string recordPath,
+            string mutationPath
+        )
+        {
+            ClientSourceLock sourceLock = ClientBootstrap.Load(bundleRoot);
+            if (!sourceLock.test_only)
+            {
+                return Blocked(
+                    "TEST_ONLY_SOURCE_REQUIRED",
+                    null,
+                    null
+                );
+            }
+            try
+            {
+                string homeRoot = Path.GetFullPath(home).TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar
+                ) + Path.DirectorySeparatorChar;
+                VsCodeTrustRecord record = LoadTestRecord(recordPath);
+                string executable = Path.GetFullPath(
+                    record.executable_path
+                );
+                if (!executable.StartsWith(
+                        homeRoot,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException();
+                }
+                FileInfo executableInfo = new FileInfo(executable);
+                FileInfo mutationInfo = new FileInfo(
+                    Path.GetFullPath(mutationPath)
+                );
+                if (!executableInfo.Exists ||
+                    (executableInfo.Attributes &
+                        FileAttributes.ReparsePoint) != 0 ||
+                    !mutationInfo.Exists ||
+                    mutationInfo.Length < 1 ||
+                    mutationInfo.Length > 1048576 ||
+                    (mutationInfo.Attributes &
+                        FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidOperationException();
+                }
+                string hashBefore = BundleIntegrity.Sha256(executable);
+                LaunchTargetResolution precondition = EvaluateTrust(record);
+                if (precondition != null)
+                {
+                    return precondition;
+                }
+                File.WriteAllBytes(
+                    executable,
+                    File.ReadAllBytes(mutationInfo.FullName)
+                );
+                string hashAfter = BundleIntegrity.Sha256(executable);
+                if (!String.Equals(
+                        hashBefore,
+                        hashAfter,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return Blocked(
+                        "VSCODE_INTEGRITY_CHANGED",
+                        null,
+                        null
+                    );
+                }
+                return Evaluate(record, hashAfter);
             }
             catch
             {
@@ -230,6 +351,57 @@ namespace LlmFoundationInstaller
         }
 
         private static LaunchTargetResolution Evaluate(
+            VsCodeTrustRecord record,
+            string verifiedHash
+        )
+        {
+            LaunchTargetResolution trustFailure = EvaluateTrust(record);
+            if (trustFailure != null)
+            {
+                return trustFailure;
+            }
+            if (!String.Equals(
+                    record.extension_publisher,
+                    "OpenAI",
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    record.extension_name,
+                    "chatgpt",
+                    StringComparison.Ordinal))
+            {
+                return Blocked(
+                    "CODEX_EXTENSION_ID_NOT_DETECTED",
+                    OfficialMarketplaceUrl,
+                    ExtensionIdAction
+                );
+            }
+            if (record.code_running)
+            {
+                return Blocked(
+                    "VSCODE_ALREADY_RUNNING",
+                    null,
+                    CloseAction
+                );
+            }
+            return new LaunchTargetResolution
+            {
+                status = "RESOLVED",
+                target_id = "vscode-codex",
+                client_id = "codex-desktop",
+                role = "desktop",
+                launch_mode = "executable",
+                executable_path = record.executable_path,
+                sha256 = verifiedHash,
+                activation_id = null,
+                package_full_name = null,
+                official_url = null,
+                action = null,
+                extension_path = record.extension_path,
+                reason = null
+            };
+        }
+
+        private static LaunchTargetResolution EvaluateTrust(
             VsCodeTrustRecord record
         )
         {
@@ -252,48 +424,7 @@ namespace LlmFoundationInstaller
                     null
                 );
             }
-            if (!String.Equals(
-                    record.extension_publisher,
-                    "OpenAI",
-                    StringComparison.Ordinal) ||
-                !String.Equals(
-                    record.extension_name,
-                    "chatgpt",
-                    StringComparison.Ordinal))
-            {
-                return Blocked(
-                    "CODEX_EXTENSION_NOT_VERIFIED",
-                    MarketplaceUrl,
-                    null
-                );
-            }
-            if (record.code_running)
-            {
-                return Blocked(
-                    "VSCODE_ALREADY_RUNNING",
-                    null,
-                    CloseAction
-                );
-            }
-            string hash = File.Exists(record.executable_path)
-                ? BundleIntegrity.Sha256(record.executable_path)
-                : null;
-            return new LaunchTargetResolution
-            {
-                status = "RESOLVED",
-                target_id = "vscode-codex",
-                client_id = "codex-desktop",
-                role = "desktop",
-                launch_mode = "executable",
-                executable_path = record.executable_path,
-                sha256 = hash,
-                activation_id = null,
-                package_full_name = null,
-                official_url = null,
-                action = null,
-                extension_path = record.extension_path,
-                reason = null
-            };
+            return null;
         }
 
         private static LaunchTargetResolution Blocked(
@@ -509,21 +640,94 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            foreach (string component in subject.Split(','))
+            try
             {
-                string value = component.Trim();
-                if (value.StartsWith(
-                        "CN=",
-                        StringComparison.OrdinalIgnoreCase))
+                string decoded = new X500DistinguishedName(subject).Decode(
+                    X500DistinguishedNameFlags.UseCommas |
+                    X500DistinguishedNameFlags.DoNotUsePlusSign
+                );
+                string commonName = null;
+                string organization = null;
+                foreach (string component in SplitX500(decoded))
                 {
-                    return String.Equals(
-                        value.Substring(3).Trim(),
-                        "Microsoft Corporation",
-                        StringComparison.OrdinalIgnoreCase
-                    );
+                    int separator = component.IndexOf('=');
+                    if (separator < 1)
+                    {
+                        continue;
+                    }
+                    string key = component.Substring(0, separator).Trim();
+                    string value = component.Substring(separator + 1)
+                        .Trim()
+                        .Trim('"');
+                    if (String.Equals(
+                            key,
+                            "CN",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        commonName = value;
+                    }
+                    else if (String.Equals(
+                        key,
+                        "O",
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        organization = value;
+                    }
                 }
+                return String.Equals(
+                        commonName,
+                        "Microsoft Corporation",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    String.Equals(
+                        organization,
+                        "Microsoft Corporation",
+                        StringComparison.OrdinalIgnoreCase);
             }
-            return false;
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static IEnumerable<string> SplitX500(string value)
+        {
+            List<string> components = new List<string>();
+            StringBuilder current = new StringBuilder();
+            bool quoted = false;
+            bool escaped = false;
+            foreach (char character in value)
+            {
+                if (escaped)
+                {
+                    current.Append(character);
+                    escaped = false;
+                    continue;
+                }
+                if (character == '\\')
+                {
+                    escaped = true;
+                    current.Append(character);
+                    continue;
+                }
+                if (character == '"')
+                {
+                    quoted = !quoted;
+                    current.Append(character);
+                    continue;
+                }
+                if (character == ',' && !quoted)
+                {
+                    components.Add(current.ToString());
+                    current.Clear();
+                    continue;
+                }
+                current.Append(character);
+            }
+            if (current.Length != 0)
+            {
+                components.Add(current.ToString());
+            }
+            return components;
         }
 
         private static void InspectExtension(

@@ -135,7 +135,7 @@
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                   <Border Width="44" Height="44" CornerRadius="22" Background="#DFF5FC"><TextBlock Text="VS" FontFamily="Bahnschrift SemiCondensed" FontSize="17" FontWeight="Bold" Foreground="#137A9D" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
-                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="VS Code — Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" /><TextBlock Text="Официальное расширение OpenAI" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
+                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="VS Code — Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" /><TextBlock Text="Локальный ID: OpenAI.chatgpt" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
                   <TextBlock Grid.Column="2" Text="ПРОВЕРКА" FontFamily="Cascadia Mono" FontSize="10" Foreground="#137A9D" VerticalAlignment="Center" />
                 </Grid>
               </Border>
@@ -200,6 +200,8 @@
               <TextBlock x:Name="SelectedRouteName" Text="Прямое подключение" Foreground="#C3D0D1" />
             </StackPanel>
           </Border>
+          <TextBlock x:Name="LaunchGuidance" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#9B3A1C" FontSize="11" Margin="0,12,0,0" />
+          <Button x:Name="LaunchOfficialLink" Visibility="Collapsed" Content="Открыть страницу OpenAI.chatgpt →" HorizontalAlignment="Left" Padding="12,7" Margin="0,8,0,0" />
         </StackPanel>
       </Grid>
 

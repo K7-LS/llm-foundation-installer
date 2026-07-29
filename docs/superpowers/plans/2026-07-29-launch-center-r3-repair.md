@@ -14,7 +14,7 @@
 - Все новые пользовательские тексты и документы — на русском; программные ID, `Tag`, JSON reason и manifest IDs остаются invariant.
 - Employee Launch Center показывает ровно `codex-desktop`, `codex-cli`, `vscode-codex`, `opencode-desktop`, `opencode-cli`.
 - Owner Launch Center UI точно равен своему `LaunchTargetCatalog.ForEdition`, включая owner-only цели и `vscode-codex`.
-- VS Code принимается только из согласованных путей, с валидной Authenticode-подписью Microsoft Corporation; версия не pinned. Расширение проверяется по `publisher=OpenAI`, `name=chatgpt`; официальный URL — `https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt`.
+- VS Code принимается только из согласованных путей, с неизменным SHA-256 до/после WinVerifyTrust и валидной Authenticode-подписью, где X.500 `CN` и `O` равны Microsoft Corporation; версия не pinned. Manifest-поля `publisher=OpenAI`, `name=chatgpt` подтверждают только локально заявленный ID, не криптографическую provenance расширения; пользовательская ссылка ведёт на точную официальную карточку `https://marketplace.visualstudio.com/items?itemName=OpenAI.chatgpt`.
 - Любая system-proxy операция ограничена текущим пользователем, единственной lease, owned-state, watchdog и compare-and-swap. Неподтверждённое восстановление блокирует новую AppX-сессию.
 - CI-тесты system proxy работают только с изолированным `HKCU\Software\K7AITests\...`; реальный `Internet Settings` тестами не изменяется.
 - Пароль не появляется в UI-статусах, stdout/stderr, JSON/evidence, логах и release-отчётах.
@@ -27,7 +27,7 @@
 - `src/gui/LaunchCenterEmployeeView.xaml` — Employee-карточки, маршруты, proxy-поля, Save/Test/Stop.
 - `src/gui/LaunchCenterOwnerView.xaml` — Owner-карточки и тот же connection contract.
 - `src/gui/LaunchTarget.cs` — synthetic integration-target `vscode-codex` и resolution routing.
-- `src/gui/VsCodeIntegration.cs` — поиск/проверка Code.exe и manifest официального расширения.
+- `src/gui/VsCodeIntegration.cs` — поиск/проверка Code.exe и обнаружение локально заявленного ID расширения.
 - `src/gui/SingBoxSession.cs` — конкретные runtime reasons и сквозной route probe.
 - `src/gui/ClientLauncher.cs` — process-only и AppX lifecycle, активная сессия и Stop route.
 - `src/gui/SystemProxyLease.cs` — registry snapshot/apply/recover, mutex, watchdog contract.
@@ -188,10 +188,10 @@
   }
   ```
 
-  Валидная запись даёт `RESOLVED`. `NotSigned`, другой signer, иной publisher,
-  иной extension name и `code_running=true` дают отдельные stable reasons:
+  Валидная запись даёт `RESOLVED`. `NotSigned`, другой signer `CN`/`O`,
+  иной extension ID и `code_running=true` дают отдельные stable reasons:
   `VSCODE_SIGNATURE_INVALID`, `VSCODE_PUBLISHER_INVALID`,
-  `CODEX_EXTENSION_NOT_VERIFIED`, `VSCODE_ALREADY_RUNNING`.
+  `CODEX_EXTENSION_ID_NOT_DETECTED`, `VSCODE_ALREADY_RUNNING`.
 
 - [ ] **Step 3: Запустить RED.**
 
@@ -204,10 +204,11 @@
 - [ ] **Step 4: Реализовать VsCodeIntegration и synthetic target.**
 
   Нормальный resolver ищет Code.exe только по согласованным путям и `PATH`,
-  проверяет Authenticode через `WinVerifyTrust`, затем signer subject.
-  Manifest ищется в `%USERPROFILE%\.vscode\extensions\openai.chatgpt-*` и
-  принимается по двум полям JSON. Missing extension возвращает reason и
-  `official_url`, не устанавливает расширение.
+  считает SHA-256, проверяет Authenticode через `WinVerifyTrust`, разбирает
+  signer subject (`CN` и `O`), повторно считает SHA-256 и блокирует изменение.
+  Manifest ищется в `%USERPROFILE%\.vscode\extensions\openai.chatgpt-*`; два
+  поля JSON подтверждают только локально заявленный ID. Missing ID возвращает
+  reason, русское действие и `official_url`, не устанавливает расширение.
 
   При `code_running=true` возвращается блокировка с русским действием:
   сохранить работу, закрыть все окна VS Code и повторить запуск.

@@ -1436,6 +1436,9 @@ namespace LlmFoundationInstaller
             TextBlock selectedProviderName = view.FindName(
                 "SelectedProviderName"
             ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
             if (targetList == null || launch == null)
             {
                 return;
@@ -1458,6 +1461,17 @@ namespace LlmFoundationInstaller
                 {
                     selectedProviderName.Text =
                         TargetProviderName(targetId);
+                }
+                if (evidenceStatus != null)
+                {
+                    evidenceStatus.Text = String.Equals(
+                        targetId,
+                        "vscode-codex",
+                        StringComparison.Ordinal
+                    )
+                        ? "Локальный ID OpenAI.chatgpt будет " +
+                            "обнаружен при запуске"
+                        : "Пакет проверен";
                 }
             };
             Action refreshRoute = delegate
@@ -1483,6 +1497,7 @@ namespace LlmFoundationInstaller
             };
             targetList.SelectionChanged += delegate
             {
+                ApplyResolutionFeedback(view, null);
                 refreshLabel();
             };
             RoutedEventHandler routeChanged = delegate
@@ -1510,6 +1525,25 @@ namespace LlmFoundationInstaller
             if (!interactive)
             {
                 return;
+            }
+            if (officialLink != null)
+            {
+                officialLink.Click += delegate
+                {
+                    string officialUrl = officialLink.Tag as string;
+                    if (!String.Equals(
+                            officialUrl,
+                            VsCodeIntegration.OfficialMarketplaceUrl,
+                            StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = officialUrl,
+                        UseShellExecute = true
+                    });
+                };
             }
             launch.Click += async delegate
             {
@@ -1544,11 +1578,13 @@ namespace LlmFoundationInstaller
                         home,
                         targetId
                     );
+                ApplyResolutionFeedback(view, resolution);
                 if (resolution.status != "RESOLVED")
                 {
                     if (evidenceStatus != null)
                     {
-                        evidenceStatus.Text = resolution.reason;
+                        evidenceStatus.Text =
+                            resolution.action ?? resolution.reason;
                         evidenceStatus.Foreground = new SolidColorBrush(
                             Color.FromRgb(252, 122, 77)
                         );
@@ -1591,6 +1627,98 @@ namespace LlmFoundationInstaller
                         : "Очистка не подтверждена";
                 }
                 refreshLabel();
+            };
+        }
+
+        internal static void ApplyResolutionFeedback(
+            UserControl view,
+            LaunchTargetResolution resolution
+        )
+        {
+            TextBlock guidance = view.FindName(
+                "LaunchGuidance"
+            ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
+            string action = resolution == null
+                ? null
+                : resolution.action;
+            string officialUrl = resolution == null
+                ? null
+                : resolution.official_url;
+            if (guidance != null)
+            {
+                guidance.Text = action ?? "";
+                guidance.Visibility = String.IsNullOrWhiteSpace(action)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+            }
+            if (officialLink != null)
+            {
+                bool exactOfficialUrl = String.Equals(
+                    officialUrl,
+                    VsCodeIntegration.OfficialMarketplaceUrl,
+                    StringComparison.Ordinal
+                );
+                officialLink.Tag = exactOfficialUrl
+                    ? officialUrl
+                    : null;
+                officialLink.Visibility = exactOfficialUrl
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+        }
+
+        internal static Dictionary<string, object>
+            DescribeResolutionFeedback(
+                UserControl view,
+                LaunchTargetResolution resolution
+            )
+        {
+            TextBlock guidance = view.FindName(
+                "LaunchGuidance"
+            ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
+            return new Dictionary<string, object>
+            {
+                {
+                    "resolution_reason",
+                    resolution == null ? null : resolution.reason
+                },
+                {
+                    "action_text",
+                    guidance == null ? null : guidance.Text
+                },
+                {
+                    "action_visibility",
+                    guidance == null
+                        ? null
+                        : guidance.Visibility.ToString()
+                },
+                {
+                    "official_url",
+                    officialLink == null
+                        ? null
+                        : officialLink.Tag as string
+                },
+                {
+                    "official_link_visibility",
+                    officialLink == null
+                        ? null
+                        : officialLink.Visibility.ToString()
+                },
+                {
+                    "official_link_content",
+                    officialLink == null
+                        ? null
+                        : Convert.ToString(
+                            officialLink.Content,
+                            CultureInfo.InvariantCulture
+                        )
+                }
             };
         }
 
@@ -1640,6 +1768,9 @@ namespace LlmFoundationInstaller
             TextBlock route = view.FindName(
                 "SelectedRouteName"
             ) as TextBlock;
+            TextBlock evidence = view.FindName(
+                "EvidenceStatus"
+            ) as TextBlock;
             ListBoxItem selected = targetList == null
                 ? null
                 : targetList.SelectedItem as ListBoxItem;
@@ -1679,6 +1810,8 @@ namespace LlmFoundationInstaller
                 provider == null ? null : provider.Text;
             state["route_display"] =
                 route == null ? null : route.Text;
+            state["evidence_status"] =
+                evidence == null ? null : evidence.Text;
             return state;
         }
 
@@ -3346,6 +3479,56 @@ namespace LlmFoundationInstaller
                         resolution
                     ));
                     return resolution.status == "RESOLVED" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] ==
+                        "--resolve-vscode-mutating-record-json")
+                {
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveMutatingTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--ui-vscode-resolution-json")
+                {
+                    if (edition.product_role != "LaunchCenter")
+                    {
+                        WriteError(
+                            "Команда состояния доступна только центру запуска"
+                        );
+                        return 2;
+                    }
+                    Application stateApp = new Application();
+                    UserControl stateView = InstallerView.Create(
+                        bundleRoot,
+                        false
+                    );
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    LaunchCenterActions.ApplyResolutionFeedback(
+                        stateView,
+                        resolution
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchCenterActions.DescribeResolutionFeedback(
+                            stateView,
+                            resolution
+                        )
+                    ));
+                    stateApp.Shutdown();
+                    return 0;
                 }
                 if (args.Length == 4 &&
                     args[0] == "--launch-target-json")

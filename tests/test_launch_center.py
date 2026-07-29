@@ -150,6 +150,30 @@ def _write_vscode_record(
     path.write_text(json.dumps(record), encoding="utf-8")
 
 
+def _find_vscode_candidate() -> Path | None:
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.append(
+            Path(local_app_data)
+            / "Programs"
+            / "Microsoft VS Code"
+            / "Code.exe"
+        )
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(variable)
+        if root:
+            candidates.append(Path(root) / "Microsoft VS Code" / "Code.exe")
+    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = Path(raw_entry.strip().strip('"'))
+        if not str(entry):
+            continue
+        candidates.append(entry / "Code.exe")
+        if (entry / "code.cmd").is_file():
+            candidates.append(entry.parent / "Code.exe")
+    return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+
+
 @pytest.fixture(scope="module")
 def vscode_test_bundle(
     tmp_path_factory: pytest.TempPathFactory,
@@ -345,6 +369,9 @@ def test_ui_launch_selection_json_shows_vscode_correlation(
     assert value["selection_visual"] == "VISIBLE"
     assert value["button_content"] == "Запустить VS Code →"
     assert value["client_display"] == "VS CODE — CODEX"
+    assert value["evidence_status"] == (
+        "Локальный ID OpenAI.chatgpt будет обнаружен при запуске"
+    )
 
 
 def test_vscode_trusted_record_resolves_only_from_test_only_bundle(
@@ -394,11 +421,42 @@ def test_vscode_missing_extension_returns_official_install_action(
     )
 
     assert returncode == 20
-    assert value["reason"] == "CODEX_EXTENSION_NOT_VERIFIED"
+    assert value["reason"] == "CODEX_EXTENSION_ID_NOT_DETECTED"
+    assert value["action"] == (
+        "Идентификатор расширения OpenAI.chatgpt не обнаружен. "
+        "Откройте страницу Marketplace и установите расширение вручную."
+    )
     assert value["official_url"] == (
         "https://marketplace.visualstudio.com/"
         "items?itemName=OpenAI.chatgpt"
     )
+
+
+def test_vscode_mutation_between_signature_and_second_hash_is_blocked(
+    tmp_path: Path,
+    vscode_test_bundle: Path,
+) -> None:
+    home = tmp_path / "home"
+    executable = home / "fixture" / "Code.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"before-signature-check\n")
+    mutation = tmp_path / "mutation.bin"
+    mutation.write_bytes(b"after-signature-check\n")
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(record, executable_path=str(executable))
+
+    returncode, value = _run_json(
+        vscode_test_bundle,
+        "--resolve-vscode-mutating-record-json",
+        str(home),
+        str(record),
+        str(mutation),
+    )
+
+    assert executable.read_bytes() == b"after-signature-check\n"
+    assert returncode == 20
+    assert value["status"] == "BLOCKED"
+    assert value["reason"] == "VSCODE_INTEGRITY_CHANGED"
 
 
 @pytest.mark.parametrize(
@@ -418,12 +476,21 @@ def test_vscode_missing_extension_returns_official_install_action(
             "VSCODE_PUBLISHER_INVALID",
         ),
         (
+            {
+                "signer_subject": (
+                    "CN=Microsoft Corporation, O=Contoso Corporation, "
+                    "L=Redmond, S=Washington, C=US"
+                )
+            },
+            "VSCODE_PUBLISHER_INVALID",
+        ),
+        (
             {"extension_publisher": "Contoso"},
-            "CODEX_EXTENSION_NOT_VERIFIED",
+            "CODEX_EXTENSION_ID_NOT_DETECTED",
         ),
         (
             {"extension_name": "codex"},
-            "CODEX_EXTENSION_NOT_VERIFIED",
+            "CODEX_EXTENSION_ID_NOT_DETECTED",
         ),
         (
             {"code_running": True},
@@ -450,7 +517,11 @@ def test_vscode_trust_failures_have_stable_reasons(
     assert returncode == 20
     assert value["status"] == "BLOCKED"
     assert value["reason"] == expected_reason
-    if expected_reason == "CODEX_EXTENSION_NOT_VERIFIED":
+    if expected_reason == "CODEX_EXTENSION_ID_NOT_DETECTED":
+        assert value["action"] == (
+            "Идентификатор расширения OpenAI.chatgpt не обнаружен. "
+            "Откройте страницу Marketplace и установите расширение вручную."
+        )
         assert value["official_url"] == (
             "https://marketplace.visualstudio.com/"
             "items?itemName=OpenAI.chatgpt"
@@ -460,6 +531,91 @@ def test_vscode_trust_failures_have_stable_reasons(
             "Сохраните работу, закройте все окна VS Code "
             "и повторите запуск."
         )
+
+
+def test_vscode_missing_id_is_shown_as_wpf_marketplace_guidance(
+    tmp_path: Path,
+    vscode_test_bundle: Path,
+) -> None:
+    home = tmp_path / "home"
+    record = tmp_path / "vscode-record.json"
+    _write_vscode_record(
+        record,
+        extension_publisher=None,
+        extension_name=None,
+        extension_path=None,
+    )
+
+    returncode, value = _run_json(
+        vscode_test_bundle,
+        "--ui-vscode-resolution-json",
+        str(home),
+        str(record),
+    )
+
+    assert returncode == 0
+    assert value == {
+        "resolution_reason": "CODEX_EXTENSION_ID_NOT_DETECTED",
+        "action_text": (
+            "Идентификатор расширения OpenAI.chatgpt не обнаружен. "
+            "Откройте страницу Marketplace и установите расширение вручную."
+        ),
+        "action_visibility": "Visible",
+        "official_url": (
+            "https://marketplace.visualstudio.com/"
+            "items?itemName=OpenAI.chatgpt"
+        ),
+        "official_link_visibility": "Visible",
+        "official_link_content": "Открыть страницу OpenAI.chatgpt →",
+    }
+    assert not (home / ".vscode" / "extensions").exists()
+
+
+def test_vscode_normal_resolver_checks_installed_signed_code(
+    tmp_path: Path,
+) -> None:
+    candidate = _find_vscode_candidate()
+    if candidate is None:
+        pytest.skip(
+            "VS Code Code.exe is unavailable in approved install paths or PATH"
+        )
+    center = _build(
+        tmp_path / "employee-center",
+        edition="Employee",
+        product_role="LaunchCenter",
+    )
+    home = tmp_path / "home"
+    extension = (
+        home
+        / ".vscode"
+        / "extensions"
+        / "openai.chatgpt-normal-resolver-test"
+    )
+    extension.mkdir(parents=True)
+    (extension / "package.json").write_text(
+        json.dumps({"publisher": "OpenAI", "name": "chatgpt"}),
+        encoding="utf-8",
+    )
+
+    returncode, value = _run_json(
+        center,
+        "--resolve-launch-target-json",
+        str(home),
+        "vscode-codex",
+    )
+
+    if value["reason"] == "VSCODE_ALREADY_RUNNING":
+        assert returncode == 20
+        assert value["action"] == (
+            "Сохраните работу, закройте все окна VS Code "
+            "и повторите запуск."
+        )
+    else:
+        assert returncode == 0
+        assert value["status"] == "RESOLVED"
+        assert Path(str(value["executable_path"])).resolve() == candidate
+        assert value["sha256"] == hashlib.sha256(candidate.read_bytes()).hexdigest()
+        assert Path(str(value["extension_path"])).resolve() == extension.resolve()
 
 
 def test_vscode_test_record_command_rejects_production_source_lock(
