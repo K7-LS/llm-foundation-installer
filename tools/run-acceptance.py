@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -190,15 +191,24 @@ def _junit_counts(path: Path) -> dict[str, object]:
     return totals
 
 
-def _pytest_command(work: Path) -> list[str]:
+def _pytest_command(
+    work: Path,
+    pytest_home: Path | None = None,
+) -> list[str]:
+    if pytest_home is None:
+        pytest_home = work / "pytest-home"
     return [
         sys.executable,
         "-m",
         "pytest",
         "-q",
         f"--junitxml={work / 'pytest.xml'}",
-        f"--basetemp={work / 'pytest-home'}",
+        f"--basetemp={pytest_home}",
     ]
+
+
+def _create_pytest_home() -> Path:
+    return Path(tempfile.mkdtemp(prefix="k7-acceptance-"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -266,11 +276,15 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     junit = work / "pytest.xml"
-    tests = _run(
-        _pytest_command(work),
-        root,
-        environment=_pytest_environment(),
-    )
+    pytest_home = _create_pytest_home()
+    try:
+        tests = _run(
+            _pytest_command(work, pytest_home),
+            root,
+            environment=_pytest_environment(),
+        )
+    finally:
+        _remove_tree(pytest_home)
     counts = _junit_counts(junit) if junit.is_file() else {}
     deterministic = (
         bool(builds.get("ps7", {}).get("files"))
@@ -298,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         "engine_version": version,
         "installer_version": installer_version,
         "source": source,
+        "model_requests": 0,
         "FOUNDATION_SYNTHETIC": "PASS" if passed else "NOT_PASS",
         "powershell_syntax": syntax,
         "engine_builds": builds,

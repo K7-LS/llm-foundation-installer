@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -1155,7 +1156,14 @@ namespace LlmFoundationInstaller
                             loadConnectionState
                         )
                     );
-                    ConnectionUi.Bind(view, loadConnectionState);
+                }
+                ConnectionUi.Bind(
+                    view,
+                    bundleRoot,
+                    loadConnectionState
+                );
+                if (edition.product_role == "Installer")
+                {
                     InstallerActions.Bind(
                         view,
                         bundleRoot,
@@ -1404,6 +1412,9 @@ namespace LlmFoundationInstaller
             TextBlock routeStatus = view.FindName(
                 "RouteStatus"
             ) as TextBlock;
+            TextBlock routeDetail = view.FindName(
+                "RouteDetail"
+            ) as TextBlock;
             TextBlock evidenceStatus = view.FindName(
                 "EvidenceStatus"
             ) as TextBlock;
@@ -1429,6 +1440,10 @@ namespace LlmFoundationInstaller
             TextBlock selectedProviderName = view.FindName(
                 "SelectedProviderName"
             ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
+            Button stopRoute = view.FindName("StopRoute") as Button;
             if (targetList == null || launch == null)
             {
                 return;
@@ -1452,6 +1467,17 @@ namespace LlmFoundationInstaller
                     selectedProviderName.Text =
                         TargetProviderName(targetId);
                 }
+                if (evidenceStatus != null)
+                {
+                    evidenceStatus.Text = String.Equals(
+                        targetId,
+                        "vscode-codex",
+                        StringComparison.Ordinal
+                    )
+                        ? "Локальный ID OpenAI.chatgpt будет " +
+                            "обнаружен при запуске"
+                        : "Пакет проверен";
+                }
             };
             Action refreshRoute = delegate
             {
@@ -1473,9 +1499,18 @@ namespace LlmFoundationInstaller
                 {
                     routeStatus.Text = routeLabel + " · готово";
                 }
+                if (routeDetail != null)
+                {
+                    routeDetail.Text = route == "Direct"
+                        ? "Прокси не изменяется"
+                        : (route == "VPN"
+                            ? "Используется системный VPN"
+                            : "Launch Center управляет sing-box и временным прокси");
+                }
             };
             targetList.SelectionChanged += delegate
             {
+                ApplyResolutionFeedback(view, null);
                 refreshLabel();
             };
             RoutedEventHandler routeChanged = delegate
@@ -1503,6 +1538,25 @@ namespace LlmFoundationInstaller
             if (!interactive)
             {
                 return;
+            }
+            if (officialLink != null)
+            {
+                officialLink.Click += delegate
+                {
+                    string officialUrl = officialLink.Tag as string;
+                    if (!String.Equals(
+                            officialUrl,
+                            VsCodeIntegration.OfficialMarketplaceUrl,
+                            StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = officialUrl,
+                        UseShellExecute = true
+                    });
+                };
             }
             launch.Click += async delegate
             {
@@ -1537,11 +1591,13 @@ namespace LlmFoundationInstaller
                         home,
                         targetId
                     );
+                ApplyResolutionFeedback(view, resolution);
                 if (resolution.status != "RESOLVED")
                 {
                     if (evidenceStatus != null)
                     {
-                        evidenceStatus.Text = resolution.reason;
+                        evidenceStatus.Text =
+                            resolution.action ?? resolution.reason;
                         evidenceStatus.Foreground = new SolidColorBrush(
                             Color.FromRgb(252, 122, 77)
                         );
@@ -1549,12 +1605,16 @@ namespace LlmFoundationInstaller
                     return;
                 }
                 launch.IsEnabled = false;
+                if (stopRoute != null)
+                {
+                    stopRoute.IsEnabled = false;
+                }
                 if (routeStatus != null)
                 {
                     routeStatus.Text = RouteLabel(route) +
                         " · запуск";
                 }
-                LauncherSessionResult result = await Task.Run(
+                Task<LauncherSessionResult> launchTask = Task.Run(
                     () => ClientLauncher.StartAndWait(
                         resolution,
                         route,
@@ -1562,6 +1622,20 @@ namespace LlmFoundationInstaller
                         home
                     )
                 );
+                bool singBoxRoute =
+                    route == "SingBoxHttp" ||
+                    route == "SingBoxHttps";
+                if (singBoxRoute && stopRoute != null)
+                {
+                    while (!launchTask.IsCompleted &&
+                        !ClientLauncher.HasActiveRoute())
+                    {
+                        await Task.Delay(50);
+                    }
+                    stopRoute.IsEnabled =
+                        ClientLauncher.HasActiveRoute();
+                }
+                LauncherSessionResult result = await launchTask;
                 if (routeStatus != null)
                 {
                     routeStatus.Text = RouteLabel(result.transport) +
@@ -1583,7 +1657,103 @@ namespace LlmFoundationInstaller
                         ? "Очистка подтверждена"
                         : "Очистка не подтверждена";
                 }
+                if (stopRoute != null)
+                {
+                    stopRoute.IsEnabled = false;
+                }
                 refreshLabel();
+            };
+        }
+
+        internal static void ApplyResolutionFeedback(
+            UserControl view,
+            LaunchTargetResolution resolution
+        )
+        {
+            TextBlock guidance = view.FindName(
+                "LaunchGuidance"
+            ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
+            string action = resolution == null
+                ? null
+                : resolution.action;
+            string officialUrl = resolution == null
+                ? null
+                : resolution.official_url;
+            if (guidance != null)
+            {
+                guidance.Text = action ?? "";
+                guidance.Visibility = String.IsNullOrWhiteSpace(action)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+            }
+            if (officialLink != null)
+            {
+                bool exactOfficialUrl = String.Equals(
+                    officialUrl,
+                    VsCodeIntegration.OfficialMarketplaceUrl,
+                    StringComparison.Ordinal
+                );
+                officialLink.Tag = exactOfficialUrl
+                    ? officialUrl
+                    : null;
+                officialLink.Visibility = exactOfficialUrl
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+        }
+
+        internal static Dictionary<string, object>
+            DescribeResolutionFeedback(
+                UserControl view,
+                LaunchTargetResolution resolution
+            )
+        {
+            TextBlock guidance = view.FindName(
+                "LaunchGuidance"
+            ) as TextBlock;
+            Button officialLink = view.FindName(
+                "LaunchOfficialLink"
+            ) as Button;
+            return new Dictionary<string, object>
+            {
+                {
+                    "resolution_reason",
+                    resolution == null ? null : resolution.reason
+                },
+                {
+                    "action_text",
+                    guidance == null ? null : guidance.Text
+                },
+                {
+                    "action_visibility",
+                    guidance == null
+                        ? null
+                        : guidance.Visibility.ToString()
+                },
+                {
+                    "official_url",
+                    officialLink == null
+                        ? null
+                        : officialLink.Tag as string
+                },
+                {
+                    "official_link_visibility",
+                    officialLink == null
+                        ? null
+                        : officialLink.Visibility.ToString()
+                },
+                {
+                    "official_link_content",
+                    officialLink == null
+                        ? null
+                        : Convert.ToString(
+                            officialLink.Content,
+                            CultureInfo.InvariantCulture
+                        )
+                }
             };
         }
 
@@ -1633,6 +1803,9 @@ namespace LlmFoundationInstaller
             TextBlock route = view.FindName(
                 "SelectedRouteName"
             ) as TextBlock;
+            TextBlock evidence = view.FindName(
+                "EvidenceStatus"
+            ) as TextBlock;
             ListBoxItem selected = targetList == null
                 ? null
                 : targetList.SelectedItem as ListBoxItem;
@@ -1672,6 +1845,8 @@ namespace LlmFoundationInstaller
                 provider == null ? null : provider.Text;
             state["route_display"] =
                 route == null ? null : route.Text;
+            state["evidence_status"] =
+                evidence == null ? null : evidence.Text;
             return state;
         }
 
@@ -1680,6 +1855,13 @@ namespace LlmFoundationInstaller
             if (String.IsNullOrWhiteSpace(targetId))
             {
                 return "Выберите клиент";
+            }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "Запустить VS Code →";
             }
             if (targetId.StartsWith(
                     "codex",
@@ -1711,6 +1893,13 @@ namespace LlmFoundationInstaller
             {
                 return "НЕ ВЫБРАНО";
             }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "VS CODE — CODEX";
+            }
             if (targetId.StartsWith(
                     "codex",
                     StringComparison.Ordinal
@@ -1733,6 +1922,13 @@ namespace LlmFoundationInstaller
             if (String.IsNullOrWhiteSpace(targetId))
             {
                 return "НЕ ВЫБРАН";
+            }
+            if (String.Equals(
+                    targetId,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return "OPENAI";
             }
             if (targetId.StartsWith(
                     "codex",
@@ -2597,105 +2793,39 @@ namespace LlmFoundationInstaller
             out string error
         )
         {
-            error = null;
-            try
-            {
-                RadioButton direct = Find<RadioButton>(
-                    view,
-                    "DirectMode"
-                );
-                RadioButton vpn = Find<RadioButton>(
-                    view,
-                    "VpnMode"
-                );
-                ComboBox type = Find<ComboBox>(view, "ProxyType");
-                TextBox host = Find<TextBox>(view, "ProxyHost");
-                TextBox port = Find<TextBox>(view, "ProxyPort");
-                ComboBox auth = Find<ComboBox>(view, "ProxyAuth");
-                TextBox username = Find<TextBox>(
-                    view,
-                    "ProxyUsername"
-                );
-                PasswordBox password = Find<PasswordBox>(
-                    view,
-                    "ProxyPassword"
-                );
-                TextBlock status = Find<TextBlock>(
-                    view,
-                    "ConnectionStatus"
-                );
-                ConnectionProfile profile = BuildProfile(
-                    direct,
-                    vpn,
-                    type,
-                    host,
-                    port,
-                    auth,
-                    username
-                );
-                using (System.Security.SecureString secure =
-                    password.SecurePassword.Copy())
-                {
-                    secure.MakeReadOnly();
-                    ConnectionStateResult result = ConnectionStore.Save(
-                        UserHome(),
-                        profile,
-                        secure.Length > 0 ? secure : null
-                    );
-                    password.Clear();
-                    status.Text = result.profile.mode == "VPN"
-                        ? "VPN сохранён: отсутствие прокси не является ошибкой."
-                        : (result.profile.mode == "Direct"
-                            ? "Прямое подключение сохранено: прокси отключён."
-                            : "Прокси сохранён; пароль защищён Windows DPAPI.");
-                    status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(22, 122, 88)
-                    );
-                }
-                return true;
-            }
-            catch (Exception exception)
-            {
-                error = exception.Message;
-                TextBlock status = Find<TextBlock>(
-                    view,
-                    "ConnectionStatus"
-                );
-                status.Text = "Не сохранено: " + error;
-                status.Foreground = new SolidColorBrush(
-                    Color.FromRgb(161, 92, 0)
-                );
-                return false;
-            }
+            return SaveCurrent(ConnectionUiContract.Resolve(view), out error);
         }
 
-        public static void Bind(UserControl view, bool loadState)
+        public static void Bind(
+            UserControl view,
+            string bundleRoot,
+            bool loadState
+        )
         {
-            RadioButton direct = Find<RadioButton>(view, "DirectMode");
-            RadioButton vpn = Find<RadioButton>(view, "VpnMode");
-            RadioButton proxy = Find<RadioButton>(view, "ProxyMode");
-            Grid settings = Find<Grid>(view, "ProxySettings");
-            ComboBox type = Find<ComboBox>(view, "ProxyType");
-            TextBox host = Find<TextBox>(view, "ProxyHost");
-            TextBox port = Find<TextBox>(view, "ProxyPort");
-            ComboBox auth = Find<ComboBox>(view, "ProxyAuth");
-            TextBox username = Find<TextBox>(view, "ProxyUsername");
-            PasswordBox password = Find<PasswordBox>(view, "ProxyPassword");
-            Button save = Find<Button>(view, "SaveConnection");
-            Button test = Find<Button>(view, "TestConnection");
-            TextBlock status = Find<TextBlock>(view, "ConnectionStatus");
+            ConnectionUiContract contract = ConnectionUiContract.Resolve(view);
 
             Action updateMode = delegate
             {
-                bool isProxy = proxy.IsChecked == true;
-                settings.IsEnabled = isProxy;
-                settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;
-                if (!isProxy)
+                bool isProxy = contract.IsProxy;
+                contract.ProxySettings.IsEnabled = isProxy;
+                contract.ProxySettings.Visibility = isProxy
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+                if (isProxy)
                 {
-                    status.Text = vpn.IsChecked == true
+                    contract.Status.Text =
+                        "Заполните сервер, порт, логин и пароль, затем нажмите " +
+                        "«Сохранить и проверить».";
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(49, 87, 199)
+                    );
+                }
+                else
+                {
+                    contract.Status.Text = contract.Vpn.IsChecked == true
                         ? "VPN: прокси не требуется."
                         : "Напрямую: прокси не используется.";
-                    status.Foreground = new SolidColorBrush(
+                    contract.Status.Foreground = new SolidColorBrush(
                         Color.FromRgb(22, 122, 88)
                     );
                 }
@@ -2704,198 +2834,430 @@ namespace LlmFoundationInstaller
             {
                 updateMode();
             };
-            direct.Checked += checkedHandler;
-            vpn.Checked += checkedHandler;
-            proxy.Checked += checkedHandler;
+            foreach (RadioButton route in contract.Routes)
+            {
+                route.Checked += checkedHandler;
+            }
 
             SelectionChangedEventHandler updateAuth = delegate
             {
-                bool enabled = SelectedTag(auth) == "UsernamePassword";
-                username.IsEnabled = enabled;
-                password.IsEnabled = enabled;
+                bool enabled = contract.ProxyAuth == null ||
+                    SelectedTag(contract.ProxyAuth) == "UsernamePassword";
+                contract.ProxyUsername.IsEnabled = enabled;
+                contract.ProxyPassword.IsEnabled = enabled;
             };
-            auth.SelectionChanged += updateAuth;
+            if (contract.ProxyAuth != null)
+            {
+                contract.ProxyAuth.SelectionChanged += updateAuth;
+            }
 
+            bool preserveStatus = false;
             if (loadState)
             {
                 try
                 {
                     ApplyProfile(
                         ConnectionStore.Load(UserHome()).profile,
-                        direct,
-                        vpn,
-                        proxy,
-                        type,
-                        host,
-                        port,
-                        auth,
-                        username
+                        contract
                     );
                 }
                 catch (Exception exception)
                 {
-                    status.Text = "Сохранённый профиль требует внимания: " +
+                    contract.Status.Text = "Сохранённый профиль требует внимания: " +
                         exception.Message;
-                    status.Foreground = new SolidColorBrush(
+                    contract.Status.Foreground = new SolidColorBrush(
                         Color.FromRgb(161, 92, 0)
                     );
+                    preserveStatus = true;
                 }
             }
-            updateMode();
+            if (!preserveStatus)
+            {
+                updateMode();
+            }
             updateAuth(null, null);
 
             Func<bool> saveCurrent = delegate
             {
-                try
-                {
-                    ConnectionProfile profile = BuildProfile(
-                        direct,
-                        vpn,
-                        type,
-                        host,
-                        port,
-                        auth,
-                        username
-                    );
-                    using (System.Security.SecureString secure =
-                        password.SecurePassword.Copy())
-                    {
-                        secure.MakeReadOnly();
-                        ConnectionStateResult result = ConnectionStore.Save(
-                            UserHome(),
-                            profile,
-                            secure.Length > 0 ? secure : null
-                        );
-                        password.Clear();
-                        status.Text = result.profile.mode == "VPN"
-                            ? "VPN сохранён: отсутствие прокси не является ошибкой."
-                            : (result.profile.mode == "Direct"
-                                ? "Прямое подключение сохранено: прокси отключён."
-                                : "Прокси сохранён; пароль защищён Windows DPAPI.");
-                        status.Foreground = new SolidColorBrush(
-                            Color.FromRgb(22, 122, 88)
-                        );
-                    }
-                    return true;
-                }
-                catch (Exception exception)
-                {
-                    status.Text = "Не сохранено: " + exception.Message;
-                    status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(161, 92, 0)
-                    );
-                    return false;
-                }
+                string error;
+                return SaveCurrent(contract, out error);
             };
-            save.Click += delegate
+            contract.Save.Click += delegate
             {
                 saveCurrent();
             };
-            test.Click += async delegate
+            contract.Test.Click += async delegate
             {
                 if (!saveCurrent())
                 {
                     return;
                 }
-                test.IsEnabled = false;
-                save.IsEnabled = false;
-                object originalContent = test.Content;
-                test.Content = "Проверка…";
-                status.Text = "Проверяем доступ к GitHub через выбранный режим…";
-                status.Foreground = new SolidColorBrush(
+                contract.Test.IsEnabled = false;
+                contract.Save.IsEnabled = false;
+                object originalContent = contract.Test.Content;
+                string route = contract.IsProxy
+                    ? (contract.SelectedProxyType() == "HTTPS"
+                        ? "SingBoxHttps"
+                        : "SingBoxHttp")
+                    : contract.Mode;
+                contract.Test.Content = "Проверка…";
+                contract.Status.Text = contract.IsProxy
+                    ? "Запускаем SingBox и проверяем маршрут сквозным запросом…"
+                    : "Проверяем доступ к GitHub через выбранный режим…";
+                contract.Status.Foreground = new SolidColorBrush(
                     Color.FromRgb(49, 87, 199)
                 );
                 try
                 {
-                    ConnectionProbeResult result = await Task.Run(
+                    object result = await Task.Run(
                         delegate
                         {
-                            return ConnectionProbe.Run(
+                            return TestConnection(
+                                bundleRoot,
                                 UserHome(),
+                                route,
                                 "https://api.github.com/meta"
                             );
                         }
                     );
-                    if (result.status == "READY")
+                    SingBoxSessionResult singBox =
+                        result as SingBoxSessionResult;
+                    ConnectionProbeResult connection =
+                        result as ConnectionProbeResult;
+                    if (singBox != null && singBox.status == "PASS")
                     {
-                        status.Text = "Соединение проверено: " +
-                            result.mode +
-                            (result.uses_proxy
-                                ? " / " + result.proxy_type
+                        contract.Status.Text =
+                            "Маршрут SingBox проверен сквозным запросом.";
+                        contract.Status.Foreground = new SolidColorBrush(
+                            Color.FromRgb(22, 122, 88)
+                        );
+                    }
+                    else if (connection != null &&
+                        connection.status == "READY")
+                    {
+                        contract.Status.Text = "Соединение проверено: " +
+                            connection.mode +
+                            (connection.uses_proxy
+                                ? " / " + connection.proxy_type
                                 : "") +
-                            " · " + result.elapsed_ms.ToString(
+                            " · " + connection.elapsed_ms.ToString(
                                 CultureInfo.InvariantCulture
                             ) + " мс.";
-                        status.Foreground = new SolidColorBrush(
+                        contract.Status.Foreground = new SolidColorBrush(
                             Color.FromRgb(22, 122, 88)
                         );
                     }
                     else
                     {
-                        status.Text =
-                            "Соединение не прошло проверку (" +
-                            result.error + "). Offline-установка доступна.";
-                        status.Foreground = new SolidColorBrush(
+                        string reason = singBox != null
+                            ? singBox.reason
+                            : (connection != null
+                                ? connection.error
+                                : "CONNECTION_TEST_FAILED");
+                        contract.Status.Text =
+                            DescribeTestFailure(reason);
+                        contract.Status.Foreground = new SolidColorBrush(
                             Color.FromRgb(161, 92, 0)
                         );
                     }
                 }
                 catch (Exception exception)
                 {
-                    status.Text = "Проверка не выполнена: " +
+                    contract.Status.Text = "Проверка не выполнена: " +
                         exception.Message;
-                    status.Foreground = new SolidColorBrush(
+                    contract.Status.Foreground = new SolidColorBrush(
                         Color.FromRgb(161, 92, 0)
                     );
                 }
                 finally
                 {
-                    test.Content = originalContent;
-                    test.IsEnabled = true;
-                    save.IsEnabled = true;
+                    contract.Test.Content = originalContent;
+                    contract.Test.IsEnabled = true;
+                    contract.Save.IsEnabled = true;
+                }
+            };
+            if (contract.Stop != null)
+            {
+                contract.Stop.IsEnabled = false;
+                contract.Stop.Click += async delegate
+                {
+                    contract.Stop.IsEnabled = false;
+                    contract.Status.Text =
+                        "Останавливаем маршрут SingBox и восстанавливаем системный прокси…";
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(49, 87, 199)
+                    );
+                    SingBoxSessionResult stopped = await Task.Run(
+                        delegate
+                        {
+                            return ClientLauncher.StopActiveRoute();
+                        }
+                    );
+                    contract.Status.Text = stopped.cleanup_verified
+                        ? "Маршрут SingBox остановлен. Системный прокси восстановлен."
+                        : "Маршрут остановлен не полностью: " +
+                            (stopped.reason ?? "проверьте системный прокси вручную.");
+                    contract.Status.Foreground = new SolidColorBrush(
+                        stopped.cleanup_verified
+                            ? Color.FromRgb(22, 122, 88)
+                            : Color.FromRgb(161, 92, 0)
+                    );
+                };
+            }
+        }
+
+        internal static string DescribeTestFailure(string reason)
+        {
+            string stableReason = String.IsNullOrWhiteSpace(reason)
+                ? "CONNECTION_TEST_FAILED"
+                : reason;
+            string action;
+            if (stableReason == "RUNTIME_BUNDLE_ARCHIVE_MISSING")
+            {
+                action = "Распакуйте весь ZIP: архив runtime должен лежать рядом " +
+                    "с запускником.";
+            }
+            else if (
+                stableReason == "RUNTIME_ARCHIVE_INTEGRITY_FAILED" ||
+                stableReason == "RUNTIME_EXECUTABLE_INTEGRITY_FAILED" ||
+                stableReason == "RUNTIME_ARCHIVE_INVALID")
+            {
+                action = "Архив runtime повреждён. Скачайте установщик заново " +
+                    "и полностью распакуйте ZIP.";
+            }
+            else if (
+                stableReason == "RUNTIME_INSTALL_FAILED" ||
+                stableReason == "RUNTIME_ALREADY_PRESENT_INVALID" ||
+                stableReason == "RUNTIME_LAYOUT_INVALID" ||
+                stableReason == "RUNTIME_NOT_INSTALLED" ||
+                stableReason == "RUNTIME_VERIFY_FAILED" ||
+                stableReason == "RUNTIME_SOURCE_LOCK_INVALID" ||
+                stableReason == "RUNTIME_ARCHIVE_ENTRY_UNSAFE")
+            {
+                action = "Runtime SingBox не удалось установить. Запустите " +
+                    "проверку из полностью распакованного ZIP.";
+            }
+            else if (stableReason == "CONFIG_CHECK_FAILED")
+            {
+                action = "Проверьте сервер, порт, логин и пароль, сохраните " +
+                    "параметры и повторите проверку.";
+            }
+            else if (
+                stableReason == "LOCAL_PROXY_NOT_READY" ||
+                stableReason == "LOCAL_PORT_UNAVAILABLE" ||
+                stableReason == "RUNTIME_START_FAILED" ||
+                stableReason == "RUNTIME_EXITED_BEFORE_READY")
+            {
+                action = "SingBox не запустил локальный прокси. Закройте другой " +
+                    "VPN или прокси и повторите проверку.";
+            }
+            else if (stableReason == "ROUTE_PROBE_FAILED")
+            {
+                action = "SingBox запущен, но запрос через него не прошёл. " +
+                    "Проверьте сервер, порт, логин, пароль и доступность прокси.";
+            }
+            else if (
+                stableReason == "SESSION_CLEANUP_FAILED" ||
+                stableReason == "SECRET_CONFIG_REMOVE_FAILED")
+            {
+                action = "Не удалось безопасно очистить временную сессию SingBox. " +
+                    "Закройте Launch Center, убедитесь, что sing-box.exe завершён, " +
+                    "и запустите проверку снова.";
+            }
+            else
+            {
+                action = "Повторите проверку. Если ошибка сохраняется, запустите " +
+                    "Launch Center из полностью распакованного ZIP.";
+            }
+            return "Проверка не пройдена (" + stableReason + "). " + action;
+        }
+
+        internal static object TestConnection(
+            string bundleRoot,
+            string home,
+            string route,
+            string endpoint
+        )
+        {
+            if (route == "SingBoxHttp" ||
+                route == "SingBoxHttps")
+            {
+                return SingBoxSession.TestRoute(
+                    bundleRoot,
+                    home,
+                    route,
+                    endpoint
+                );
+            }
+            if (route == "Direct" || route == "VPN")
+            {
+                return ConnectionProbe.Run(home, endpoint);
+            }
+            throw new InvalidOperationException(
+                "CONNECTION_ROUTE_INVALID"
+            );
+        }
+
+        internal static bool ApplyRoute(UserControl view, string route)
+        {
+            ConnectionUiContract contract = ConnectionUiContract.Resolve(view);
+            if (route == "Direct")
+            {
+                contract.Direct.IsChecked = true;
+                return true;
+            }
+            if (route == "VPN")
+            {
+                contract.Vpn.IsChecked = true;
+                return true;
+            }
+            if (route == "SingBoxHttp")
+            {
+                if (contract.Http != null)
+                {
+                    contract.Http.IsChecked = true;
+                }
+                else
+                {
+                    contract.Proxy.IsChecked = true;
+                    SelectTag(contract.ProxyType, "HTTP");
+                }
+                return true;
+            }
+            if (route == "SingBoxHttps")
+            {
+                if (contract.Https != null)
+                {
+                    contract.Https.IsChecked = true;
+                }
+                else
+                {
+                    contract.Proxy.IsChecked = true;
+                    SelectTag(contract.ProxyType, "HTTPS");
+                }
+                return true;
+            }
+            return false;
+        }
+
+        internal static Dictionary<string, object> DescribeState(
+            UserControl view
+        )
+        {
+            ConnectionUiContract contract = ConnectionUiContract.Resolve(view);
+            bool proxy = contract.IsProxy;
+            TextBlock routeDetail = view.FindName(
+                "RouteDetail"
+            ) as TextBlock;
+            return new Dictionary<string, object>
+            {
+                { "mode", contract.Mode },
+                { "proxy_type", proxy ? contract.SelectedProxyType() : null },
+                {
+                    "proxy_settings",
+                    contract.ProxySettings.Visibility == Visibility.Visible
+                        ? "Visible"
+                        : "Collapsed"
+                },
+                {
+                    "fields",
+                    new List<string>
+                    {
+                        "server", "port", "login", "password"
+                    }
+                },
+                { "save_enabled", contract.Save.IsEnabled },
+                { "test_enabled", contract.Test.IsEnabled },
+                {
+                    "stop_enabled",
+                    contract.Stop != null && contract.Stop.IsEnabled
+                },
+                { "status_text", contract.Status.Text },
+                {
+                    "route_detail",
+                    routeDetail == null ? null : routeDetail.Text
                 }
             };
         }
 
-        private static ConnectionProfile BuildProfile(
-            RadioButton direct,
-            RadioButton vpn,
-            ComboBox type,
-            TextBox host,
-            TextBox port,
-            ComboBox auth,
-            TextBox username
+        private static bool SaveCurrent(
+            ConnectionUiContract contract,
+            out string error
         )
         {
-            if (direct.IsChecked == true || vpn.IsChecked == true)
+            error = null;
+            try
+            {
+                ConnectionProfile profile = BuildProfile(contract);
+                using (System.Security.SecureString secure =
+                    contract.ProxyPassword.SecurePassword.Copy())
+                {
+                    secure.MakeReadOnly();
+                    ConnectionStateResult result = ConnectionStore.Save(
+                        UserHome(),
+                        profile,
+                        secure.Length > 0 ? secure : null
+                    );
+                    contract.ProxyPassword.Clear();
+                    contract.Status.Text = result.profile.mode == "VPN"
+                        ? "VPN сохранён: отсутствие прокси не является ошибкой."
+                        : (result.profile.mode == "Direct"
+                            ? "Прямое подключение сохранено: прокси отключён."
+                            : "Прокси сохранён; пароль защищён Windows DPAPI.");
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(22, 122, 88)
+                    );
+                }
+                return true;
+            }
+            catch (Exception exception)
+            {
+                error = exception.Message;
+                contract.Status.Text = "Не сохранено: " + error;
+                contract.Status.Foreground = new SolidColorBrush(
+                    Color.FromRgb(161, 92, 0)
+                );
+                return false;
+            }
+        }
+
+        private static ConnectionProfile BuildProfile(
+            ConnectionUiContract contract
+        )
+        {
+            if (!contract.IsProxy)
             {
                 return new ConnectionProfile
                 {
                     schema_version = 1,
-                    mode = vpn.IsChecked == true ? "VPN" : "Direct",
+                    mode = contract.Mode,
                     proxy = null
                 };
             }
             int portValue;
-            if (!Int32.TryParse(port.Text, out portValue))
+            if (!Int32.TryParse(contract.ProxyPort.Text, out portValue))
             {
                 throw new ArgumentException("Порт должен быть числом.");
             }
-            string authMode = SelectedTag(auth);
+            string authMode = contract.ProxyAuth == null
+                ? (String.IsNullOrWhiteSpace(contract.ProxyUsername.Text)
+                    ? "None"
+                    : "UsernamePassword")
+                : SelectedTag(contract.ProxyAuth);
             return ConnectionStore.Validate(new ConnectionProfile
             {
                 schema_version = 1,
                 mode = "Proxy",
                 proxy = new ProxyProfile
                 {
-                    type = SelectedTag(type),
-                    host = host.Text.Trim(),
+                    type = contract.SelectedProxyType(),
+                    host = contract.ProxyHost.Text.Trim(),
                     port = portValue,
                     auth = new ConnectionAuth
                     {
                         mode = authMode,
                         username = authMode == "UsernamePassword"
-                            ? username.Text.Trim()
+                            ? contract.ProxyUsername.Text.Trim()
                             : null
                     }
                 }
@@ -2904,50 +3266,55 @@ namespace LlmFoundationInstaller
 
         private static void ApplyProfile(
             ConnectionProfile profile,
-            RadioButton direct,
-            RadioButton vpn,
-            RadioButton proxy,
-            ComboBox type,
-            TextBox host,
-            TextBox port,
-            ComboBox auth,
-            TextBox username
+            ConnectionUiContract contract
         )
         {
-            direct.IsChecked = profile.mode == "Direct";
-            vpn.IsChecked = profile.mode == "VPN";
-            proxy.IsChecked = profile.mode == "Proxy";
-            if (profile.mode != "Proxy")
+            if (profile.mode == "Direct")
             {
+                contract.Direct.IsChecked = true;
                 return;
             }
-            SelectTag(type, profile.proxy.type);
-            host.Text = profile.proxy.host;
-            port.Text = profile.proxy.port.ToString(
+            if (profile.mode == "VPN")
+            {
+                contract.Vpn.IsChecked = true;
+                return;
+            }
+            ApplyRoute(
+                contract.View,
+                profile.proxy.type == "HTTPS" ? "SingBoxHttps" : "SingBoxHttp"
+            );
+            contract.ProxyHost.Text = profile.proxy.host;
+            contract.ProxyPort.Text = profile.proxy.port.ToString(
                 CultureInfo.InvariantCulture
             );
-            SelectTag(auth, profile.proxy.auth.mode);
-            username.Text = profile.proxy.auth.username ?? "";
+            if (contract.ProxyAuth != null)
+            {
+                SelectTag(contract.ProxyAuth, profile.proxy.auth.mode);
+            }
+            contract.ProxyUsername.Text = profile.proxy.auth.username ?? "";
         }
 
-        private static string SelectedTag(ComboBox combo)
+        internal static string SelectedTag(ComboBox combo)
         {
-            ComboBoxItem item = combo.SelectedItem as ComboBoxItem;
+            ComboBoxItem item = combo == null
+                ? null
+                : combo.SelectedItem as ComboBoxItem;
             return item == null || item.Tag == null
                 ? ""
                 : Convert.ToString(item.Tag, CultureInfo.InvariantCulture);
         }
 
-        private static void SelectTag(ComboBox combo, string value)
+        internal static void SelectTag(ComboBox combo, string value)
         {
+            if (combo == null)
+            {
+                return;
+            }
             foreach (object candidate in combo.Items)
             {
                 ComboBoxItem item = candidate as ComboBoxItem;
                 if (item != null && String.Equals(
-                        Convert.ToString(
-                            item.Tag,
-                            CultureInfo.InvariantCulture
-                        ),
+                        Convert.ToString(item.Tag, CultureInfo.InvariantCulture),
                         value,
                         StringComparison.Ordinal
                     ))
@@ -2964,18 +3331,125 @@ namespace LlmFoundationInstaller
                 Environment.SpecialFolder.UserProfile
             );
         }
+    }
 
-        private static T Find<T>(UserControl view, string name)
+    internal sealed class ConnectionUiContract
+    {
+        public UserControl View { get; private set; }
+        public RadioButton Direct { get; private set; }
+        public RadioButton Vpn { get; private set; }
+        public RadioButton Proxy { get; private set; }
+        public RadioButton Http { get; private set; }
+        public RadioButton Https { get; private set; }
+        public Grid ProxySettings { get; private set; }
+        public ComboBox ProxyType { get; private set; }
+        public TextBox ProxyHost { get; private set; }
+        public TextBox ProxyPort { get; private set; }
+        public ComboBox ProxyAuth { get; private set; }
+        public TextBox ProxyUsername { get; private set; }
+        public PasswordBox ProxyPassword { get; private set; }
+        public Button Save { get; private set; }
+        public Button Test { get; private set; }
+        public Button Stop { get; private set; }
+        public TextBlock Status { get; private set; }
+
+        public IEnumerable<RadioButton> Routes
+        {
+            get
+            {
+                return new[] { Direct, Vpn, Proxy, Http, Https }
+                    .Where(route => route != null);
+            }
+        }
+
+        public bool IsProxy
+        {
+            get
+            {
+                return (Proxy != null && Proxy.IsChecked == true) ||
+                    (Http != null && Http.IsChecked == true) ||
+                    (Https != null && Https.IsChecked == true);
+            }
+        }
+
+        public string Mode
+        {
+            get
+            {
+                return IsProxy
+                    ? "Proxy"
+                    : (Vpn.IsChecked == true ? "VPN" : "Direct");
+            }
+        }
+
+        public string SelectedProxyType()
+        {
+            if (Https != null && Https.IsChecked == true)
+            {
+                return "HTTPS";
+            }
+            if (Http != null && Http.IsChecked == true)
+            {
+                return "HTTP";
+            }
+            return ConnectionUi.SelectedTag(ProxyType);
+        }
+
+        public static ConnectionUiContract Resolve(UserControl view)
+        {
+            ConnectionUiContract contract = new ConnectionUiContract();
+            contract.View = view;
+            contract.Direct = Required<RadioButton>(view, "DirectMode", "RouteDirect");
+            contract.Vpn = Required<RadioButton>(view, "VpnMode", "RouteVpn");
+            contract.Proxy = Optional<RadioButton>(view, "ProxyMode");
+            contract.Http = Optional<RadioButton>(view, "RouteHttp");
+            contract.Https = Optional<RadioButton>(view, "RouteHttps");
+            if (contract.Proxy == null &&
+                (contract.Http == null || contract.Https == null))
+            {
+                throw new InvalidOperationException(
+                    "Не найдены элементы маршрута прокси"
+                );
+            }
+            contract.ProxySettings = Required<Grid>(view, "ProxySettings");
+            contract.ProxyType = Optional<ComboBox>(view, "ProxyType");
+            contract.ProxyHost = Required<TextBox>(view, "ProxyHost");
+            contract.ProxyPort = Required<TextBox>(view, "ProxyPort");
+            contract.ProxyAuth = Optional<ComboBox>(view, "ProxyAuth");
+            contract.ProxyUsername = Required<TextBox>(view, "ProxyUsername");
+            contract.ProxyPassword = Required<PasswordBox>(view, "ProxyPassword");
+            contract.Save = Required<Button>(view, "SaveConnection");
+            contract.Test = Required<Button>(view, "TestConnection");
+            contract.Stop = Optional<Button>(view, "StopRoute");
+            contract.Status = Required<TextBlock>(view, "ConnectionStatus");
+            return contract;
+        }
+
+        private static T Required<T>(UserControl view, params string[] names)
             where T : class
         {
-            T control = view.FindName(name) as T;
+            T control = Optional<T>(view, names);
             if (control == null)
             {
                 throw new InvalidOperationException(
-                    "Installer control is missing: " + name
+                    "Не найден элемент подключения: " + String.Join("/", names)
                 );
             }
             return control;
+        }
+
+        private static T Optional<T>(UserControl view, params string[] names)
+            where T : class
+        {
+            foreach (string name in names)
+            {
+                T control = view.FindName(name) as T;
+                if (control != null)
+                {
+                    return control;
+                }
+            }
+            return null;
         }
     }
 
@@ -3191,6 +3665,70 @@ namespace LlmFoundationInstaller
                     ));
                     return resolution.status == "RESOLVED" ? 0 : 20;
                 }
+                if (args.Length == 3 &&
+                    args[0] == "--resolve-vscode-record-json")
+                {
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] ==
+                        "--resolve-vscode-mutating-record-json")
+                {
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveMutatingTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        resolution
+                    ));
+                    return resolution.status == "RESOLVED" ? 0 : 20;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--ui-vscode-resolution-json")
+                {
+                    if (edition.product_role != "LaunchCenter")
+                    {
+                        WriteError(
+                            "Команда состояния доступна только центру запуска"
+                        );
+                        return 2;
+                    }
+                    Application stateApp = new Application();
+                    UserControl stateView = InstallerView.Create(
+                        bundleRoot,
+                        false
+                    );
+                    LaunchTargetResolution resolution =
+                        VsCodeIntegration.ResolveTestRecord(
+                            bundleRoot,
+                            args[1],
+                            args[2]
+                        );
+                    LaunchCenterActions.ApplyResolutionFeedback(
+                        stateView,
+                        resolution
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchCenterActions.DescribeResolutionFeedback(
+                            stateView,
+                            resolution
+                        )
+                    ));
+                    stateApp.Shutdown();
+                    return 0;
+                }
                 if (args.Length == 4 &&
                     args[0] == "--launch-target-json")
                 {
@@ -3201,13 +3739,41 @@ namespace LlmFoundationInstaller
                             args[1],
                             args[2]
                         );
-                    LauncherSessionResult launched =
-                        ClientLauncher.StartAndWait(
+                    string testRegistrySubkey =
+                        Environment.GetEnvironmentVariable(
+                            "K7_SYSTEM_PROXY_TEST_SUBKEY"
+                        );
+                    LauncherSessionResult launched;
+                    if (!String.IsNullOrWhiteSpace(
+                        testRegistrySubkey))
+                    {
+                        if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                            !SystemProxyLease
+                                .IsAllowedTestRegistrySubkey(
+                                    testRegistrySubkey))
+                        {
+                            WriteError(
+                                "Тестовый реестр запуска запрещён для production"
+                            );
+                            return 2;
+                        }
+                        launched = ClientLauncher.StartAndWaitForTest(
+                            resolution,
+                            args[3],
+                            bundleRoot,
+                            args[1],
+                            testRegistrySubkey
+                        );
+                    }
+                    else
+                    {
+                        launched = ClientLauncher.StartAndWait(
                             resolution,
                             args[3],
                             bundleRoot,
                             args[1]
                         );
+                    }
                     WriteOutput(new JavaScriptSerializer().Serialize(
                         launched
                     ));
@@ -3290,6 +3856,44 @@ namespace LlmFoundationInstaller
                     return 0;
                 }
                 if (args.Length == 4 &&
+                    args[0] == "--test-singbox-route-json")
+                {
+                    SingBoxSessionResult route =
+                        SingBoxSession.TestRoute(
+                            bundleRoot,
+                            args[1],
+                            args[2],
+                            args[3]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        route
+                    ));
+                    return route.status == "PASS" ? 0 : 20;
+                }
+                if (args.Length == 4 &&
+                    args[0] == "--test-connection-route-json")
+                {
+                    object route = ConnectionUi.TestConnection(
+                        bundleRoot,
+                        args[1],
+                        args[2],
+                        args[3]
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        route
+                    ));
+                    SingBoxSessionResult singBox =
+                        route as SingBoxSessionResult;
+                    ConnectionProbeResult connection =
+                        route as ConnectionProbeResult;
+                    return (singBox != null &&
+                            singBox.status == "PASS") ||
+                        (connection != null &&
+                            connection.status == "READY")
+                        ? 0
+                        : 20;
+                }
+                if (args.Length == 4 &&
                     args[0] == "--test-singbox-session-json")
                 {
                     SingBoxSessionResult session =
@@ -3303,6 +3907,235 @@ namespace LlmFoundationInstaller
                         session
                     ));
                     return session.status == "PASS" ? 0 : 20;
+                }
+                if ((args.Length == 3 || args.Length == 4) &&
+                    args[0] == "--system-proxy-watchdog")
+                {
+                    int ownerPid;
+                    if (!Int32.TryParse(args[1], out ownerPid))
+                    {
+                        WriteError("Некорректный PID владельца");
+                        return 2;
+                    }
+                    ProxyRecoveryResult watchdogResult;
+                    if (args.Length == 4)
+                    {
+                        if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                            !SystemProxyLease
+                                .IsAllowedTestRegistrySubkey(args[3]))
+                        {
+                            WriteError(
+                                "Тест системного proxy запрещён для production"
+                            );
+                            return 2;
+                        }
+                        watchdogResult = SystemProxyLease.Watchdog(
+                            ownerPid,
+                            args[2],
+                            args[3]
+                        );
+                    }
+                    else
+                    {
+                        watchdogResult = SystemProxyLease.Watchdog(
+                            ownerPid,
+                            args[2]
+                        );
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        watchdogResult
+                    ));
+                    return watchdogResult.cleanup_verified ? 0 : 20;
+                }
+                if ((args.Length == 5 || args.Length == 6) &&
+                    args[0] == "--system-proxy-test-json")
+                {
+                    if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                        !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                            args[3]))
+                    {
+                        WriteError(
+                            "Тест системного proxy запрещён для production"
+                        );
+                        return 2;
+                    }
+                    int port;
+                    if (!Int32.TryParse(args[4], out port))
+                    {
+                        WriteError("Некорректный локальный порт");
+                        return 2;
+                    }
+                    ProxyRecoveryResult proxyResult;
+                    if (args[1] == "normal-cycle" &&
+                        args.Length == 5)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                        if (proxyResult.status == "ACQUIRED")
+                        {
+                            proxyResult =
+                                SystemProxyLease.StopActiveRoute();
+                        }
+                    }
+                    else if (args[1] == "hold" &&
+                        args.Length == 6)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                        if (proxyResult.status == "ACQUIRED")
+                        {
+                            DateTime deadline = DateTime.UtcNow
+                                .AddSeconds(60);
+                            while (!File.Exists(args[5]) &&
+                                DateTime.UtcNow < deadline)
+                            {
+                                Thread.Sleep(50);
+                            }
+                            proxyResult =
+                                SystemProxyLease.StopActiveRoute();
+                        }
+                    }
+                    else if (args[1] == "acquire" &&
+                        args.Length == 5)
+                    {
+                        proxyResult = SystemProxyLease.Acquire(
+                            args[2],
+                            port,
+                            args[3]
+                        );
+                    }
+                    else
+                    {
+                        WriteError(
+                            "Неподдерживаемый тест системного proxy"
+                        );
+                        return 2;
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        proxyResult
+                    ));
+                    return proxyResult.cleanup_verified &&
+                        (proxyResult.status == "ACQUIRED" ||
+                            proxyResult.status == "RESTORED")
+                        ? 0
+                        : 20;
+                }
+                if ((args.Length == 6 || args.Length == 7) &&
+                    args[0] == "--test-appx-singbox-json")
+                {
+                    if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                        !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                            args[3]))
+                    {
+                        WriteError(
+                            "Тест AppX-маршрута запрещён для production"
+                        );
+                        return 2;
+                    }
+                    string expectedFixture = Path.GetFullPath(
+                        Path.Combine(
+                            Environment.GetFolderPath(
+                                Environment.SpecialFolder.Windows
+                            ),
+                            "System32",
+                            "cmd.exe"
+                        )
+                    );
+                    string fixture = Path.GetFullPath(args[4]);
+                    if (!String.Equals(
+                            fixture,
+                            expectedFixture,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !File.Exists(fixture))
+                    {
+                        WriteError(
+                            "Разрешён только системный подписанный fixture"
+                        );
+                        return 2;
+                    }
+                    bool activationFailure =
+                        args[5] == "activation-failure";
+                    bool routeConflict =
+                        args[5] == "route-conflict";
+                    if (!activationFailure &&
+                        !routeConflict &&
+                        args[5] != "success")
+                    {
+                        WriteError("Некорректный режим AppX-теста");
+                        return 2;
+                    }
+                    Thread stopThread = null;
+                    if (args.Length == 7)
+                    {
+                        string stopSignal = Path.GetFullPath(args[6]);
+                        stopThread = new Thread(
+                            new ThreadStart(delegate
+                            {
+                                DateTime deadline = DateTime.UtcNow
+                                    .AddSeconds(60);
+                                while (!File.Exists(stopSignal) &&
+                                    DateTime.UtcNow < deadline)
+                                {
+                                    Thread.Sleep(50);
+                                }
+                                if (File.Exists(stopSignal))
+                                {
+                                    ClientLauncher.StopActiveRoute();
+                                }
+                            })
+                        );
+                        stopThread.IsBackground = true;
+                        stopThread.Start();
+                    }
+                    LaunchTargetResolution testTarget =
+                        new LaunchTargetResolution
+                        {
+                            status = "RESOLVED",
+                            target_id = "codex-desktop",
+                            client_id = "codex-desktop",
+                            role = "desktop",
+                            launch_mode = "appx",
+                            executable_path = fixture,
+                            sha256 = BundleIntegrity.Sha256(fixture),
+                            activation_id = "K7AITest!App",
+                            package_full_name = "K7AITest"
+                        };
+                    LauncherSessionResult appx = routeConflict
+                        ? ClientLauncher.StartAppxWithRouteConflictForTest(
+                            testTarget,
+                            args[2],
+                            bundleRoot,
+                            args[1],
+                            args[3],
+                            Environment.GetEnvironmentVariable(
+                                "K7_APPX_FIXTURE_ARGS"
+                            )
+                        )
+                        : ClientLauncher.StartAppxThroughSingBoxForTest(
+                            testTarget,
+                            args[2],
+                            bundleRoot,
+                            args[1],
+                            args[3],
+                            Environment.GetEnvironmentVariable(
+                                "K7_APPX_FIXTURE_ARGS"
+                            ),
+                            activationFailure
+                        );
+                    if (stopThread != null)
+                    {
+                        stopThread.Join(5000);
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        appx
+                    ));
+                    return appx.status == "PASS" ? 0 : 20;
                 }
                 if (args.Length == 1 && args[0] == "--self-test-json")
                 {
@@ -3617,7 +4450,28 @@ namespace LlmFoundationInstaller
                     return 0;
                 }
                 if (args.Length == 2 &&
+                    args[0] == "--ui-connection-state-json")
+                {
+                    Application stateApp = new Application();
+                    UserControl stateView = InstallerView.Create(
+                        bundleRoot,
+                        false
+                    );
+                    if (!ConnectionUi.ApplyRoute(stateView, args[1]))
+                    {
+                        WriteError("Неподдерживаемый маршрут подключения");
+                        stateApp.Shutdown();
+                        return 2;
+                    }
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ConnectionUi.DescribeState(stateView)
+                    ));
+                    stateApp.Shutdown();
+                    return 0;
+                }
+                if (args.Length == 2 &&
                     (args[0] == "--ui-selection-json" ||
+                     args[0] == "--ui-launch-selection-json" ||
                      args[0] == "--ui-guide-selection-json"))
                 {
                     if (edition.product_role != "LaunchCenter")

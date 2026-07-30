@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace LlmFoundationInstaller
@@ -50,6 +51,8 @@ namespace LlmFoundationInstaller
 
     internal static class ClientLauncher
     {
+        private static readonly object RouteSync = new object();
+        private static RunningSingBoxSession activeSingBox;
         private static readonly string[] ProxyVariables = new[]
         {
             "HTTP_PROXY",
@@ -61,6 +64,20 @@ namespace LlmFoundationInstaller
             "all_proxy",
             "no_proxy"
         };
+
+        static ClientLauncher()
+        {
+            AppDomain.CurrentDomain.ProcessExit += delegate
+            {
+                try
+                {
+                    StopActiveRoute();
+                }
+                catch
+                {
+                }
+            };
+        }
 
         public static LauncherSessionResult StartAndWait(
             LaunchTargetResolution target,
@@ -230,11 +247,44 @@ namespace LlmFoundationInstaller
             }
         }
 
+        internal static LauncherSessionResult StartAndWaitForTest(
+            LaunchTargetResolution target,
+            string route,
+            string bundleRoot,
+            string home,
+            string registrySubkey
+        )
+        {
+            LauncherSessionResult result =
+                route == "SingBoxHttp" ||
+                route == "SingBoxHttps"
+                ? StartThroughSingBox(
+                    target,
+                    route,
+                    bundleRoot,
+                    home,
+                    registrySubkey
+                )
+                : StartAndWait(target, route, bundleRoot, home);
+            if (result.lifecycle == null)
+            {
+                result.lifecycle = new List<string>();
+            }
+            result.lifecycle.Insert(
+                0,
+                "TEST_SYSTEM_PROXY_GUARD_ACTIVE"
+            );
+            return result;
+        }
+
         private static LauncherSessionResult StartThroughSingBox(
             LaunchTargetResolution target,
             string route,
             string bundleRoot,
-            string home
+            string home,
+            string testRegistrySubkey = null,
+            string testFixtureArguments = null,
+            bool testActivationFailure = false
         )
         {
             if (String.IsNullOrWhiteSpace(bundleRoot) ||
@@ -251,25 +301,81 @@ namespace LlmFoundationInstaller
             if (String.Equals(
                     target.launch_mode,
                     "appx",
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal) &&
+                testRegistrySubkey == null &&
+                IsExactTargetRunning(target))
             {
                 return Failed(
                     target,
                     route,
-                    "PROCESS_PROXY_NOT_SUPPORTED",
+                    "APPX_ALREADY_RUNNING",
                     true,
                     -1
                 );
             }
             RunningSingBoxSession session = null;
             Process client = null;
+            bool registered = false;
+            bool systemProxyAcquired = false;
             try
             {
+                if (String.Equals(
+                        target.launch_mode,
+                        "appx",
+                        StringComparison.Ordinal))
+                {
+                    SingBoxSessionResult recovered =
+                        SingBoxSession.RecoverOrphanedSessions(home);
+                    if (!recovered.cleanup_verified)
+                    {
+                        throw new InvalidOperationException(
+                            recovered.reason
+                        );
+                    }
+                }
                 session = SingBoxSession.Start(
                     bundleRoot,
                     home,
                     target.target_id,
                     route
+                );
+                if (String.Equals(
+                        target.launch_mode,
+                        "appx",
+                        StringComparison.Ordinal))
+                {
+                    ProxyRecoveryResult lease =
+                        testRegistrySubkey == null
+                        ? SystemProxyLease.Acquire(
+                            home,
+                            session.listen_port
+                        )
+                        : SystemProxyLease.Acquire(
+                            home,
+                            session.listen_port,
+                            testRegistrySubkey
+                        );
+                    if (lease.status != "ACQUIRED")
+                    {
+                        throw new InvalidOperationException(
+                            lease.reason
+                        );
+                    }
+                    systemProxyAcquired = true;
+                }
+                lock (RouteSync)
+                {
+                    if (activeSingBox != null)
+                    {
+                        throw new InvalidOperationException(
+                            "ROUTE_ALREADY_ACTIVE"
+                        );
+                    }
+                    activeSingBox = session;
+                    registered = true;
+                }
+                PauseAfterRouteRegistrationForTest(
+                    testRegistrySubkey
                 );
                 ProcessStartInfo start = new ProcessStartInfo
                 {
@@ -293,7 +399,34 @@ namespace LlmFoundationInstaller
                 start.EnvironmentVariables[
                     "LLM_FOUNDATION_CONNECTION_MODE"
                 ] = route;
-                client = StartExactTarget(target, start);
+                lock (RouteSync)
+                {
+                    if (!Object.ReferenceEquals(
+                            activeSingBox,
+                            session))
+                    {
+                        throw new InvalidOperationException(
+                            "ROUTE_STOPPED_BEFORE_CLIENT_START"
+                        );
+                    }
+                    if (testRegistrySubkey != null)
+                    {
+                        if (testActivationFailure)
+                        {
+                            throw new InvalidOperationException(
+                                "APPX_ACTIVATION_FAILED"
+                            );
+                        }
+                        client = StartTestAppxTarget(
+                            target,
+                            testFixtureArguments
+                        );
+                    }
+                    else
+                    {
+                        client = StartExactTarget(target, start);
+                    }
+                }
                 if (client == null)
                 {
                     throw new InvalidOperationException(
@@ -316,7 +449,8 @@ namespace LlmFoundationInstaller
                 int exitCode = client.ExitCode;
                 session.lifecycle.Add("CLIENT_EXITED");
                 SingBoxSessionResult stopped =
-                    SingBoxSession.StopVerified(session);
+                    StopRegisteredRoute(session);
+                registered = false;
                 session = null;
                 bool passed = exitCode == 0 &&
                     stopped.status == "PASS";
@@ -347,10 +481,36 @@ namespace LlmFoundationInstaller
                     : session.lifecycle;
                 if (session != null)
                 {
-                    SingBoxSessionResult stopped =
-                        SingBoxSession.StopVerified(session);
+                    SingBoxSessionResult stopped;
+                    if (registered)
+                    {
+                        stopped = StopRegisteredRoute(session);
+                    }
+                    else
+                    {
+                        ProxyRecoveryResult proxy =
+                            systemProxyAcquired
+                            ? SystemProxyLease.StopActiveRoute()
+                            : null;
+                        stopped = SingBoxSession.StopVerified(session);
+                        if (proxy != null &&
+                            !proxy.cleanup_verified)
+                        {
+                            stopped.status = "FAILED";
+                            stopped.cleanup_verified = false;
+                            stopped.reason = proxy.reason;
+                        }
+                    }
                     cleanup = stopped.cleanup_verified;
                     lifecycle = stopped.lifecycle;
+                    if (!cleanup &&
+                        !String.IsNullOrWhiteSpace(stopped.reason))
+                    {
+                        exception = new InvalidOperationException(
+                            stopped.reason
+                        );
+                    }
+                    registered = false;
                 }
                 return new LauncherSessionResult
                 {
@@ -376,6 +536,278 @@ namespace LlmFoundationInstaller
                     client.Dispose();
                 }
             }
+        }
+
+        internal static LauncherSessionResult StartAppxThroughSingBoxForTest(
+            LaunchTargetResolution target,
+            string route,
+            string bundleRoot,
+            string home,
+            string registrySubkey,
+            string fixtureArguments,
+            bool activationFailure
+        )
+        {
+            return StartThroughSingBox(
+                target,
+                route,
+                bundleRoot,
+                home,
+                registrySubkey,
+                fixtureArguments,
+                activationFailure
+            );
+        }
+
+        internal static LauncherSessionResult
+            StartAppxWithRouteConflictForTest(
+                LaunchTargetResolution target,
+                string route,
+                string bundleRoot,
+                string home,
+                string registrySubkey,
+                string fixtureArguments
+            )
+        {
+            RunningSingBoxSession blocker = null;
+            bool registered = false;
+            try
+            {
+                blocker = SingBoxSession.Start(
+                    bundleRoot,
+                    home,
+                    "connection-test",
+                    route
+                );
+                lock (RouteSync)
+                {
+                    if (activeSingBox != null)
+                    {
+                        throw new InvalidOperationException(
+                            "ROUTE_ALREADY_ACTIVE"
+                        );
+                    }
+                    activeSingBox = blocker;
+                    registered = true;
+                }
+                return StartThroughSingBox(
+                    target,
+                    route,
+                    bundleRoot,
+                    home,
+                    registrySubkey,
+                    fixtureArguments,
+                    false
+                );
+            }
+            finally
+            {
+                if (registered)
+                {
+                    StopActiveRoute();
+                }
+                else if (blocker != null)
+                {
+                    SingBoxSession.StopVerified(blocker);
+                }
+            }
+        }
+
+        public static SingBoxSessionResult StopActiveRoute()
+        {
+            lock (RouteSync)
+            {
+                return StopActiveRouteLocked();
+            }
+        }
+
+        private static SingBoxSessionResult StopRegisteredRoute(
+            RunningSingBoxSession session
+        )
+        {
+            lock (RouteSync)
+            {
+                if (session != null &&
+                    session.stop_result != null)
+                {
+                    return session.stop_result;
+                }
+                if (Object.ReferenceEquals(
+                        activeSingBox,
+                        session))
+                {
+                    return StopActiveRouteLocked();
+                }
+                return new SingBoxSessionResult
+                {
+                    status = "FAILED",
+                    listen_port = session == null
+                        ? 0
+                        : session.listen_port,
+                    uses_proxy = true,
+                    cleanup_verified = false,
+                    secret_redacted = true,
+                    lifecycle = session == null
+                        ? new List<string>()
+                        : session.lifecycle,
+                    reason = "OWNED_SESSION_MISMATCH"
+                };
+            }
+        }
+
+        private static SingBoxSessionResult StopActiveRouteLocked()
+        {
+            RunningSingBoxSession session = activeSingBox;
+            activeSingBox = null;
+            ProxyRecoveryResult proxy =
+                SystemProxyLease.StopActiveRoute();
+            SingBoxSessionResult singBox = session == null
+                ? new SingBoxSessionResult
+                {
+                    status = "PASS",
+                    listen_port = 0,
+                    uses_proxy = true,
+                    cleanup_verified = true,
+                    secret_redacted = true,
+                    lifecycle = new List<string>(),
+                    reason = null
+                }
+                : SingBoxSession.StopVerified(session);
+            bool cleanup = proxy.cleanup_verified &&
+                singBox.cleanup_verified;
+            if (proxy.cleanup_verified &&
+                proxy.lifecycle != null &&
+                proxy.lifecycle.Count > 0)
+            {
+                singBox.lifecycle.Add("SYSTEM_PROXY_RESTORED");
+            }
+            singBox.status = cleanup ? "PASS" : "FAILED";
+            singBox.uses_proxy = true;
+            singBox.cleanup_verified = cleanup;
+            singBox.reason = !proxy.cleanup_verified
+                ? proxy.reason
+                : (!singBox.cleanup_verified
+                    ? singBox.reason
+                    : null);
+            if (session != null)
+            {
+                session.stop_result = singBox;
+            }
+            return singBox;
+        }
+
+        internal static bool HasActiveRoute()
+        {
+            lock (RouteSync)
+            {
+                return activeSingBox != null;
+            }
+        }
+
+        private static Process StartTestAppxTarget(
+            LaunchTargetResolution target,
+            string arguments
+        )
+        {
+            if (target == null ||
+                String.IsNullOrWhiteSpace(target.executable_path) ||
+                !File.Exists(target.executable_path) ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(target.executable_path),
+                    target.sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "TARGET_INTEGRITY_CHANGED"
+                );
+            }
+            return Process.Start(new ProcessStartInfo
+            {
+                FileName = target.executable_path,
+                Arguments = arguments ?? "",
+                WorkingDirectory = Path.GetDirectoryName(
+                    target.executable_path
+                ),
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+        }
+
+        private static void PauseAfterRouteRegistrationForTest(
+            string registrySubkey
+        )
+        {
+            if (String.IsNullOrWhiteSpace(registrySubkey) ||
+                !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                    registrySubkey))
+            {
+                return;
+            }
+            string ready = Environment.GetEnvironmentVariable(
+                "K7_ROUTE_REGISTERED_READY"
+            );
+            string resume = Environment.GetEnvironmentVariable(
+                "K7_ROUTE_REGISTERED_CONTINUE"
+            );
+            if (String.IsNullOrWhiteSpace(ready) ||
+                String.IsNullOrWhiteSpace(resume))
+            {
+                return;
+            }
+            File.WriteAllText(ready, "ready", new UTF8Encoding(false));
+            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!File.Exists(resume) &&
+                DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(25);
+            }
+            if (!File.Exists(resume))
+            {
+                throw new InvalidOperationException(
+                    "ROUTE_TEST_SYNC_TIMEOUT"
+                );
+            }
+        }
+
+        private static bool IsExactTargetRunning(
+            LaunchTargetResolution target
+        )
+        {
+            if (target == null ||
+                String.IsNullOrWhiteSpace(target.executable_path))
+            {
+                return false;
+            }
+            string expected = Path.GetFullPath(
+                target.executable_path
+            );
+            string processName = Path.GetFileNameWithoutExtension(
+                expected
+            );
+            foreach (Process process in Process.GetProcessesByName(
+                processName
+            ))
+            {
+                using (process)
+                {
+                    try
+                    {
+                        if (String.Equals(
+                                Path.GetFullPath(
+                                    process.MainModule.FileName
+                                ),
+                                expected,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            return false;
         }
 
         private static Process StartExactTarget(
@@ -438,7 +870,23 @@ namespace LlmFoundationInstaller
                 "SECRET_CONFIG_REMOVE_FAILED",
                 "LOCAL_PROXY_NOT_READY",
                 "CLIENT_START_FAILED",
-                "CLIENT_TIMEOUT"
+                "CLIENT_TIMEOUT",
+                "APPX_ACTIVATION_FAILED",
+                "APPX_ALREADY_RUNNING",
+                "ROUTE_ALREADY_ACTIVE",
+                "ROUTE_STOPPED_BEFORE_CLIENT_START",
+                "SYSTEM_PROXY_LEASE_BUSY",
+                "SYSTEM_PROXY_CHANGED_EXTERNALLY",
+                "SYSTEM_PROXY_STATE_WRITE_FAILED",
+                "SYSTEM_PROXY_ACQUIRE_FAILED",
+                "SYSTEM_PROXY_RECOVERY_FAILED",
+                "SYSTEM_PROXY_STATE_INVALID",
+                "SYSTEM_PROXY_STATE_REMOVE_FAILED",
+                "SYSTEM_PROXY_REFRESH_FAILED",
+                "SYSTEM_PROXY_WATCHDOG_START_FAILED",
+                "OWNED_SESSION_MISMATCH",
+                "OWNED_SESSION_RECOVERY_FAILED",
+                "SESSION_CLEANUP_FAILED"
             })
             {
                 if (message.Contains(reason))

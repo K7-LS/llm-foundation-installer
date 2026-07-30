@@ -34,6 +34,9 @@ namespace LlmFoundationInstaller
         public string sha256 { get; set; }
         public string activation_id { get; set; }
         public string package_full_name { get; set; }
+        public string official_url { get; set; }
+        public string action { get; set; }
+        public string extension_path { get; set; }
         public string reason { get; set; }
     }
 
@@ -48,7 +51,7 @@ namespace LlmFoundationInstaller
                 edition.included_target_ids,
                 StringComparer.Ordinal
             );
-            return ClientBootstrap.Load(bundleRoot).clients
+            List<LaunchTarget> targets = ClientBootstrap.Load(bundleRoot).clients
                 .Where(source => included.Contains(source.target))
                 .Select(source => new LaunchTarget
                 {
@@ -58,6 +61,17 @@ namespace LlmFoundationInstaller
                     display_name = source.display_name
                 })
                 .ToList();
+            if (included.Contains("codex"))
+            {
+                targets.Add(new LaunchTarget
+                {
+                    target_id = "vscode-codex",
+                    client_id = "codex-desktop",
+                    role = "desktop",
+                    display_name = "VS Code — Codex"
+                });
+            }
+            return targets;
         }
 
         public static ProductDescription Describe(
@@ -104,6 +118,13 @@ namespace LlmFoundationInstaller
                     null,
                     "TARGET_NOT_IN_EDITION"
                 );
+            }
+            if (String.Equals(
+                    target.target_id,
+                    "vscode-codex",
+                    StringComparison.Ordinal))
+            {
+                return VsCodeIntegration.Resolve(home);
             }
             ClientSource source = ClientBootstrap.Load(bundleRoot).clients
                 .First(entry => String.Equals(
@@ -498,6 +519,9 @@ namespace LlmFoundationInstaller
                 sha256 = null,
                 activation_id = null,
                 package_full_name = null,
+                official_url = null,
+                action = null,
+                extension_path = null,
                 reason = reason
             };
         }

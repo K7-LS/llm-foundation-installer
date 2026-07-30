@@ -120,6 +120,36 @@
                 </Grid>
               </Border>
             </ListBoxItem>
+            <ListBoxItem Tag="codex-cli" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
+              <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <Border Width="44" Height="44" CornerRadius="22" Background="#DFF5FC"><TextBlock Text="&gt;_" FontFamily="Cascadia Mono" FontSize="16" FontWeight="Bold" Foreground="#137A9D" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="Codex CLI" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" /><TextBlock Text="Запуск в терминале" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
+                  <TextBlock Grid.Column="2" Text="ГОТОВО" FontFamily="Cascadia Mono" FontSize="10" Foreground="#146B5A" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Tag="vscode-codex" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
+              <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <Border Width="44" Height="44" CornerRadius="22" Background="#DFF5FC"><TextBlock Text="VS" FontFamily="Bahnschrift SemiCondensed" FontSize="17" FontWeight="Bold" Foreground="#137A9D" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="VS Code — Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" /><TextBlock Text="Локальный ID: OpenAI.chatgpt" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
+                  <TextBlock Grid.Column="2" Text="ПРОВЕРКА" FontFamily="Cascadia Mono" FontSize="10" Foreground="#137A9D" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </ListBoxItem>
+            <ListBoxItem Tag="opencode-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
+              <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <Border Width="44" Height="44" CornerRadius="22" Background="#E3F4F0"><TextBlock Text="O" FontFamily="Bahnschrift SemiCondensed" FontSize="22" FontWeight="Bold" Foreground="#146B5A" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="OpenCode Desktop" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" /><TextBlock Text="Графический клиент" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
+                  <TextBlock Grid.Column="2" Text="ГОТОВО" FontFamily="Cascadia Mono" FontSize="10" Foreground="#146B5A" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </ListBoxItem>
             <ListBoxItem Tag="opencode-cli" Style="{StaticResource ClientListItem}" Padding="0">
               <Border Background="#FFFFFF" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="14" Padding="20">
                 <Grid>
@@ -141,6 +171,25 @@
               <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
               <RadioButton x:Name="RouteHttp" GroupName="Route" Content="SingBox HTTP" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
               <RadioButton x:Name="RouteHttps" GroupName="Route" Content="SingBox HTTPS" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
+              <Grid x:Name="ProxySettings" Visibility="Collapsed" Margin="0,16,0,0">
+                <StackPanel>
+                  <TextBlock Text="НАСТРОЙКИ SING-BOX" FontFamily="Cascadia Mono" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,0,0,8" />
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="75" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyHost" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="1"><TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyPort" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyUsername" Height="32" Margin="0,4,8,0" /></StackPanel>
+                    <StackPanel Grid.Column="3"><TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource Muted}" /><PasswordBox x:Name="ProxyPassword" Height="32" Margin="0,4,0,0" /></StackPanel>
+                  </Grid>
+                  <TextBlock Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите клиент. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0" />
+                  <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button x:Name="SaveConnection" Content="Сохранить" Padding="10,6" />
+                    <Button x:Name="TestConnection" Content="Сохранить и проверить" Padding="10,6" Margin="8,0,0,0" />
+                    <Button x:Name="StopRoute" Content="Остановить маршрут" Padding="10,6" Margin="8,0,0,0" IsEnabled="False" />
+                  </StackPanel>
+                  <TextBlock x:Name="ConnectionStatus" Text="Выберите маршрут подключения." Foreground="{StaticResource Muted}" FontSize="11" Margin="0,8,0,0" />
+                </StackPanel>
+              </Grid>
             </StackPanel>
           </Border>
           <Border Background="#071E22" CornerRadius="11" Padding="16" Margin="0,15,0,0">
@@ -151,6 +200,8 @@
               <TextBlock x:Name="SelectedRouteName" Text="Прямое подключение" Foreground="#C3D0D1" />
             </StackPanel>
           </Border>
+          <TextBlock x:Name="LaunchGuidance" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#9B3A1C" FontSize="11" Margin="0,12,0,0" />
+          <Button x:Name="LaunchOfficialLink" Visibility="Collapsed" Content="Открыть страницу OpenAI.chatgpt →" HorizontalAlignment="Left" Padding="12,7" Margin="0,8,0,0" />
         </StackPanel>
       </Grid>
 

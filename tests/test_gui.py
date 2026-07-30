@@ -2934,14 +2934,136 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
         "RoutedEventHandler checkedHandler", 1
     )[0]
 
-    assert "settings.IsEnabled = isProxy;" in update_mode
-    assert (
-        "settings.Visibility = isProxy ? Visibility.Visible : Visibility.Collapsed;"
-        in update_mode
+    assert "contract.ProxySettings.IsEnabled = isProxy;" in update_mode
+    assert "contract.ProxySettings.Visibility = isProxy" in update_mode
+    assert update_mode.index("contract.ProxySettings.Visibility") < update_mode.index(
+        "if (isProxy)"
     )
-    assert update_mode.index("settings.Visibility") < update_mode.index(
-        "if (!isProxy)"
+    assert "Заполните сервер, порт, логин и пароль" in update_mode
+
+
+def test_connection_ui_contract_diagnostics_are_localized_for_users():
+    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
+        encoding="utf-8"
     )
+
+    assert "Не найдены элементы маршрута прокси" in source
+    assert "Не найден элемент подключения: " in source
+    assert "Proxy route controls are missing" not in source
+    assert "Connection control is missing: " not in source
+
+
+CONNECTION_UI_VARIANTS = [
+    ("Employee", "Installer", "InstallerEmployeeView.xaml"),
+    ("Owner", "Installer", "InstallerOwnerView.xaml"),
+    ("Employee", "LaunchCenter", "LaunchCenterEmployeeView.xaml"),
+    ("Owner", "LaunchCenter", "LaunchCenterOwnerView.xaml"),
+]
+
+
+@pytest.fixture(scope="module")
+def connection_ui_bundles(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[tuple[str, str], Path]:
+    """Build each real WPF view once for its connection-state contract."""
+    root = tmp_path_factory.mktemp("connection-ui")
+    return {
+        (edition, product_role): _build_gui_bundle(
+            root / f"{edition.lower()}-{product_role.lower()}",
+            edition=edition,
+            product_role=product_role,
+        )
+        for edition, product_role, _ in CONNECTION_UI_VARIANTS
+    }
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role", "resource"),
+    CONNECTION_UI_VARIANTS,
+)
+def test_four_view_connection_contract(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    edition: str,
+    product_role: str,
+    resource: str,
+):
+    """Changing a view route must expose the same usable HTTPS proxy form."""
+    bundle = connection_ui_bundles[(edition, product_role)]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    result = subprocess.run(
+        [str(executable), "--ui-connection-state-json", "SingBoxHttps"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, resource + ": " + result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["mode"] == "Proxy"
+    assert value["proxy_type"] == "HTTPS"
+    assert value["proxy_settings"] == "Visible"
+    assert value["fields"] == ["server", "port", "login", "password"]
+    assert value["save_enabled"] is True
+    assert value["test_enabled"] is True
+    assert value["stop_enabled"] is False
+    assert value["status_text"].startswith(
+        "Заполните сервер, порт, логин и пароль"
+    )
+    if edition == "Owner" and product_role == "LaunchCenter":
+        assert value["route_detail"] == (
+            "Launch Center управляет sing-box и временным прокси"
+        )
+
+
+@pytest.mark.parametrize(
+    ("edition", "product_role", "resource"),
+    [
+        ("Employee", "LaunchCenter", "LaunchCenterEmployeeView.xaml"),
+        ("Owner", "LaunchCenter", "LaunchCenterOwnerView.xaml"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("route", "mode", "proxy_type", "proxy_settings"),
+    [
+        ("Direct", "Direct", None, "Collapsed"),
+        ("VPN", "VPN", None, "Collapsed"),
+        ("SingBoxHttp", "Proxy", "HTTP", "Visible"),
+    ],
+)
+def test_launch_center_connection_state(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    edition: str,
+    product_role: str,
+    resource: str,
+    route: str,
+    mode: str,
+    proxy_type: str | None,
+    proxy_settings: str,
+):
+    """Launch Center route IDs must preserve the connection-profile mapping."""
+    bundle = connection_ui_bundles[(edition, product_role)]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    result = subprocess.run(
+        [str(executable), "--ui-connection-state-json", route],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, resource + ": " + result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["mode"] == mode
+    assert value["proxy_type"] == proxy_type
+    assert value["proxy_settings"] == proxy_settings
+    assert value["fields"] == ["server", "port", "login", "password"]
 
 
 def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: Path):
@@ -4674,6 +4796,166 @@ def test_connection_probe_uses_saved_direct_profile_in_a_real_child_process(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_connection_route_probe_dispatches_proxy_to_singbox(
+    gui_bundle: Path,
+    tmp_path: Path,
+) -> None:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        executable = gui_bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "route-probe-home"
+        home.mkdir()
+        profile = tmp_path / "route-probe-proxy.json"
+        _write_json(
+            profile,
+            {
+                "schema_version": 1,
+                "mode": "Proxy",
+                "proxy": {
+                    "type": "HTTP",
+                    "host": "proxy.example.test",
+                    "port": 8080,
+                    "auth": {"mode": "None", "username": None},
+                },
+            },
+        )
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-connection-json",
+                str(home),
+                str(profile),
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        endpoint = f"http://127.0.0.1:{server.server_port}/route-check"
+
+        proxy_probe = subprocess.run(
+            [
+                str(executable),
+                "--test-connection-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert proxy_probe.stdout.strip(), proxy_probe.stderr
+        proxy_value = json.loads(proxy_probe.stdout)
+        assert proxy_probe.returncode == 20
+        assert proxy_value["status"] == "FAILED"
+        assert proxy_value["uses_proxy"] is True
+        assert (
+            proxy_value["reason"]
+            == "RUNTIME_BUNDLE_ARCHIVE_MISSING"
+        )
+
+        direct_profile = tmp_path / "route-probe-direct.json"
+        _write_json(
+            direct_profile,
+            {"schema_version": 1, "mode": "Direct", "proxy": None},
+        )
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-connection-json",
+                str(home),
+                str(direct_profile),
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        direct_probe = subprocess.run(
+            [
+                str(executable),
+                "--test-connection-route-json",
+                str(home),
+                "Direct",
+                endpoint,
+            ],
+            cwd=gui_bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert direct_probe.returncode == 0, (
+            direct_probe.stdout + direct_probe.stderr
+        )
+        direct_value = json.loads(direct_probe.stdout)
+        assert direct_value["status"] == "READY"
+        assert direct_value["uses_proxy"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_connection_route_failure_messages_are_russian_and_actionable() -> None:
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    compact = " ".join(source.split())
+
+    assert "DescribeTestFailure(reason)" in compact
+    expected_actions = {
+        "RUNTIME_BUNDLE_ARCHIVE_MISSING": (
+            "Распакуйте весь ZIP: архив runtime должен лежать рядом"
+        ),
+        "RUNTIME_ARCHIVE_INTEGRITY_FAILED": (
+            "Архив runtime повреждён"
+        ),
+        "RUNTIME_INSTALL_FAILED": (
+            "Runtime SingBox не удалось установить"
+        ),
+        "CONFIG_CHECK_FAILED": (
+            "Проверьте сервер, порт, логин и пароль"
+        ),
+        "LOCAL_PROXY_NOT_READY": (
+            "SingBox не запустил локальный прокси"
+        ),
+        "ROUTE_PROBE_FAILED": (
+            "запрос через него не прошёл"
+        ),
+        "SESSION_CLEANUP_FAILED": (
+            "Не удалось безопасно очистить временную сессию SingBox"
+        ),
+    }
+    for reason, action in expected_actions.items():
+        assert reason in source
+        assert action in source
+    assert "server, port, login" not in source
 
 
 def test_invalid_proxy_does_not_overwrite_last_known_good_profile(

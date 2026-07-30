@@ -44,6 +44,31 @@ def test_pytest_command_keeps_fake_homes_inside_acceptance_work(tmp_path):
     assert f"--junitxml={tmp_path / 'pytest.xml'}" in command
 
 
+def test_pytest_command_accepts_short_temp_home_and_keeps_junit_in_work(
+    tmp_path,
+):
+    short_home = Path("C:/Temp/k7-acceptance-fixture")
+
+    command = _load_runner()._pytest_command(tmp_path, short_home)
+
+    assert command[-1] == f"--basetemp={short_home}"
+    assert f"--junitxml={tmp_path / 'pytest.xml'}" in command
+
+
+def test_create_pytest_home_uses_unique_system_temp(monkeypatch, tmp_path):
+    runner = _load_runner()
+    expected = tmp_path / "k7-acceptance-fixture"
+
+    def fake_mkdtemp(*, prefix):
+        assert prefix == "k7-acceptance-"
+        expected.mkdir()
+        return str(expected)
+
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", fake_mkdtemp)
+
+    assert runner._create_pytest_home() == expected
+
+
 def test_run_preserves_non_utf8_child_output_without_crashing(tmp_path):
     result = _load_runner()._run(
         [
