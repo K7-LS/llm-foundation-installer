@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -206,43 +207,8 @@ def _pytest_command(
     ]
 
 
-def _short_pytest_home(work: Path) -> tuple[Path, str | None]:
-    default = work / "pytest-home"
-    if os.name != "nt":
-        return default, None
-    subst = shutil.which("subst")
-    if not subst:
-        return default, None
-    for letter in reversed("RSTUVWXYZ"):
-        drive = letter + ":"
-        if Path(drive + "\\").exists():
-            continue
-        result = subprocess.run(
-            [subst, drive, str(work.resolve())],
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            return Path(drive + "\\pytest-home"), drive
-    return default, None
-
-
-def _remove_subst_drive(drive: str | None) -> None:
-    if not drive:
-        return
-    subst = shutil.which("subst")
-    if not subst:
-        raise RuntimeError("subst disappeared before cleanup")
-    result = subprocess.run(
-        [subst, drive, "/D"],
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            "failed to remove acceptance subst drive: " +
-            result.stderr.decode("utf-8", errors="replace")
-        )
+def _create_pytest_home() -> Path:
+    return Path(tempfile.mkdtemp(prefix="k7-acceptance-"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -310,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     junit = work / "pytest.xml"
-    pytest_home, subst_drive = _short_pytest_home(work)
+    pytest_home = _create_pytest_home()
     try:
         tests = _run(
             _pytest_command(work, pytest_home),
@@ -318,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
             environment=_pytest_environment(),
         )
     finally:
-        _remove_subst_drive(subst_drive)
+        _remove_tree(pytest_home)
     counts = _junit_counts(junit) if junit.is_file() else {}
     deterministic = (
         bool(builds.get("ps7", {}).get("files"))
