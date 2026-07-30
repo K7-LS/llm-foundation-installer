@@ -2937,8 +2937,9 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
     assert "contract.ProxySettings.IsEnabled = isProxy;" in update_mode
     assert "contract.ProxySettings.Visibility = isProxy" in update_mode
     assert update_mode.index("contract.ProxySettings.Visibility") < update_mode.index(
-        "if (!isProxy)"
+        "if (isProxy)"
     )
+    assert "Заполните сервер, порт, логин и пароль" in update_mode
 
 
 def test_connection_ui_contract_diagnostics_are_localized_for_users():
@@ -3009,6 +3010,13 @@ def test_four_view_connection_contract(
     assert value["save_enabled"] is True
     assert value["test_enabled"] is True
     assert value["stop_enabled"] is False
+    assert value["status_text"].startswith(
+        "Заполните сервер, порт, логин и пароль"
+    )
+    if edition == "Owner" and product_role == "LaunchCenter":
+        assert value["route_detail"] == (
+            "Launch Center управляет sing-box и временным прокси"
+        )
 
 
 @pytest.mark.parametrize(
@@ -4932,10 +4940,10 @@ def test_connection_route_failure_messages_are_russian_and_actionable() -> None:
             "Runtime SingBox не удалось установить"
         ),
         "CONFIG_CHECK_FAILED": (
-            "Проверьте server, port, login и password"
+            "Проверьте сервер, порт, логин и пароль"
         ),
         "LOCAL_PROXY_NOT_READY": (
-            "SingBox не запустил локальный proxy"
+            "SingBox не запустил локальный прокси"
         ),
         "ROUTE_PROBE_FAILED": (
             "запрос через него не прошёл"
@@ -4947,6 +4955,7 @@ def test_connection_route_failure_messages_are_russian_and_actionable() -> None:
     for reason, action in expected_actions.items():
         assert reason in source
         assert action in source
+    assert "server, port, login" not in source
 
 
 def test_invalid_proxy_does_not_overwrite_last_known_good_profile(

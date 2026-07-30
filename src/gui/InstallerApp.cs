@@ -1412,6 +1412,9 @@ namespace LlmFoundationInstaller
             TextBlock routeStatus = view.FindName(
                 "RouteStatus"
             ) as TextBlock;
+            TextBlock routeDetail = view.FindName(
+                "RouteDetail"
+            ) as TextBlock;
             TextBlock evidenceStatus = view.FindName(
                 "EvidenceStatus"
             ) as TextBlock;
@@ -1495,6 +1498,14 @@ namespace LlmFoundationInstaller
                 if (routeStatus != null)
                 {
                     routeStatus.Text = routeLabel + " · готово";
+                }
+                if (routeDetail != null)
+                {
+                    routeDetail.Text = route == "Direct"
+                        ? "Прокси не изменяется"
+                        : (route == "VPN"
+                            ? "Используется системный VPN"
+                            : "Launch Center управляет sing-box и временным прокси");
                 }
             };
             targetList.SelectionChanged += delegate
@@ -2800,7 +2811,16 @@ namespace LlmFoundationInstaller
                 contract.ProxySettings.Visibility = isProxy
                     ? Visibility.Visible
                     : Visibility.Collapsed;
-                if (!isProxy)
+                if (isProxy)
+                {
+                    contract.Status.Text =
+                        "Заполните сервер, порт, логин и пароль, затем нажмите " +
+                        "«Сохранить и проверить».";
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(49, 87, 199)
+                    );
+                }
+                else
                 {
                     contract.Status.Text = contract.Vpn.IsChecked == true
                         ? "VPN: прокси не требуется."
@@ -2831,6 +2851,7 @@ namespace LlmFoundationInstaller
                 contract.ProxyAuth.SelectionChanged += updateAuth;
             }
 
+            bool preserveStatus = false;
             if (loadState)
             {
                 try
@@ -2847,9 +2868,13 @@ namespace LlmFoundationInstaller
                     contract.Status.Foreground = new SolidColorBrush(
                         Color.FromRgb(161, 92, 0)
                     );
+                    preserveStatus = true;
                 }
             }
-            updateMode();
+            if (!preserveStatus)
+            {
+                updateMode();
+            }
             updateAuth(null, null);
 
             Func<bool> saveCurrent = delegate
@@ -3014,7 +3039,7 @@ namespace LlmFoundationInstaller
             }
             else if (stableReason == "CONFIG_CHECK_FAILED")
             {
-                action = "Проверьте server, port, login и password, сохраните " +
+                action = "Проверьте сервер, порт, логин и пароль, сохраните " +
                     "параметры и повторите проверку.";
             }
             else if (
@@ -3023,13 +3048,13 @@ namespace LlmFoundationInstaller
                 stableReason == "RUNTIME_START_FAILED" ||
                 stableReason == "RUNTIME_EXITED_BEFORE_READY")
             {
-                action = "SingBox не запустил локальный proxy. Закройте другой " +
-                    "VPN или proxy и повторите проверку.";
+                action = "SingBox не запустил локальный прокси. Закройте другой " +
+                    "VPN или прокси и повторите проверку.";
             }
             else if (stableReason == "ROUTE_PROBE_FAILED")
             {
                 action = "SingBox запущен, но запрос через него не прошёл. " +
-                    "Проверьте server, port, login, password и доступность proxy.";
+                    "Проверьте сервер, порт, логин, пароль и доступность прокси.";
             }
             else if (
                 stableReason == "SESSION_CLEANUP_FAILED" ||
@@ -3121,6 +3146,9 @@ namespace LlmFoundationInstaller
         {
             ConnectionUiContract contract = ConnectionUiContract.Resolve(view);
             bool proxy = contract.IsProxy;
+            TextBlock routeDetail = view.FindName(
+                "RouteDetail"
+            ) as TextBlock;
             return new Dictionary<string, object>
             {
                 { "mode", contract.Mode },
@@ -3143,6 +3171,11 @@ namespace LlmFoundationInstaller
                 {
                     "stop_enabled",
                     contract.Stop != null && contract.Stop.IsEnabled
+                },
+                { "status_text", contract.Status.Text },
+                {
+                    "route_detail",
+                    routeDetail == null ? null : routeDetail.Text
                 }
             };
         }
