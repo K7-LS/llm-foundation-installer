@@ -449,7 +449,7 @@ namespace LlmFoundationInstaller
                 int exitCode = client.ExitCode;
                 session.lifecycle.Add("CLIENT_EXITED");
                 SingBoxSessionResult stopped =
-                    StopActiveRoute();
+                    StopRegisteredRoute(session);
                 registered = false;
                 session = null;
                 bool passed = exitCode == 0 &&
@@ -484,7 +484,7 @@ namespace LlmFoundationInstaller
                     SingBoxSessionResult stopped;
                     if (registered)
                     {
-                        stopped = StopActiveRoute();
+                        stopped = StopRegisteredRoute(session);
                     }
                     else
                     {
@@ -615,12 +615,50 @@ namespace LlmFoundationInstaller
 
         public static SingBoxSessionResult StopActiveRoute()
         {
-            RunningSingBoxSession session;
             lock (RouteSync)
             {
-                session = activeSingBox;
-                activeSingBox = null;
+                return StopActiveRouteLocked();
             }
+        }
+
+        private static SingBoxSessionResult StopRegisteredRoute(
+            RunningSingBoxSession session
+        )
+        {
+            lock (RouteSync)
+            {
+                if (session != null &&
+                    session.stop_result != null)
+                {
+                    return session.stop_result;
+                }
+                if (Object.ReferenceEquals(
+                        activeSingBox,
+                        session))
+                {
+                    return StopActiveRouteLocked();
+                }
+                return new SingBoxSessionResult
+                {
+                    status = "FAILED",
+                    listen_port = session == null
+                        ? 0
+                        : session.listen_port,
+                    uses_proxy = true,
+                    cleanup_verified = false,
+                    secret_redacted = true,
+                    lifecycle = session == null
+                        ? new List<string>()
+                        : session.lifecycle,
+                    reason = "OWNED_SESSION_MISMATCH"
+                };
+            }
+        }
+
+        private static SingBoxSessionResult StopActiveRouteLocked()
+        {
+            RunningSingBoxSession session = activeSingBox;
+            activeSingBox = null;
             ProxyRecoveryResult proxy =
                 SystemProxyLease.StopActiveRoute();
             SingBoxSessionResult singBox = session == null
@@ -651,6 +689,10 @@ namespace LlmFoundationInstaller
                 : (!singBox.cleanup_verified
                     ? singBox.reason
                     : null);
+            if (session != null)
+            {
+                session.stop_result = singBox;
+            }
             return singBox;
         }
 

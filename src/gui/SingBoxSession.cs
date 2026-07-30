@@ -30,6 +30,7 @@ namespace LlmFoundationInstaller
         internal int listen_port { get; set; }
         internal string nonce { get; set; }
         internal List<string> lifecycle { get; set; }
+        internal SingBoxSessionResult stop_result { get; set; }
     }
 
     internal static class SingBoxSession

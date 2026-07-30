@@ -935,6 +935,88 @@ def test_stop_after_route_registration_prevents_client_activation(
     assert not client_started.exists()
 
 
+def test_stop_cleanup_failure_is_returned_to_waiting_launch(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    home = tmp_path / "home"
+    _save_proxy_profile(appx_lease_bundle, home, tmp_path)
+    registered = tmp_path / "route-registered"
+    resume = tmp_path / "route-continue"
+    route_stop = tmp_path / "route-stop"
+    client_started = tmp_path / "client-started"
+    batch = tmp_path / "should-not-start.cmd"
+    batch.write_text(
+        "@echo off\r\n"
+        "echo started>\"%K7_APPX_STARTED%\"\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    environment = dict(os.environ)
+    environment["K7_APPX_FIXTURE_ARGS"] = f'/d /c "{batch}"'
+    environment["K7_APPX_STARTED"] = str(client_started)
+    environment["K7_ROUTE_REGISTERED_READY"] = str(registered)
+    environment["K7_ROUTE_REGISTERED_CONTINUE"] = str(resume)
+    owner = subprocess.Popen(
+        _appx_command(
+            appx_lease_bundle,
+            home,
+            registry_key,
+            "success",
+            route_stop,
+        ),
+        cwd=appx_lease_bundle,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    _wait_for_file(registered)
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        registry_key,
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(
+            key,
+            "ProxyServer",
+            0,
+            winreg.REG_SZ,
+            "external-stop.invalid:7777",
+        )
+    route_stop.write_text("stop", encoding="utf-8")
+    sessions = (
+        home
+        / ".llm-foundation"
+        / "launcher-state"
+        / "sessions"
+    )
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and list(sessions.glob("*")):
+        time.sleep(0.05)
+    assert not list(sessions.glob("*"))
+    resume.write_text("continue", encoding="utf-8")
+    stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    value = json.loads(stdout)
+
+    assert owner.returncode == 20
+    assert value["status"] == "FAILED"
+    assert value["reason"] == "SYSTEM_PROXY_CHANGED_EXTERNALLY"
+    assert value["cleanup_verified"] is False
+    assert _registry_snapshot(registry_key)["ProxyServer"] == (
+        "external-stop.invalid:7777",
+        winreg.REG_SZ,
+    )
+    assert (
+        home / ".llm-foundation" / "system-proxy-lease.json"
+    ).is_file()
+    assert not client_started.exists()
+
+
 @pytest.mark.parametrize("external_proxy_change", [False, True])
 def test_appx_owner_crash_restores_proxy_and_owned_singbox_only(
     appx_lease_bundle: Path,
