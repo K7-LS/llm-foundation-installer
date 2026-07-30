@@ -1596,16 +1596,14 @@ namespace LlmFoundationInstaller
                 launch.IsEnabled = false;
                 if (stopRoute != null)
                 {
-                    stopRoute.IsEnabled =
-                        route == "SingBoxHttp" ||
-                        route == "SingBoxHttps";
+                    stopRoute.IsEnabled = false;
                 }
                 if (routeStatus != null)
                 {
                     routeStatus.Text = RouteLabel(route) +
                         " · запуск";
                 }
-                LauncherSessionResult result = await Task.Run(
+                Task<LauncherSessionResult> launchTask = Task.Run(
                     () => ClientLauncher.StartAndWait(
                         resolution,
                         route,
@@ -1613,6 +1611,20 @@ namespace LlmFoundationInstaller
                         home
                     )
                 );
+                bool singBoxRoute =
+                    route == "SingBoxHttp" ||
+                    route == "SingBoxHttps";
+                if (singBoxRoute && stopRoute != null)
+                {
+                    while (!launchTask.IsCompleted &&
+                        !ClientLauncher.HasActiveRoute())
+                    {
+                        await Task.Delay(50);
+                    }
+                    stopRoute.IsEnabled =
+                        ClientLauncher.HasActiveRoute();
+                }
+                LauncherSessionResult result = await launchTask;
                 if (routeStatus != null)
                 {
                     routeStatus.Text = RouteLabel(result.transport) +
@@ -3694,13 +3706,41 @@ namespace LlmFoundationInstaller
                             args[1],
                             args[2]
                         );
-                    LauncherSessionResult launched =
-                        ClientLauncher.StartAndWait(
+                    string testRegistrySubkey =
+                        Environment.GetEnvironmentVariable(
+                            "K7_SYSTEM_PROXY_TEST_SUBKEY"
+                        );
+                    LauncherSessionResult launched;
+                    if (!String.IsNullOrWhiteSpace(
+                        testRegistrySubkey))
+                    {
+                        if (!ClientBootstrap.Load(bundleRoot).test_only ||
+                            !SystemProxyLease
+                                .IsAllowedTestRegistrySubkey(
+                                    testRegistrySubkey))
+                        {
+                            WriteError(
+                                "Тестовый реестр запуска запрещён для production"
+                            );
+                            return 2;
+                        }
+                        launched = ClientLauncher.StartAndWaitForTest(
+                            resolution,
+                            args[3],
+                            bundleRoot,
+                            args[1],
+                            testRegistrySubkey
+                        );
+                    }
+                    else
+                    {
+                        launched = ClientLauncher.StartAndWait(
                             resolution,
                             args[3],
                             bundleRoot,
                             args[1]
                         );
+                    }
                     WriteOutput(new JavaScriptSerializer().Serialize(
                         launched
                     ));
@@ -3988,7 +4028,10 @@ namespace LlmFoundationInstaller
                     }
                     bool activationFailure =
                         args[5] == "activation-failure";
+                    bool routeConflict =
+                        args[5] == "route-conflict";
                     if (!activationFailure &&
+                        !routeConflict &&
                         args[5] != "success")
                     {
                         WriteError("Некорректный режим AppX-теста");
@@ -4030,8 +4073,18 @@ namespace LlmFoundationInstaller
                             activation_id = "K7AITest!App",
                             package_full_name = "K7AITest"
                         };
-                    LauncherSessionResult appx =
-                        ClientLauncher.StartAppxThroughSingBoxForTest(
+                    LauncherSessionResult appx = routeConflict
+                        ? ClientLauncher.StartAppxWithRouteConflictForTest(
+                            testTarget,
+                            args[2],
+                            bundleRoot,
+                            args[1],
+                            args[3],
+                            Environment.GetEnvironmentVariable(
+                                "K7_APPX_FIXTURE_ARGS"
+                            )
+                        )
+                        : ClientLauncher.StartAppxThroughSingBoxForTest(
                             testTarget,
                             args[2],
                             bundleRoot,

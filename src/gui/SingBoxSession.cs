@@ -367,7 +367,37 @@ namespace LlmFoundationInstaller
         }
 
         public static SingBoxSessionResult RecoverOwnedSessions(
+            string home,
+            int expectedOwnerPid
+        )
+        {
+            if (expectedOwnerPid < 1)
+            {
+                return Failed(
+                    0,
+                    new List<string>(),
+                    false,
+                    "OWNED_SESSION_RECOVERY_FAILED"
+                );
+            }
+            return RecoverOwnedSessionsInternal(
+                home,
+                expectedOwnerPid,
+                false
+            );
+        }
+
+        public static SingBoxSessionResult RecoverOrphanedSessions(
             string home
+        )
+        {
+            return RecoverOwnedSessionsInternal(home, null, true);
+        }
+
+        private static SingBoxSessionResult RecoverOwnedSessionsInternal(
+            string home,
+            int? expectedOwnerPid,
+            bool orphanedOnly
         )
         {
             List<string> lifecycle = new List<string>();
@@ -438,6 +468,18 @@ namespace LlmFoundationInstaller
                     int schema = Convert.ToInt32(
                         state["schema_version"]
                     );
+                    int ownerPid = Convert.ToInt32(
+                        state["owner_pid"]
+                    );
+                    if (expectedOwnerPid.HasValue &&
+                        ownerPid != expectedOwnerPid.Value)
+                    {
+                        continue;
+                    }
+                    if (orphanedOnly && IsProcessAlive(ownerPid))
+                    {
+                        continue;
+                    }
                     int processId = Convert.ToInt32(
                         state["process_id"]
                     );
@@ -447,6 +489,7 @@ namespace LlmFoundationInstaller
                     string executableSha256 =
                         state["executable_sha256"] as string;
                     if (schema != 1 ||
+                        ownerPid < 1 ||
                         processId < 1 ||
                         String.IsNullOrWhiteSpace(nonce) ||
                         String.IsNullOrWhiteSpace(executablePath) ||
@@ -536,6 +579,26 @@ namespace LlmFoundationInstaller
                     false,
                     "OWNED_SESSION_RECOVERY_FAILED"
                 );
+            }
+        }
+
+        private static bool IsProcessAlive(int processId)
+        {
+            if (processId < 1)
+            {
+                return false;
+            }
+            try
+            {
+                using (Process process =
+                    Process.GetProcessById(processId))
+                {
+                    return !process.HasExited;
+                }
+            }
+            catch
+            {
+                return false;
             }
         }
 

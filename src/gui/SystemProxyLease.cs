@@ -263,19 +263,7 @@ namespace LlmFoundationInstaller
             }
             while (File.Exists(statePath))
             {
-                bool ownerAlive = false;
-                try
-                {
-                    using (Process owner =
-                        Process.GetProcessById(ownerPid))
-                    {
-                        ownerAlive = !owner.HasExited;
-                    }
-                }
-                catch
-                {
-                    ownerAlive = false;
-                }
+                bool ownerAlive = IsProcessAlive(ownerPid);
                 if (!ownerAlive)
                 {
                     break;
@@ -284,8 +272,21 @@ namespace LlmFoundationInstaller
             }
             if (!File.Exists(statePath))
             {
+                if (IsProcessAlive(ownerPid))
+                {
+                    return new ProxyRecoveryResult
+                    {
+                        status = "RESTORED",
+                        cleanup_verified = true,
+                        lifecycle = new List<string>(),
+                        reason = null
+                    };
+                }
                 SingBoxSessionResult cleanWithoutState =
-                    SingBoxSession.RecoverOwnedSessions(home);
+                    SingBoxSession.RecoverOwnedSessions(
+                        home,
+                        ownerPid
+                    );
                 return new ProxyRecoveryResult
                 {
                     status = cleanWithoutState.cleanup_verified
@@ -301,23 +302,30 @@ namespace LlmFoundationInstaller
                 home,
                 registrySubkey
             );
-            if (!proxy.cleanup_verified)
-            {
-                return proxy;
-            }
             SingBoxSessionResult sessions =
-                SingBoxSession.RecoverOwnedSessions(home);
-            if (!sessions.cleanup_verified)
+                SingBoxSession.RecoverOwnedSessions(home, ownerPid);
+            bool proxyCleanup = proxy.cleanup_verified;
+            bool sessionsCleanup = sessions.cleanup_verified;
+            if (proxy.lifecycle == null)
+            {
+                proxy.lifecycle = new List<string>();
+            }
+            if (sessions.lifecycle != null)
+            {
+                proxy.lifecycle.AddRange(sessions.lifecycle);
+            }
+            if (!proxyCleanup || !sessionsCleanup)
             {
                 return new ProxyRecoveryResult
                 {
                     status = "FAILED",
                     cleanup_verified = false,
-                    lifecycle = sessions.lifecycle,
-                    reason = sessions.reason
+                    lifecycle = proxy.lifecycle,
+                    reason = !proxyCleanup
+                        ? proxy.reason
+                        : sessions.reason
                 };
             }
-            proxy.lifecycle.AddRange(sessions.lifecycle);
             return proxy;
         }
 
@@ -483,6 +491,7 @@ namespace LlmFoundationInstaller
                         "SYSTEM_PROXY_CHANGED_EXTERNALLY"
                     );
                 }
+                PauseBeforeRestoreForTest(state.registry_subkey);
                 foreach (ProxyRegistryValue applied in state.applied)
                 {
                     ProxyRegistryValue current = ReadValue(
@@ -494,6 +503,32 @@ namespace LlmFoundationInstaller
                         RestoreValue(
                             state.registry_subkey,
                             FindValue(state.original, applied.name)
+                        );
+                    }
+                    else if (!ValueEquals(
+                        current,
+                        FindValue(state.original, applied.name)
+                    ))
+                    {
+                        changedExternally = true;
+                    }
+                }
+                if (changedExternally)
+                {
+                    return Failed(
+                        "SYSTEM_PROXY_CHANGED_EXTERNALLY"
+                    );
+                }
+                foreach (ProxyRegistryValue original in state.original)
+                {
+                    ProxyRegistryValue current = ReadValue(
+                        state.registry_subkey,
+                        original.name
+                    );
+                    if (!ValueEquals(current, original))
+                    {
+                        return Failed(
+                            "SYSTEM_PROXY_CHANGED_EXTERNALLY"
                         );
                     }
                 }
@@ -570,6 +605,40 @@ namespace LlmFoundationInstaller
             foreach (ProxyRegistryValue value in values)
             {
                 RestoreValue(registrySubkey, value);
+            }
+        }
+
+        private static void PauseBeforeRestoreForTest(
+            string registrySubkey
+        )
+        {
+            if (!IsAllowedTestRegistrySubkey(registrySubkey))
+            {
+                return;
+            }
+            string ready = Environment.GetEnvironmentVariable(
+                "K7_PROXY_CAS_READY"
+            );
+            string resume = Environment.GetEnvironmentVariable(
+                "K7_PROXY_CAS_CONTINUE"
+            );
+            if (String.IsNullOrWhiteSpace(ready) ||
+                String.IsNullOrWhiteSpace(resume))
+            {
+                return;
+            }
+            File.WriteAllText(ready, "ready", new UTF8Encoding(false));
+            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!File.Exists(resume) &&
+                DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(25);
+            }
+            if (!File.Exists(resume))
+            {
+                throw new InvalidOperationException(
+                    "SYSTEM_PROXY_TEST_SYNC_TIMEOUT"
+                );
             }
         }
 
@@ -852,6 +921,26 @@ namespace LlmFoundationInstaller
                 );
             }
             return sid.Value;
+        }
+
+        private static bool IsProcessAlive(int processId)
+        {
+            if (processId < 1)
+            {
+                return false;
+            }
+            try
+            {
+                using (Process process =
+                    Process.GetProcessById(processId))
+                {
+                    return !process.HasExited;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void ReleaseMutex(

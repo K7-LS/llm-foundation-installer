@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -215,6 +216,22 @@ def _run_json(
             "43191",
             *extra,
         ],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.stdout.strip(), result.stderr
+    return result.returncode, json.loads(result.stdout)
+
+
+def _run_bundle_json(
+    bundle: Path,
+    *arguments: str,
+) -> tuple[int, dict[str, object]]:
+    result = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), *arguments],
         cwd=bundle,
         text=True,
         capture_output=True,
@@ -497,6 +514,64 @@ def test_external_change_is_not_overwritten_and_blocks_next_acquire(
     assert blocked["reason"] == "SYSTEM_PROXY_CHANGED_EXTERNALLY"
 
 
+def test_external_change_during_cas_restore_is_not_marked_restored(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    home = tmp_path / "home"
+    ready = tmp_path / "cas-ready"
+    resume = tmp_path / "cas-continue"
+    environment = dict(os.environ)
+    environment["K7_PROXY_CAS_READY"] = str(ready)
+    environment["K7_PROXY_CAS_CONTINUE"] = str(resume)
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "normal-cycle",
+            str(home),
+            registry_key,
+            "43191",
+        ],
+        cwd=lease_bundle,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    _wait_for_file(ready)
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        registry_key,
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        winreg.SetValueEx(
+            key,
+            "ProxyServer",
+            0,
+            winreg.REG_SZ,
+            "external-race.invalid:7777",
+        )
+    resume.write_text("continue", encoding="utf-8")
+    stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    value = json.loads(stdout)
+
+    assert owner.returncode == 20
+    assert value["cleanup_verified"] is False
+    assert value["reason"] == "SYSTEM_PROXY_CHANGED_EXTERNALLY"
+    assert _registry_snapshot(registry_key)["ProxyServer"] == (
+        "external-race.invalid:7777",
+        winreg.REG_SZ,
+    )
+    assert (
+        home / ".llm-foundation" / "system-proxy-lease.json"
+    ).is_file()
+
+
 def test_two_concurrent_acquires_allow_only_one_owner(
     lease_bundle: Path,
     tmp_path: Path,
@@ -636,6 +711,49 @@ def test_appx_acquire_recovers_stale_owned_state_before_new_lease(
     assert not state_path.exists()
 
 
+def test_appx_route_conflict_rolls_back_acquired_system_proxy(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    before = _registry_snapshot(registry_key)
+    home = tmp_path / "home"
+    _save_proxy_profile(appx_lease_bundle, home, tmp_path)
+    environment = dict(os.environ)
+    environment["K7_APPX_FIXTURE_ARGS"] = "/d /c exit 0"
+
+    result = subprocess.run(
+        _appx_command(
+            appx_lease_bundle,
+            home,
+            registry_key,
+            "route-conflict",
+        ),
+        cwd=appx_lease_bundle,
+        env=environment,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+
+    assert result.stdout.strip(), result.stderr
+    value = json.loads(result.stdout)
+    assert result.returncode == 20
+    assert value["status"] == "FAILED"
+    assert value["reason"] == "ROUTE_ALREADY_ACTIVE"
+    assert value["cleanup_verified"] is True
+    assert _registry_snapshot(registry_key) == before
+    assert not list(
+        (
+            home
+            / ".llm-foundation"
+            / "launcher-state"
+            / "sessions"
+        ).glob("*")
+    )
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_status", "expected_reason"),
     [
@@ -738,6 +856,15 @@ def test_stop_route_restores_proxy_without_killing_appx_client(
         _wait_for_file(heartbeat)
         route_stop.write_text("stop", encoding="utf-8")
         _wait_for_snapshot(registry_key, before)
+        reacquire_code, reacquired = _run_json(
+            appx_lease_bundle,
+            "normal-cycle",
+            home,
+            registry_key,
+        )
+        assert reacquire_code == 0
+        assert reacquired["status"] == "RESTORED"
+        assert reacquired["cleanup_verified"] is True
         first_mtime = heartbeat.stat().st_mtime_ns
         time.sleep(1.5)
         assert heartbeat.stat().st_mtime_ns > first_mtime
@@ -754,10 +881,12 @@ def test_stop_route_restores_proxy_without_killing_appx_client(
             owner.communicate(timeout=10)
 
 
+@pytest.mark.parametrize("external_proxy_change", [False, True])
 def test_appx_owner_crash_restores_proxy_and_owned_singbox_only(
     appx_lease_bundle: Path,
     tmp_path: Path,
     registry_key: str,
+    external_proxy_change: bool,
 ) -> None:
     before = _registry_snapshot(registry_key)
     home = tmp_path / "home"
@@ -798,9 +927,24 @@ def test_appx_owner_crash_restores_proxy_and_owned_singbox_only(
     try:
         _wait_for_any_local_proxy(registry_key)
         _wait_for_file(started)
+        if external_proxy_change:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                registry_key,
+                0,
+                winreg.KEY_SET_VALUE,
+            ) as key:
+                winreg.SetValueEx(
+                    key,
+                    "ProxyServer",
+                    0,
+                    winreg.REG_SZ,
+                    "external-crash.invalid:7777",
+                )
         owner.kill()
         owner.wait(timeout=10)
-        _wait_for_snapshot(registry_key, before)
+        if not external_proxy_change:
+            _wait_for_snapshot(registry_key, before)
         sessions = (
             home
             / ".llm-foundation"
@@ -811,8 +955,93 @@ def test_appx_owner_crash_restores_proxy_and_owned_singbox_only(
         while time.monotonic() < deadline and list(sessions.glob("*")):
             time.sleep(0.05)
         assert not list(sessions.glob("*"))
+        state_path = (
+            home / ".llm-foundation" / "system-proxy-lease.json"
+        )
+        if external_proxy_change:
+            assert _registry_snapshot(registry_key)["ProxyServer"] == (
+                "external-crash.invalid:7777",
+                winreg.REG_SZ,
+            )
+            assert state_path.is_file()
+        else:
+            assert not state_path.exists()
         first_mtime = heartbeat.stat().st_mtime_ns
         time.sleep(1.5)
         assert heartbeat.stat().st_mtime_ns > first_mtime
     finally:
         client_stop.write_text("stop", encoding="utf-8")
+
+
+def test_watchdog_does_not_stop_singbox_owned_by_another_live_process(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    returncode, runtime = _run_bundle_json(
+        appx_lease_bundle,
+        "--ensure-runtime-json",
+        str(home),
+    )
+    assert returncode == 0
+    executable = Path(str(runtime["executable_path"]))
+    assert executable.is_file()
+    config = tmp_path / "live-owner-config.json"
+    config.write_text('{"listen_port":18120}', encoding="utf-8")
+    process = subprocess.Popen(
+        [str(executable), "run", "-c", str(config)],
+        cwd=appx_lease_bundle,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    session_root = (
+        home
+        / ".llm-foundation"
+        / "launcher-state"
+        / "sessions"
+        / uuid.uuid4().hex
+    )
+    session_root.mkdir(parents=True)
+    (session_root / "owned-state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "nonce": uuid.uuid4().hex,
+                "owner_pid": os.getpid(),
+                "process_id": process.pid,
+                "listen_port": 18120,
+                "executable_path": str(executable),
+                "executable_sha256": hashlib.sha256(
+                    executable.read_bytes()
+                ).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        watchdog = subprocess.run(
+            [
+                str(appx_lease_bundle / "LLMFoundationInstaller.exe"),
+                "--system-proxy-watchdog",
+                "999999",
+                str(home),
+                registry_key,
+            ],
+            cwd=appx_lease_bundle,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert watchdog.stdout.strip(), watchdog.stderr
+        value = json.loads(watchdog.stdout)
+        assert watchdog.returncode == 0
+        assert value["cleanup_verified"] is True
+        assert process.poll() is None
+        assert session_root.is_dir()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)

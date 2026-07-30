@@ -6,6 +6,8 @@ import os
 import shutil
 import subprocess
 import textwrap
+import uuid
+import winreg
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -15,6 +17,7 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+TEST_REGISTRY_PREFIX = r"Software\K7AITests"
 
 
 def _build(
@@ -68,6 +71,62 @@ def _run_json(bundle: Path, *arguments: str) -> tuple[int, dict[str, object]]:
     )
     assert result.stdout.strip(), result.stderr
     return result.returncode, json.loads(result.stdout)
+
+
+@pytest.fixture
+def process_only_registry_key() -> str:
+    subkey = (
+        TEST_REGISTRY_PREFIX
+        + "\\process-only-"
+        + uuid.uuid4().hex
+    )
+    with winreg.CreateKeyEx(
+        winreg.HKEY_CURRENT_USER,
+        subkey,
+        0,
+        winreg.KEY_READ | winreg.KEY_WRITE,
+    ) as key:
+        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(
+            key,
+            "ProxyServer",
+            0,
+            winreg.REG_SZ,
+            "process-only-sentinel.invalid:8899",
+        )
+    try:
+        yield subkey
+    finally:
+        assert subkey.startswith(TEST_REGISTRY_PREFIX + "\\")
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            subkey,
+            0,
+            winreg.KEY_READ | winreg.KEY_WRITE,
+        ) as key:
+            while True:
+                try:
+                    value_name = winreg.EnumValue(key, 0)[0]
+                except OSError:
+                    break
+                winreg.DeleteValue(key, value_name)
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, subkey)
+
+
+def _proxy_registry_snapshot(
+    subkey: str,
+) -> dict[str, tuple[object, int]]:
+    assert subkey.startswith(TEST_REGISTRY_PREFIX + "\\")
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        subkey,
+        0,
+        winreg.KEY_READ,
+    ) as key:
+        return {
+            name: winreg.QueryValueEx(key, name)
+            for name in ("ProxyEnable", "ProxyServer")
+        }
 
 
 def _launch_target_tags(path: Path) -> set[str]:
@@ -966,6 +1025,10 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
     assert "public static SingBoxSessionResult StopActiveRoute()" in source
     assert "contract.Stop.Click +=" in installer_source
     assert "ClientLauncher.StopActiveRoute()" in installer_source
+    assert "ClientLauncher.HasActiveRoute()" in installer_source
+    assert installer_source.index(
+        "Task<LauncherSessionResult> launchTask"
+    ) < installer_source.index("ClientLauncher.HasActiveRoute()")
     assert "InternetSetOption" in proxy_source
 
 
@@ -973,6 +1036,7 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
 def test_direct_vpn_launch_exact_process_without_proxy_environment(
     tmp_path: Path,
     route: str,
+    process_only_registry_key: str,
 ) -> None:
     fixture = tmp_path / "environment-probe.exe"
     _compile_environment_probe(fixture)
@@ -1053,7 +1117,11 @@ def test_direct_vpn_launch_exact_process_without_proxy_environment(
             "HTTP_PROXY": "http://sentinel.invalid:8080",
             "HTTPS_PROXY": "http://sentinel.invalid:8080",
             "ALL_PROXY": "socks5://sentinel.invalid:1080",
+            "K7_SYSTEM_PROXY_TEST_SUBKEY": process_only_registry_key,
         }
+    )
+    registry_before = _proxy_registry_snapshot(
+        process_only_registry_key
     )
     result = subprocess.run(
         [
@@ -1080,6 +1148,10 @@ def test_direct_vpn_launch_exact_process_without_proxy_environment(
     assert value["cleanup_verified"] is True
     assert value["process_exit_code"] == 0
     assert value["executable_path"] == str(executable.resolve())
+    assert "TEST_SYSTEM_PROXY_GUARD_ACTIVE" in value["lifecycle"]
+    assert _proxy_registry_snapshot(
+        process_only_registry_key
+    ) == registry_before
     assert probe_output.read_text(encoding="utf-8").splitlines() == [
         "HTTP_PROXY=<null>",
         "HTTPS_PROXY=<null>",
