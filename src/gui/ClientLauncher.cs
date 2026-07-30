@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace LlmFoundationInstaller
@@ -373,6 +374,9 @@ namespace LlmFoundationInstaller
                     activeSingBox = session;
                     registered = true;
                 }
+                PauseAfterRouteRegistrationForTest(
+                    testRegistrySubkey
+                );
                 ProcessStartInfo start = new ProcessStartInfo
                 {
                     FileName = target.executable_path,
@@ -395,22 +399,33 @@ namespace LlmFoundationInstaller
                 start.EnvironmentVariables[
                     "LLM_FOUNDATION_CONNECTION_MODE"
                 ] = route;
-                if (testRegistrySubkey != null)
+                lock (RouteSync)
                 {
-                    if (testActivationFailure)
+                    if (!Object.ReferenceEquals(
+                            activeSingBox,
+                            session))
                     {
                         throw new InvalidOperationException(
-                            "APPX_ACTIVATION_FAILED"
+                            "ROUTE_STOPPED_BEFORE_CLIENT_START"
                         );
                     }
-                    client = StartTestAppxTarget(
-                        target,
-                        testFixtureArguments
-                    );
-                }
-                else
-                {
-                    client = StartExactTarget(target, start);
+                    if (testRegistrySubkey != null)
+                    {
+                        if (testActivationFailure)
+                        {
+                            throw new InvalidOperationException(
+                                "APPX_ACTIVATION_FAILED"
+                            );
+                        }
+                        client = StartTestAppxTarget(
+                            target,
+                            testFixtureArguments
+                        );
+                    }
+                    else
+                    {
+                        client = StartExactTarget(target, start);
+                    }
                 }
                 if (client == null)
                 {
@@ -676,6 +691,42 @@ namespace LlmFoundationInstaller
             });
         }
 
+        private static void PauseAfterRouteRegistrationForTest(
+            string registrySubkey
+        )
+        {
+            if (String.IsNullOrWhiteSpace(registrySubkey) ||
+                !SystemProxyLease.IsAllowedTestRegistrySubkey(
+                    registrySubkey))
+            {
+                return;
+            }
+            string ready = Environment.GetEnvironmentVariable(
+                "K7_ROUTE_REGISTERED_READY"
+            );
+            string resume = Environment.GetEnvironmentVariable(
+                "K7_ROUTE_REGISTERED_CONTINUE"
+            );
+            if (String.IsNullOrWhiteSpace(ready) ||
+                String.IsNullOrWhiteSpace(resume))
+            {
+                return;
+            }
+            File.WriteAllText(ready, "ready", new UTF8Encoding(false));
+            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            while (!File.Exists(resume) &&
+                DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(25);
+            }
+            if (!File.Exists(resume))
+            {
+                throw new InvalidOperationException(
+                    "ROUTE_TEST_SYNC_TIMEOUT"
+                );
+            }
+        }
+
         private static bool IsExactTargetRunning(
             LaunchTargetResolution target
         )
@@ -781,6 +832,7 @@ namespace LlmFoundationInstaller
                 "APPX_ACTIVATION_FAILED",
                 "APPX_ALREADY_RUNNING",
                 "ROUTE_ALREADY_ACTIVE",
+                "ROUTE_STOPPED_BEFORE_CLIENT_START",
                 "SYSTEM_PROXY_LEASE_BUSY",
                 "SYSTEM_PROXY_CHANGED_EXTERNALLY",
                 "SYSTEM_PROXY_STATE_WRITE_FAILED",

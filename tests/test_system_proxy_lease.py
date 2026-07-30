@@ -881,6 +881,60 @@ def test_stop_route_restores_proxy_without_killing_appx_client(
             owner.communicate(timeout=10)
 
 
+def test_stop_after_route_registration_prevents_client_activation(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    before = _registry_snapshot(registry_key)
+    home = tmp_path / "home"
+    _save_proxy_profile(appx_lease_bundle, home, tmp_path)
+    registered = tmp_path / "route-registered"
+    resume = tmp_path / "route-continue"
+    route_stop = tmp_path / "route-stop"
+    client_started = tmp_path / "client-started"
+    batch = tmp_path / "should-not-start.cmd"
+    batch.write_text(
+        "@echo off\r\n"
+        "echo started>\"%K7_APPX_STARTED%\"\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    environment = dict(os.environ)
+    environment["K7_APPX_FIXTURE_ARGS"] = f'/d /c "{batch}"'
+    environment["K7_APPX_STARTED"] = str(client_started)
+    environment["K7_ROUTE_REGISTERED_READY"] = str(registered)
+    environment["K7_ROUTE_REGISTERED_CONTINUE"] = str(resume)
+    owner = subprocess.Popen(
+        _appx_command(
+            appx_lease_bundle,
+            home,
+            registry_key,
+            "success",
+            route_stop,
+        ),
+        cwd=appx_lease_bundle,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    _wait_for_file(registered)
+    route_stop.write_text("stop", encoding="utf-8")
+    _wait_for_snapshot(registry_key, before)
+    resume.write_text("continue", encoding="utf-8")
+    stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    value = json.loads(stdout)
+
+    assert owner.returncode == 20
+    assert value["status"] == "FAILED"
+    assert value["reason"] == "ROUTE_STOPPED_BEFORE_CLIENT_START"
+    assert value["cleanup_verified"] is True
+    assert not client_started.exists()
+
+
 @pytest.mark.parametrize("external_proxy_change", [False, True])
 def test_appx_owner_crash_restores_proxy_and_owned_singbox_only(
     appx_lease_bundle: Path,
