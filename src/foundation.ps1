@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.2.1'
+$script:EngineVersion = '0.2.2'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -372,6 +372,53 @@ function Assert-ExactProperties {
     }
 }
 
+function Test-ObjectProperty {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    return $null -ne $Value.PSObject.Properties[$Name]
+}
+
+function Get-MergeTomlFiles {
+    param([Parameter(Mandatory = $true)]$Surface)
+    if (Test-ObjectProperty $Surface 'merge_toml_files') {
+        return @($Surface.merge_toml_files)
+    }
+    return @()
+}
+
+function Assert-ManagedSurface {
+    param([Parameter(Mandatory = $true)]$Surface)
+    if ($null -eq $Surface -or
+        $Surface -isnot [Management.Automation.PSCustomObject]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'managed surface must be an object'
+    }
+    $Required = @('exact_directories', 'replace_files', 'preserved_paths')
+    $Allowed = @($Required + 'merge_toml_files')
+    foreach ($Name in @($Surface.PSObject.Properties.Name)) {
+        if ($Allowed -cnotcontains [string]$Name) {
+            Throw-Foundation 'INVALID_PACKAGE' 'managed surface properties differ'
+        }
+    }
+    foreach ($Name in $Required) {
+        if (-not (Test-ObjectProperty $Surface $Name)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'managed surface properties differ'
+        }
+    }
+    Assert-StringArray @($Surface.exact_directories) 'exact directories'
+    Assert-StringArray @($Surface.replace_files) 'replace files'
+    Assert-StringArray @($Surface.preserved_paths) 'preserved paths' -AllowProtected
+    $MergeFiles = @(Get-MergeTomlFiles $Surface)
+    Assert-StringArray $MergeFiles 'merge TOML files'
+    foreach ($Path in $MergeFiles) {
+        if (-not ([string]$Path).EndsWith(
+                '.toml', [StringComparison]::OrdinalIgnoreCase)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Merge file is not TOML'
+        }
+    }
+}
+
 function Assert-StringArray {
     param(
         [AllowEmptyCollection()][object[]]$Values,
@@ -476,20 +523,8 @@ function Assert-Manifest {
             '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
         Throw-Foundation 'INVALID_PACKAGE' 'Client contract is invalid'
     }
-    Assert-ExactProperties $Manifest.managed_surface @(
-        'exact_directories',
-        'replace_files',
-        'preserved_paths'
-    ) 'managed surface'
-    Assert-StringArray @(
-        $Manifest.managed_surface.exact_directories
-    ) 'exact directories'
-    Assert-StringArray @(
-        $Manifest.managed_surface.replace_files
-    ) 'replace files'
-    Assert-StringArray @(
-        $Manifest.managed_surface.preserved_paths
-    ) 'preserved paths' -AllowProtected
+    Assert-ManagedSurface $Manifest.managed_surface
+    $MergeTomlFiles = @(Get-MergeTomlFiles $Manifest.managed_surface)
     if (@($Manifest.managed_surface.exact_directories).Count -eq 0 -or
         @($Manifest.managed_surface.replace_files).Count -eq 0 -or
         @($Manifest.managed_surface.preserved_paths).Count -eq 0) {
@@ -497,7 +532,8 @@ function Assert-Manifest {
     }
     $ManagedRoots = @(
         @($Manifest.managed_surface.exact_directories) +
-        @($Manifest.managed_surface.replace_files)
+        @($Manifest.managed_surface.replace_files) +
+        $MergeTomlFiles
     )
     for ($LeftIndex = 0; $LeftIndex -lt $ManagedRoots.Count; $LeftIndex++) {
         for (
@@ -527,7 +563,8 @@ function Assert-Manifest {
     }
     foreach ($Root in @(
         @($Manifest.managed_surface.exact_directories) +
-        @($Manifest.managed_surface.replace_files)
+        @($Manifest.managed_surface.replace_files) +
+        $MergeTomlFiles
     )) {
         if (Test-DeclaredPreservedPath (
             [string]$Root
@@ -576,7 +613,8 @@ function Assert-Manifest {
             Throw-Foundation 'INVALID_PACKAGE' 'File rows are not sorted'
         }
         $Managed = @(
-            $Manifest.managed_surface.replace_files
+            @($Manifest.managed_surface.replace_files) +
+            $MergeTomlFiles
         ) -icontains $Path
         if (-not $Managed) {
             foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
@@ -614,6 +652,13 @@ function Assert-Manifest {
         if (-not $FilePaths.Contains([string]$Replace)) {
             Throw-Foundation 'INVALID_PACKAGE' (
                 "Replace file has no payload row: $Replace"
+            )
+        }
+    }
+    foreach ($MergeFile in $MergeTomlFiles) {
+        if (-not $FilePaths.Contains([string]$MergeFile)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Merge TOML file has no payload row: $MergeFile"
             )
         }
     }
@@ -1316,6 +1361,161 @@ function Get-UnknownEntries {
     return @($Unknown | Sort-Object)
 }
 
+function Read-Utf8TextFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    try {
+        return [IO.File]::ReadAllText(
+            $Path,
+            (New-Object Text.UTF8Encoding($false, $true))
+        )
+    } catch {
+        Throw-Foundation 'INVALID_PACKAGE' "TOML file is not valid UTF-8: $Path"
+    }
+}
+
+function Get-TomlMergeRequirements {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $Section = ''
+    $Seen = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    $Rows = @()
+    foreach ($Line in @([regex]::Split($Text, "`r?`n"))) {
+        if ($Line -match '^\s*\[([^\[\]]+)\]\s*(?:#.*)?$') {
+            $Section = [string]$Matches[1]
+            continue
+        }
+        if ($Line -match '^\s*([A-Za-z0-9_-]+)\s*=') {
+            $Key = [string]$Matches[1]
+            $Identity = $Section + "`0" + $Key
+            if (-not $Seen.Add($Identity)) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Merge TOML contains a duplicate key: $Key"
+                )
+            }
+            $Rows += [pscustomobject][ordered]@{
+                section = $Section
+                key = $Key
+                line = $Line.Trim()
+            }
+            continue
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Line) -and
+            -not $Line.TrimStart().StartsWith('#')) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Merge TOML supports only scalar assignments and tables'
+            )
+        }
+    }
+    if ($Rows.Count -eq 0) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Merge TOML contains no assignments'
+    }
+    return @($Rows)
+}
+
+function Merge-TomlText {
+    param(
+        [AllowEmptyString()][string]$Existing,
+        [Parameter(Mandatory = $true)][string]$Required
+    )
+    $NewLine = if ($Existing.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $Initial = @([regex]::Split($Existing, "`r?`n"))
+    if ($Initial.Count -gt 0 -and
+        [string]::IsNullOrEmpty([string]$Initial[$Initial.Count - 1])) {
+        $Initial = @($Initial[0..([Math]::Max(0, $Initial.Count - 2))])
+        if ($Initial.Count -eq 1 -and [string]::IsNullOrEmpty($Initial[0])) {
+            $Initial = @()
+        }
+    }
+    $Lines = New-Object 'Collections.Generic.List[string]'
+    foreach ($Line in $Initial) { $Lines.Add([string]$Line) }
+    foreach ($Requirement in @(Get-TomlMergeRequirements $Required)) {
+        $Start = 0
+        $End = $Lines.Count
+        $SectionFound = [string]::IsNullOrEmpty([string]$Requirement.section)
+        if ($SectionFound) {
+            for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
+                if ($Lines[$Index] -match '^\s*\[[^\[\]]+\]') {
+                    $End = $Index
+                    break
+                }
+            }
+        } else {
+            for ($Index = 0; $Index -lt $Lines.Count; $Index++) {
+                if ($Lines[$Index] -match '^\s*\[([^\[\]]+)\]\s*(?:#.*)?$' -and
+                    [string]$Matches[1] -ceq [string]$Requirement.section) {
+                    $SectionFound = $true
+                    $Start = $Index + 1
+                    $End = $Lines.Count
+                    for ($Next = $Start; $Next -lt $Lines.Count; $Next++) {
+                        if ($Lines[$Next] -match '^\s*\[[^\[\]]+\]') {
+                            $End = $Next
+                            break
+                        }
+                    }
+                    break
+                }
+            }
+        }
+        if (-not $SectionFound) {
+            if ($Lines.Count -gt 0 -and
+                -not [string]::IsNullOrWhiteSpace($Lines[$Lines.Count - 1])) {
+                $Lines.Add('')
+            }
+            $Lines.Add('[' + [string]$Requirement.section + ']')
+            $Lines.Add([string]$Requirement.line)
+            continue
+        }
+        $Updated = $false
+        for ($Index = $Start; $Index -lt $End; $Index++) {
+            if ($Lines[$Index] -match '^\s*([A-Za-z0-9_-]+)\s*=' -and
+                [string]$Matches[1] -ceq [string]$Requirement.key) {
+                $Lines[$Index] = [string]$Requirement.line
+                $Updated = $true
+                break
+            }
+        }
+        if (-not $Updated) {
+            $Lines.Insert($End, [string]$Requirement.line)
+        }
+    }
+    return (($Lines -join $NewLine) + $NewLine)
+}
+
+function Merge-TomlFileAtomic {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    Assert-SafeAncestors $Destination $HomeRoot
+    $Existing = if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+        Read-Utf8TextFile $Destination
+    } else {
+        ''
+    }
+    $Merged = Merge-TomlText $Existing (Read-Utf8TextFile $Source)
+    $Parent = Split-Path -Parent $Destination
+    if (-not (Test-Path -LiteralPath $Parent)) {
+        [IO.Directory]::CreateDirectory($Parent) | Out-Null
+    }
+    Assert-SafeDirectory $Parent
+    $Temporary = Join-Path $Parent (
+        '.' + [IO.Path]::GetFileName($Destination) +
+        '.foundation-' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    )
+    [IO.File]::WriteAllText(
+        $Temporary,
+        $Merged,
+        (New-Object Text.UTF8Encoding($false))
+    )
+    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+        Invoke-AtomicReplace $Temporary $Destination
+    } else {
+        [IO.File]::Move($Temporary, $Destination)
+    }
+}
+
 function New-FoundationPlan {
     param(
         [Parameter(Mandatory = $true)]$Validated,
@@ -1353,7 +1553,10 @@ function New-FoundationPlan {
             )
         }
     }
-    foreach ($Path in @($Manifest.managed_surface.replace_files)) {
+    foreach ($Path in @(
+        @($Manifest.managed_surface.replace_files) +
+        @(Get-MergeTomlFiles $Manifest.managed_surface)
+    )) {
         $Destination = Resolve-HomePath ([string]$Path) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
         if (Test-Path -LiteralPath $Destination -PathType Container) {
@@ -1367,9 +1570,21 @@ function New-FoundationPlan {
         $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
         $Action = 'CREATE'
         if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-            $Action = if (
-                (Get-FileSha256 $Destination) -ceq [string]$Row.sha256
-            ) { 'UNCHANGED' } else { 'UPDATE' }
+            if (@(Get-MergeTomlFiles $Manifest.managed_surface) -icontains
+                [string]$Row.path) {
+                $RequiredBytes = Read-ZipEntryBytes (
+                    $Validated.entries[[string]$Row.path]
+                )
+                $RequiredText = (New-Object Text.UTF8Encoding($false, $true)).
+                    GetString($RequiredBytes)
+                $ExistingText = Read-Utf8TextFile $Destination
+                $Action = if ((Merge-TomlText $ExistingText $RequiredText) -ceq
+                    $ExistingText) { 'UNCHANGED' } else { 'MERGE' }
+            } else {
+                $Action = if (
+                    (Get-FileSha256 $Destination) -ceq [string]$Row.sha256
+                ) { 'UNCHANGED' } else { 'UPDATE' }
+            }
         }
         $Rows += [pscustomobject][ordered]@{
             path = [string]$Row.path
@@ -1554,17 +1769,16 @@ function Expand-ValidatedPackage {
 
 function Get-ManagedSurfaceDigest {
     param([Parameter(Mandatory = $true)]$Surface)
-    Assert-ExactProperties $Surface @(
-        'exact_directories',
-        'replace_files',
-        'preserved_paths'
-    ) 'managed surface'
+    Assert-ManagedSurface $Surface
     $Lines = @()
     foreach ($Section in @(
         'exact_directories',
         'replace_files',
+        $(if (Test-ObjectProperty $Surface 'merge_toml_files') {
+            'merge_toml_files'
+        }),
         'preserved_paths'
-    )) {
+    ) | Where-Object { $null -ne $_ }) {
         $Lines += $Section
         foreach ($Value in @($Surface.$Section)) {
             $Lines += [string]$Value
@@ -1635,7 +1849,8 @@ function New-Snapshot {
         }
     }
     foreach ($Relative in @(
-        $Validated.manifest.managed_surface.replace_files
+        @($Validated.manifest.managed_surface.replace_files) +
+        @(Get-MergeTomlFiles $Validated.manifest.managed_surface)
     )) {
         $Source = Resolve-HomePath ([string]$Relative) $HomeRoot
         if (Test-Path -LiteralPath $Source -PathType Leaf) {
@@ -1807,7 +2022,8 @@ function Get-ValidatedSnapshot {
     )
     foreach ($Value in @(
         @($Snapshot.managed_surface.exact_directories) +
-        @($Snapshot.managed_surface.replace_files)
+        @($Snapshot.managed_surface.replace_files) +
+        @(Get-MergeTomlFiles $Snapshot.managed_surface)
     )) {
         $null = $ManagedValues.Add([string]$Value)
     }
@@ -1911,7 +2127,10 @@ function Get-ValidatedSnapshot {
             }
         }
     }
-    foreach ($Relative in @($Snapshot.managed_surface.replace_files)) {
+    foreach ($Relative in @(
+        @($Snapshot.managed_surface.replace_files) +
+        @(Get-MergeTomlFiles $Snapshot.managed_surface)
+    )) {
         $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
         if (Test-Path -LiteralPath $Destination -PathType Container) {
@@ -1999,7 +2218,10 @@ function Restore-Snapshot {
             }
             Invoke-RollbackCheckpoint
         }
-        foreach ($Relative in @($Snapshot.managed_surface.replace_files)) {
+        foreach ($Relative in @(
+            @($Snapshot.managed_surface.replace_files) +
+            @(Get-MergeTomlFiles $Snapshot.managed_surface)
+        )) {
             $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
             Assert-SafeAncestors $Destination $HomeRoot
             if (Test-Path -LiteralPath $Destination -PathType Leaf) {
@@ -2174,16 +2396,34 @@ function Invoke-Install {
                 ([string]$Row.path).Replace('/', '\')
             )
             $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
-            Copy-Atomic $Source $Destination $HomeRoot
+            if (@(Get-MergeTomlFiles (
+                    $Validated.manifest.managed_surface
+                )) -icontains [string]$Row.path) {
+                Merge-TomlFileAtomic $Source $Destination $HomeRoot
+            } else {
+                Copy-Atomic $Source $Destination $HomeRoot
+            }
             Invoke-MutationCheckpoint
         }
         Apply-EnvironmentContract $Validated.manifest.environment $HomeRoot
         $Installed = @(
             foreach ($Row in @($Validated.manifest.files)) {
+                $InstalledPath = Resolve-HomePath ([string]$Row.path) $HomeRoot
+                $IsMerge = @(Get-MergeTomlFiles (
+                    $Validated.manifest.managed_surface
+                )) -icontains [string]$Row.path
                 [pscustomobject][ordered]@{
                     path = [string]$Row.path
-                    sha256 = [string]$Row.sha256
-                    bytes = [int64]$Row.bytes
+                    sha256 = if ($IsMerge) {
+                        Get-FileSha256 $InstalledPath
+                    } else {
+                        [string]$Row.sha256
+                    }
+                    bytes = if ($IsMerge) {
+                        [int64](Get-Item -LiteralPath $InstalledPath).Length
+                    } else {
+                        [int64]$Row.bytes
+                    }
                 }
             }
         )

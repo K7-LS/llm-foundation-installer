@@ -39,11 +39,17 @@ def _package(
     empty_exact_directory: bool = False,
     nested_managed_root: bool = False,
     casefold_preserved: bool = False,
+    compatibility_surface: bool = False,
     environment_set: list[dict[str, str]] | None = None,
 ) -> Path:
     entries = {
         ".codex/AGENTS.md": b"# candidate\n",
-        ".codex/config.toml": b"[features]\nhooks = true\n",
+        ".codex/config.toml": (
+            b"project_doc_max_bytes = 8192\n"
+            b"check_for_update_on_startup = false\n"
+            b"[features]\nhooks = true\n"
+            b"[agents]\nenabled = true\n"
+        ),
         ".codex/hooks.json": b'{"hooks":{}}\n',
         ".codex/agents/auditor.toml": b'name = "auditor"\n',
         ".agents/skills/alpha/SKILL.md": b"---\nname: alpha\ndescription: test\n---\n",
@@ -75,6 +81,18 @@ def _package(
         ".codex/base/foundation",
         ".codex/base/runtime",
     ]
+    if compatibility_surface:
+        replace_files.remove(".codex/config.toml")
+        exact_directories.remove(".agents/skills")
+        exact_directories.remove(".codex/agents")
+        replace_files.extend(
+            [
+                ".agents/skills/alpha/SKILL.md",
+                ".agents/skills/sync-base/SKILL.md",
+                ".codex/agents/auditor.toml",
+            ]
+        )
+        replace_files.sort()
     if casefold_preserved:
         entries.pop(".codex/agents/auditor.toml")
         entries[".CODEX/SESSIONS/managed.txt"] = b"must-not-install\n"
@@ -122,6 +140,13 @@ def _package(
                 ".codex/state",
                 ".codex/state.sqlite",
             ],
+            **(
+                {
+                    "merge_toml_files": [".codex/config.toml"],
+                }
+                if compatibility_surface
+                else {}
+            ),
         },
         "sync_policy": {
             "direction": "hub-to-consumer",
@@ -324,10 +349,77 @@ def test_plan_install_doctor_inventory_and_rollback_preserve_user_data(
     assert rollback.returncode == 0, rollback.stderr
     assert (home / ".codex" / "AGENTS.md").read_text() == "# previous\n"
     assert (home / ".agents" / "skills" / "local-personal" / "SKILL.md").is_file()
-    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert not (home / ".agents" / "skills" / "alpha" / "SKILL.md").exists()
     for path, payload in sentinels.items():
         assert path.read_bytes() == payload
 
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_install_adopts_existing_codex_home_without_replacing_local_state(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"adopt-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    config = home / ".codex" / "config.toml"
+    config.write_text(
+        "[features]\n"
+        "memories = true\n"
+        "\n"
+        "[mcp_servers.exa]\n"
+        'url = "https://example.invalid/mcp"\n'
+        "\n"
+        "[projects.'C:\\\\work']\n"
+        'trust_level = "trusted"\n',
+        encoding="utf-8",
+    )
+    legacy_agent = home / ".codex" / "agents" / "legacy.toml"
+    legacy_agent.parent.mkdir(parents=True)
+    legacy_agent.write_text('name = "legacy"\n', encoding="utf-8")
+    package = _package(
+        tmp_path / f"adopt-{Path(executable).stem}.zip",
+        compatibility_surface=True,
+    )
+
+    install = _run(executable, engine_root, "install", home, package=package)
+    assert install.returncode == 0, install.stderr
+
+    installed_config = config.read_text(encoding="utf-8")
+    for retained in (
+        "memories = true",
+        "[mcp_servers.exa]",
+        'url = "https://example.invalid/mcp"',
+        "[projects.'C:\\\\work']",
+        'trust_level = "trusted"',
+    ):
+        assert retained in installed_config
+    for required in (
+        "project_doc_max_bytes = 8192",
+        "check_for_update_on_startup = false",
+        "hooks = true",
+        "enabled = true",
+    ):
+        assert required in installed_config
+    assert (home / ".agents" / "skills" / "local-personal" / "SKILL.md").is_file()
+    assert legacy_agent.read_text(encoding="utf-8") == 'name = "legacy"\n'
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+    assert (home / ".codex" / "agents" / "auditor.toml").is_file()
+
+    doctor = _run(executable, engine_root, "doctor", home, package=package)
+    assert doctor.returncode == 0, doctor.stderr
+    assert _json(doctor)["status"] == "HEALTHY"
+
+    inventory = _run(executable, engine_root, "inventory", home, target="codex")
+    assert inventory.returncode == 0, inventory.stderr
+    assert _json(inventory)["quarantined_unknown"] == []
+
+    rollback = _run(executable, engine_root, "rollback", home, target="codex")
+    assert rollback.returncode == 0, rollback.stderr
+    assert config.read_text(encoding="utf-8").startswith("[features]\nmemories = true")
+    assert (home / ".agents" / "skills" / "local-personal" / "SKILL.md").is_file()
+    assert legacy_agent.is_file()
+    assert not (home / ".agents" / "skills" / "alpha" / "SKILL.md").exists()
+    assert not (home / ".codex" / "agents" / "auditor.toml").exists()
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
 def test_rollback_accepts_existing_directory_and_case_variant_replace_file(
