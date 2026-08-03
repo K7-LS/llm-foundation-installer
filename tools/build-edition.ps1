@@ -43,6 +43,9 @@ $InstallerName = "K7-AI-Foundation-$Edition-$DistributionMode.exe"
 $LaunchCenterName = (
     "K7-AI-Launch-Center-$Edition-$DistributionMode.exe"
 )
+$LaunchCenterFallbackName = (
+    "K7-AI-Launch-Center-$Edition-$DistributionMode.cmd"
+)
 $ExpectedChildDistributionMode = switch ($DistributionMode) {
     'Preview' { 'preview' }
     'InternalUnsigned' { 'internal_unsigned' }
@@ -227,6 +230,19 @@ try {
     Copy-Item -LiteralPath (
         Join-Path $LaunchCenterRoot 'LLMFoundationInstaller.exe'
     ) -Destination $LaunchCenterOutput
+    $LaunchCenterFallbackOutput = Join-Path (
+        $OutputRoot
+    ) $LaunchCenterFallbackName
+    $LaunchCenterFallbackContent = (
+        "@echo off`r`n" +
+        'start "" "%~dp0' + $InstallerName +
+        '" --launch-center-ui' + "`r`n"
+    )
+    [IO.File]::WriteAllText(
+        $LaunchCenterFallbackOutput,
+        $LaunchCenterFallbackContent,
+        $Utf8NoBom
+    )
     if ($null -ne $RuntimeRecord) {
         $RuntimeOutput = Join-Path $OutputRoot $RuntimeRecord.file
         Copy-Item -LiteralPath $RuntimeArchive -Destination $RuntimeOutput
@@ -251,6 +267,15 @@ try {
         targets = @($InstallerManifest.targets)
         verdicts = $InstallerManifest.verdicts
         runtime = $RuntimeRecord
+        launch_center_fallback = [ordered]@{
+            product_role = 'LaunchCenter'
+            file = $LaunchCenterFallbackName
+            arguments = '--launch-center-ui'
+            sha256 = Get-Sha256 $LaunchCenterFallbackOutput
+            bytes = (
+                Get-Item -LiteralPath $LaunchCenterFallbackOutput
+            ).Length
+        }
         products = [ordered]@{
             installer = [ordered]@{
                 product_role = 'Installer'

@@ -12,6 +12,8 @@ import threading
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
@@ -49,6 +51,7 @@ def _build(
     output: Path,
     runtime_lock: Path,
     client_lock: Path | None = None,
+    product_role: str = "LaunchCenter",
 ) -> Path:
     command = [
             str(POWERSHELL),
@@ -62,7 +65,7 @@ def _build(
             "-Edition",
             "Employee",
             "-ProductRole",
-            "LaunchCenter",
+            product_role,
             "-RuntimeSourcesLock",
             str(runtime_lock),
             "-AllowLocalTestSources",
@@ -221,6 +224,21 @@ def _compile_fake_singbox(path: Path) -> None:
                     if (Environment.GetEnvironmentVariable(
                             "K7_FAKE_PROXY_BROKEN") == "1")
                     {
+                        return;
+                    }
+                    if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_REQUIRE_USER_AGENT") == "1" &&
+                        !Regex.IsMatch(
+                            headers,
+                            "(?im)^User-Agent:\\s*\\S+"))
+                    {
+                        byte[] denied = Encoding.ASCII.GetBytes(
+                            "HTTP/1.1 403 Forbidden\r\n" +
+                            "Content-Length: 0\r\n" +
+                            "Connection: close\r\n\r\n"
+                        );
+                        stream.Write(denied, 0, denied.Length);
+                        stream.Flush();
                         return;
                     }
                     string firstLine = headers.Split(
@@ -707,8 +725,12 @@ def test_singbox_session_surfaces_concrete_runtime_reason(
     assert tampered["reason"] == "RUNTIME_ARCHIVE_INTEGRITY_FAILED"
 
 
+@pytest.mark.parametrize("route", ["SingBoxHttp", "SingBoxHttps"])
+@pytest.mark.parametrize("product_role", ["Installer", "LaunchCenter"])
 def test_singbox_route_probe_forwards_real_local_http_request(
     tmp_path: Path,
+    route: str,
+    product_role: str,
 ) -> None:
     class Upstream(http.server.BaseHTTPRequestHandler):
         received_paths: list[str] = []
@@ -731,7 +753,11 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         package.write(fake, entry)
     lock = tmp_path / "runtime.lock.json"
     _write_runtime_lock(lock, archive, entry)
-    bundle = _build(tmp_path / "center", lock)
+    bundle = _build(
+        tmp_path / product_role.lower(),
+        lock,
+        product_role=product_role,
+    )
     shutil.copy2(archive, bundle / archive.name)
     home = tmp_path / "home"
     home.mkdir()
@@ -742,7 +768,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
                 "schema_version": 1,
                 "mode": "Proxy",
                 "proxy": {
-                    "type": "HTTP",
+                    "type": "HTTPS" if route == "SingBoxHttps" else "HTTP",
                     "host": "proxy.example.test",
                     "port": 8080,
                     "auth": {
@@ -784,13 +810,14 @@ def test_singbox_route_probe_forwards_real_local_http_request(
     environment = dict(os.environ)
     environment["K7_FAKE_FORWARD_LOG"] = str(forward_log)
     environment["K7_FAKE_UPSTREAM_PORT"] = str(upstream.server_port)
+    environment["K7_FAKE_REQUIRE_USER_AGENT"] = "1"
     try:
         result = subprocess.run(
             [
                 str(bundle / "LLMFoundationInstaller.exe"),
                 "--test-singbox-route-json",
                 str(home),
-                "SingBoxHttp",
+                route,
                 endpoint,
             ],
             cwd=bundle,
@@ -832,7 +859,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
                 str(bundle / "LLMFoundationInstaller.exe"),
                 "--test-singbox-route-json",
                 str(home),
-                "SingBoxHttp",
+                route,
                 endpoint,
             ],
             cwd=bundle,
@@ -863,7 +890,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
                 str(bundle / "LLMFoundationInstaller.exe"),
                 "--test-singbox-route-json",
                 str(home),
-                "SingBoxHttp",
+                route,
                 endpoint,
             ],
             cwd=bundle,
