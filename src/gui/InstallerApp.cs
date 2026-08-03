@@ -3616,6 +3616,18 @@ namespace LlmFoundationInstaller
             {
                 string bundleRoot = AppDomain.CurrentDomain.BaseDirectory;
                 EditionProfile edition = EditionProfile.LoadEmbedded();
+                bool launchCenterUi = args.Length == 1 &&
+                    args[0] == "--launch-center-ui";
+                bool launchCenterProduct = args.Length == 1 &&
+                    args[0] == "--launch-center-product-json";
+                if (launchCenterUi || launchCenterProduct)
+                {
+                    edition.product_role = "LaunchCenter";
+                }
+                if (launchCenterUi)
+                {
+                    args = new string[0];
+                }
                 if (args.Length == 1 &&
                     args[0] == "--describe-edition")
                 {
@@ -3625,6 +3637,16 @@ namespace LlmFoundationInstaller
                     return 0;
                 }
                 if (args.Length == 1 && args[0] == "--product-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchTargetCatalog.Describe(
+                            edition,
+                            bundleRoot
+                        )
+                    ));
+                    return 0;
+                }
+                if (launchCenterProduct)
                 {
                     WriteOutput(new JavaScriptSerializer().Serialize(
                         LaunchTargetCatalog.Describe(

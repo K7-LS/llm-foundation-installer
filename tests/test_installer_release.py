@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.edition_release_fixtures import (
+    FALLBACK_FILE,
     PRODUCT_FILES,
     RUNTIME_FILE,
     employee_bundle,
@@ -59,7 +60,7 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     )
 
     assert _tree(first.root) == _tree(second.root)
-    for filename in (*PRODUCT_FILES.values(), RUNTIME_FILE):
+    for filename in (*PRODUCT_FILES.values(), FALLBACK_FILE, RUNTIME_FILE):
         assert (first.root / filename).read_bytes() == (
             bundle / filename
         ).read_bytes()
@@ -73,6 +74,9 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
         for key, filename in PRODUCT_FILES.items()
     }
     assert manifest["runtime"] == record(bundle / RUNTIME_FILE)
+    assert manifest["launch_center_fallback"] == record(
+        bundle / FALLBACK_FILE
+    )
     assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert "FULL_RELEASE_CLAUDE" not in manifest["verdicts"]
     assert manifest["verdicts"]["CLEAN_PC_PILOT"] == "PENDING"
@@ -88,6 +92,25 @@ def test_draft_release_rejects_tampered_product(tmp_path: Path):
     (bundle / PRODUCT_FILES["launch_center"]).write_bytes(b"changed")
 
     with pytest.raises(ValueError, match="binding"):
+        release.prepare_draft_release(
+            bundle=bundle,
+            hub_canary_path=canary,
+            output=tmp_path / "draft",
+        )
+
+
+def test_draft_release_rejects_tampered_launch_center_fallback(
+    tmp_path: Path,
+) -> None:
+    bundle = employee_bundle(tmp_path / "bundle")
+    canary = write_canary(
+        bundle,
+        tmp_path / "canary.json",
+        release.evidence_body_sha256,
+    )
+    (bundle / FALLBACK_FILE).write_bytes(b"@echo off\r\nmalicious\r\n")
+
+    with pytest.raises(ValueError, match="fallback binding"):
         release.prepare_draft_release(
             bundle=bundle,
             hub_canary_path=canary,

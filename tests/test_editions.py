@@ -595,6 +595,22 @@ def test_deterministic_edition_bundle_binds_both_products(
         role: value["file"]
         for role, value in manifest["products"].items()
     } == expected
+    fallback_name = "K7-AI-Launch-Center-Employee-Preview.cmd"
+    fallback = first / fallback_name
+    fallback_record = manifest["launch_center_fallback"]
+    assert fallback_record["file"] == fallback_name
+    assert fallback_record["product_role"] == "LaunchCenter"
+    assert fallback_record["arguments"] == "--launch-center-ui"
+    assert fallback_record["sha256"] == hashlib.sha256(
+        fallback.read_bytes()
+    ).hexdigest()
+    assert fallback_record["bytes"] == len(fallback.read_bytes())
+    assert fallback.read_bytes() == (second / fallback_name).read_bytes()
+    assert fallback.read_text(encoding="utf-8") == (
+        "@echo off\n"
+        'start "" "%~dp0K7-AI-Foundation-Employee-Preview.exe" '
+        "--launch-center-ui\n"
+    )
     for role, name in expected.items():
         first_executable = first / name
         second_executable = second / name

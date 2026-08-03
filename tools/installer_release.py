@@ -16,6 +16,7 @@ PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
     "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
 }
+FALLBACK_FILE = "K7-AI-Launch-Center-Employee-InternalUnsigned.cmd"
 PRODUCT_ROLES = {
     "installer": "Installer",
     "launch_center": "LaunchCenter",
@@ -64,10 +65,12 @@ EXPECTED_DRAFT_VERDICTS = {
 }
 INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.3.0
 
-В комплекте четыре связанные позиции:
+В комплекте пять связанных позиций:
 
 - `K7-AI-Foundation-Employee-InternalUnsigned.exe` — установка и обслуживание;
 - `K7-AI-Launch-Center-Employee-InternalUnsigned.exe` — ежедневный запуск;
+- `K7-AI-Launch-Center-Employee-InternalUnsigned.cmd` — резервный запуск
+  Launch Center через EXE установщика, если отдельный EXE заблокирован;
 - `sing-box-1.13.14-windows-amd64.zip` — среда маршрутов с проверкой хеша;
 - `bundle-manifest.json` — проверяемые SHA-256 и состав комплекта.
 
@@ -136,7 +139,7 @@ def _validate_record(path: Path, value: object, label: str) -> None:
 
 
 def validate_bundle(bundle: Path) -> dict[str, Any]:
-    """Validate the exact four-file Employee edition release input."""
+    """Validate the exact five-file Employee edition release input."""
 
     bundle = bundle.resolve()
     if not bundle.is_dir() or bundle.is_symlink():
@@ -157,6 +160,7 @@ def validate_bundle(bundle: Path) -> dict[str, Any]:
         raise ValueError("Employee edition bundle manifest is not accepted")
     expected_names = {
         "bundle-manifest.json",
+        FALLBACK_FILE,
         RUNTIME_FILE,
         *PRODUCT_FILES.values(),
     }
@@ -169,6 +173,18 @@ def validate_bundle(bundle: Path) -> dict[str, Any]:
     products = manifest.get("products")
     if not isinstance(products, dict) or set(products) != set(PRODUCT_FILES):
         raise ValueError("Employee bundle product inventory differs")
+    fallback = manifest.get("launch_center_fallback")
+    fallback_path = bundle / FALLBACK_FILE
+    fallback_record = _file_record(fallback_path)
+    if (
+        not isinstance(fallback, dict)
+        or fallback.get("product_role") != "LaunchCenter"
+        or fallback.get("file") != FALLBACK_FILE
+        or fallback.get("arguments") != "--launch-center-ui"
+        or fallback.get("sha256") != fallback_record["sha256"]
+        or fallback.get("bytes") != fallback_record["bytes"]
+    ):
+        raise ValueError("Employee launch-center fallback binding differs")
     for product, filename in PRODUCT_FILES.items():
         row = products.get(product)
         path = bundle / filename
@@ -308,6 +324,7 @@ def prepare_draft_release(
 
     for filename in (
         "bundle-manifest.json",
+        FALLBACK_FILE,
         RUNTIME_FILE,
         *PRODUCT_FILES.values(),
     ):
@@ -340,6 +357,7 @@ def prepare_draft_release(
             product: artifacts[filename]
             for product, filename in PRODUCT_FILES.items()
         },
+        "launch_center_fallback": artifacts[FALLBACK_FILE],
         "runtime": artifacts[RUNTIME_FILE],
         "bundle_manifest_sha256": artifacts[
             "bundle-manifest.json"

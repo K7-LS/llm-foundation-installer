@@ -408,6 +408,26 @@ def test_complete_target_catalog_matches_real_launch_center_cards(
     ) == set(owner_product["targets"])
 
 
+def test_installer_binary_exposes_launch_center_fallback(
+    tmp_path: Path,
+) -> None:
+    installer = _build(
+        tmp_path / "employee-installer",
+        edition="Employee",
+        product_role="Installer",
+    )
+
+    returncode, value = _run_json(
+        installer,
+        "--launch-center-product-json",
+    )
+
+    assert returncode == 0
+    assert value["app_id"] == "k7-ai-launch-center"
+    assert value["product_role"] == "LaunchCenter"
+    assert value["edition_id"] == "Employee"
+
+
 def test_ui_launch_selection_json_shows_vscode_correlation(
     tmp_path: Path,
 ) -> None:

@@ -95,6 +95,7 @@ namespace LlmFoundationInstaller
                 );
                 HttpWebRequest request = (HttpWebRequest)
                     WebRequest.Create(endpoint);
+                request.UserAgent = "K7-AI-Launch-Center";
                 request.Proxy = new ExplicitWebProxy(
                     "http://127.0.0.1:" +
                     running.listen_port.ToString()

@@ -9,6 +9,7 @@ PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
     "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
 }
+FALLBACK_FILE = "K7-AI-Launch-Center-Employee-InternalUnsigned.cmd"
 RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
 
 
@@ -35,6 +36,14 @@ def employee_bundle(root: Path) -> Path:
     root.mkdir(parents=True)
     write(root / PRODUCT_FILES["installer"], b"MZemployee-installer")
     write(root / PRODUCT_FILES["launch_center"], b"MZemployee-launch-center")
+    write(
+        root / FALLBACK_FILE,
+        (
+            '@echo off\r\nstart "" '
+            '"%~dp0K7-AI-Foundation-Employee-InternalUnsigned.exe" '
+            "--launch-center-ui\r\n"
+        ).encode("utf-8"),
+    )
     write(root / RUNTIME_FILE, b"PK\x03\x04sing-box-runtime")
     manifest = {
         "schema_version": 1,
@@ -58,6 +67,12 @@ def employee_bundle(root: Path) -> Path:
             "version": "1.13.14",
             "file": RUNTIME_FILE,
             **record(root / RUNTIME_FILE),
+        },
+        "launch_center_fallback": {
+            "product_role": "LaunchCenter",
+            "file": FALLBACK_FILE,
+            "arguments": "--launch-center-ui",
+            **record(root / FALLBACK_FILE),
         },
         "products": {
             "installer": {
