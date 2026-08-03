@@ -150,6 +150,7 @@ def _verify_product(
             "codex-desktop",
             "opencode-cli",
             "opencode-desktop",
+            "vscode-codex",
         ]
     ):
         raise ValueError(f"Employee {product} identity differs")
