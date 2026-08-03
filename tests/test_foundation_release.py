@@ -10,6 +10,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FOUNDATION_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 SPEC = importlib.util.spec_from_file_location(
     "foundation_release",
     ROOT / "tools" / "foundation_release.py",
@@ -37,14 +38,17 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "Write-Output 'foundation'\n",
         encoding="utf-8",
     )
-    (engine / "VERSION").write_text("0.2.1\n", encoding="utf-8")
+    (engine / "VERSION").write_text(
+        FOUNDATION_VERSION + "\n",
+        encoding="utf-8",
+    )
     script_hash = _sha256(engine / "foundation.ps1")
     (engine / "engine-manifest.json").write_bytes(
         _json_bytes(
             {
                 "schema_version": 1,
                 "protocol_version": 1,
-                "engine_version": "0.2.1",
+                "engine_version": FOUNDATION_VERSION,
                 "foundation_ps1_sha256": script_hash,
                 "network": "offline",
                 "commands": [
@@ -65,7 +69,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
     evidence = {
         "schema_version": 1,
         "generated_at_utc": "2026-07-27T12:00:00Z",
-        "engine_version": "0.2.1",
+        "engine_version": FOUNDATION_VERSION,
         "installer_version": "0.3.0",
         "source": {
             "repository": (
@@ -137,9 +141,11 @@ def test_prepare_foundation_release_is_deterministic_and_bound(tmp_path: Path):
 
     assert _tree(first.root) == _tree(second.root)
     manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["tag"] == "foundation-engine-v0.2.1"
+    assert manifest["tag"] == f"foundation-engine-v{FOUNDATION_VERSION}"
     assert manifest["channel"] == "stable"
-    assert manifest["asset"]["name"] == "foundation-engine-0.2.1.zip"
+    assert manifest["asset"]["name"] == (
+        f"foundation-engine-{FOUNDATION_VERSION}.zip"
+    )
     assert manifest["asset"]["sha256"] == _sha256(first.asset_path)
     assert manifest["engine_files"]["foundation.ps1"]["sha256"] == (
         _sha256(engine / "foundation.ps1")
@@ -194,7 +200,7 @@ def test_release_verification_and_package_acceptance_bind_exact_asset(
 
     assert result["package_acceptance"] == "PASS"
     assert result["target"] == "foundation"
-    assert result["engine_version"] == "0.2.1"
+    assert result["engine_version"] == FOUNDATION_VERSION
     assert result["asset"]["sha256"] == manifest["asset"]["sha256"]
 
 

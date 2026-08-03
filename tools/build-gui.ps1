@@ -26,6 +26,12 @@ $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
 $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$FoundationEngineVersion = [IO.File]::ReadAllText(
+    (Join-Path $RepositoryRoot 'VERSION')
+).Trim()
+if ($FoundationEngineVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw 'Foundation engine version is invalid'
+}
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
     $PackageRoot = [IO.Path]::GetFullPath($PackageRoot)
@@ -405,7 +411,7 @@ function Read-AcceptedFoundation {
     }
     if ([int]$Acceptance.schema_version -ne 1 -or
         [string]$Acceptance.target -cne 'foundation' -or
-        [string]$Acceptance.engine_version -cne '0.2.1' -or
+        [string]$Acceptance.engine_version -cne $FoundationEngineVersion -or
         [string]$Acceptance.package_acceptance -cne 'PASS' -or
         $Acceptance.immutable_release -isnot [bool] -or
         [bool]$Acceptance.immutable_release -ne $true -or
@@ -443,8 +449,10 @@ function Read-AcceptedFoundation {
     )
     if ([int]$Release.schema_version -ne 1 -or
         [string]$Release.target -cne 'foundation' -or
-        [string]$Release.version -cne '0.2.1' -or
-        [string]$Release.tag -cne 'foundation-engine-v0.2.1' -or
+        [string]$Release.version -cne $FoundationEngineVersion -or
+        [string]$Release.tag -cne (
+            'foundation-engine-v' + $FoundationEngineVersion
+        ) -or
         [string]$Release.channel -cne 'stable' -or
         [string]$Release.asset.name -cne (
             [string]$Acceptance.asset.name
@@ -484,7 +492,7 @@ function Read-AcceptedFoundation {
         }
     }
     if ([int]$Evidence.schema_version -ne 1 -or
-        [string]$Evidence.engine_version -cne '0.2.1' -or
+        [string]$Evidence.engine_version -cne $FoundationEngineVersion -or
         [string]$Evidence.installer_version -cne '0.3.0' -or
         [string]$Evidence.FOUNDATION_SYNTHETIC -cne 'PASS' -or
         [string]$Evidence.deterministic_engine_bundle -cne 'PASS' -or
@@ -522,7 +530,7 @@ function Read-AcceptedFoundation {
         throw 'Foundation release verification is not PASS'
     }
     return [ordered]@{
-        engine_version = '0.2.1'
+        engine_version = $FoundationEngineVersion
         engine_files = $Release.engine_files
         asset_path = $AssetPath
         asset = [ordered]@{
@@ -1055,7 +1063,7 @@ function Export-AcceptedFoundationEngine {
     }
     if (([IO.File]::ReadAllText(
             (Join-Path $Destination 'VERSION')
-        )).Trim() -cne '0.2.1') {
+        )).Trim() -cne $FoundationEngineVersion) {
         throw 'Foundation engine extracted version differs'
     }
     try {
@@ -1067,7 +1075,7 @@ function Export-AcceptedFoundationEngine {
     }
     if ([int]$EngineManifest.schema_version -ne 1 -or
         [int]$EngineManifest.protocol_version -ne 1 -or
-        [string]$EngineManifest.engine_version -cne '0.2.1' -or
+        [string]$EngineManifest.engine_version -cne $FoundationEngineVersion -or
         [string]$EngineManifest.network -cne 'offline' -or
         (@($EngineManifest.commands) -join ',') -cne (
             'doctor,install,inventory,plan,rollback'
@@ -1724,7 +1732,7 @@ $FoundationReleaseManifest = if ($IsPackagedRelease) {
 else {
     [ordered]@{
         package_acceptance = 'LOCAL_PREVIEW'
-        engine_version = '0.2.1'
+        engine_version = $FoundationEngineVersion
     }
 }
 

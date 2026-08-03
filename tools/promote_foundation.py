@@ -4,13 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from foundation_release import prepare_foundation_release
+from foundation_release import TAG, prepare_foundation_release
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare exact foundation-engine-v0.2.1 release assets from "
+            f"Prepare exact {TAG} release assets from "
             "synthetic-accepted engine bytes."
         )
     )
@@ -27,7 +27,7 @@ def main() -> int:
         json.dumps(
             {
                 "status": "FOUNDATION_RELEASE_ASSETS_PREPARED",
-                "tag": "foundation-engine-v0.2.1",
+                "tag": TAG,
                 "asset": str(result.asset_path),
             },
             sort_keys=True,
