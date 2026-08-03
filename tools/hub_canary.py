@@ -147,11 +147,11 @@ def _verify_product(
         or product_value.get("targets")
         != [
             "codex-cli",
-                "codex-desktop",
-                "opencode-cli",
-                "opencode-desktop",
-                "vscode-codex",
-            ]
+            "codex-desktop",
+            "opencode-cli",
+            "opencode-desktop",
+            "vscode-codex",
+        ]
     ):
         raise ValueError(f"Employee {product} identity differs")
     self_test = _run_json(
