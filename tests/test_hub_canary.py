@@ -88,3 +88,60 @@ def test_hub_canary_rejects_unverified_runtime(tmp_path: Path):
             runtime_result=runtime,
             target_results=expected["targets"],
         )
+
+
+def test_product_verifier_accepts_complete_employee_launch_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    executable = bundle / canary.installer_release.PRODUCT_FILES["installer"]
+    sibling = bundle / canary.installer_release.PRODUCT_FILES["launch_center"]
+
+    def fake_run_json(_executable, arguments, **_kwargs):
+        command = arguments[0]
+        if command == "--product-json":
+            return {
+                "edition_id": "Employee",
+                "product_role": "Installer",
+                "targets": [
+                    "codex-cli",
+                    "codex-desktop",
+                    "opencode-cli",
+                    "opencode-desktop",
+                    "vscode-codex",
+                ],
+            }
+        if command == "--self-test-json":
+            return {
+                "version": "0.3.0",
+                "targets": ["codex", "opencode"],
+                "engine_validated": True,
+                "automatic_network": False,
+                "telemetry": False,
+                "reverse_flow": False,
+            }
+        if command == "--catalog-json":
+            return {
+                "targets": [
+                    {"id": "codex", "package_state": "accepted"},
+                    {"id": "opencode", "package_state": "accepted"},
+                ],
+                "install_enabled": True,
+                "provider_eligibility": "NOT_PROVIDED",
+            }
+        if command == "--resolve-sibling-json":
+            return {
+                "status": "RESOLVED",
+                "edition_id": "Employee",
+                "product_role": "LaunchCenter",
+                "executable_path": str(sibling),
+            }
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(canary, "_run_json", fake_run_json)
+
+    assert canary._verify_product(executable, bundle, "installer") == (
+        canary.installer_release.EXPECTED_PRODUCT_CANARY["installer"]
+    )
