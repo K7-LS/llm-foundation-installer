@@ -874,7 +874,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         assert failed.returncode == 20
         assert failed_value["status"] == "FAILED"
         assert failed_value["uses_proxy"] is True
-        assert failed_value["reason"] == "ROUTE_PROBE_FAILED"
+        assert failed_value["reason"] == "PROXY_UPSTREAM_FAILED"
         assert failed_value["cleanup_verified"] is True
         assert Upstream.received_paths == ["/route-check"]
         assert forward_log.read_text(encoding="utf-8").splitlines() == [

@@ -621,6 +621,46 @@ namespace LlmFoundationInstaller
             }
         }
 
+        public static SingBoxSessionResult ResetManagedRoute(string home)
+        {
+            SingBoxSessionResult active = StopActiveRoute();
+            SingBoxSessionResult sessions =
+                SingBoxSession.ResetManagedSessions(home);
+            ProxyRecoveryResult proxy = SystemProxyLease.Recover(home);
+            List<string> lifecycle = new List<string>();
+            if (active.lifecycle != null)
+            {
+                lifecycle.AddRange(active.lifecycle);
+            }
+            if (sessions.lifecycle != null)
+            {
+                lifecycle.AddRange(sessions.lifecycle);
+            }
+            if (proxy.lifecycle != null)
+            {
+                lifecycle.AddRange(proxy.lifecycle);
+            }
+            bool cleanup = active.cleanup_verified &&
+                sessions.cleanup_verified &&
+                proxy.cleanup_verified;
+            return new SingBoxSessionResult
+            {
+                status = cleanup ? "PASS" : "FAILED",
+                listen_port = 0,
+                uses_proxy = true,
+                cleanup_verified = cleanup,
+                secret_redacted = true,
+                lifecycle = lifecycle,
+                reason = !active.cleanup_verified
+                    ? active.reason
+                    : (!sessions.cleanup_verified
+                        ? sessions.reason
+                        : (!proxy.cleanup_verified
+                            ? proxy.reason
+                            : null))
+            };
+        }
+
         private static SingBoxSessionResult StopRegisteredRoute(
             RunningSingBoxSession session
         )

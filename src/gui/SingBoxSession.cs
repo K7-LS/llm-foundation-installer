@@ -127,7 +127,7 @@ namespace LlmFoundationInstaller
                         true
                     );
                 }
-                failure = "ROUTE_PROBE_FAILED";
+                failure = ProbeFailureReason(exception);
             }
 
             SingBoxSessionResult result = StopVerified(running);
@@ -396,6 +396,23 @@ namespace LlmFoundationInstaller
             return RecoverOwnedSessionsInternal(home, null, true);
         }
 
+        public static SingBoxSessionResult ResetManagedSessions(
+            string home
+        )
+        {
+            SingBoxSessionResult result = RecoverOwnedSessionsInternal(
+                home,
+                null,
+                false
+            );
+            result.uses_proxy = true;
+            if (result.cleanup_verified)
+            {
+                result.lifecycle.Add("MANAGED_SESSIONS_RESET");
+            }
+            return result;
+        }
+
         private static SingBoxSessionResult RecoverOwnedSessionsInternal(
             string home,
             int? expectedOwnerPid,
@@ -601,6 +618,47 @@ namespace LlmFoundationInstaller
             catch
             {
                 return false;
+            }
+        }
+
+        private static string ProbeFailureReason(Exception exception)
+        {
+            WebException web = exception as WebException;
+            if (web == null)
+            {
+                return "ROUTE_PROBE_FAILED";
+            }
+            HttpWebResponse response = web.Response as HttpWebResponse;
+            if (response != null)
+            {
+                int status = (int)response.StatusCode;
+                if (status == 407)
+                {
+                    return "PROXY_AUTH_FAILED";
+                }
+                if (status == 401 || status == 403)
+                {
+                    return "PROXY_ACCESS_DENIED";
+                }
+            }
+            switch (web.Status)
+            {
+                case WebExceptionStatus.Timeout:
+                    return "PROXY_TIMEOUT";
+                case WebExceptionStatus.NameResolutionFailure:
+                case WebExceptionStatus.ProxyNameResolutionFailure:
+                    return "PROXY_DNS_FAILED";
+                case WebExceptionStatus.TrustFailure:
+                case WebExceptionStatus.SecureChannelFailure:
+                    return "PROXY_TLS_FAILED";
+                case WebExceptionStatus.ConnectFailure:
+                    return "PROXY_CONNECT_FAILED";
+                case WebExceptionStatus.ConnectionClosed:
+                case WebExceptionStatus.ReceiveFailure:
+                case WebExceptionStatus.SendFailure:
+                    return "PROXY_UPSTREAM_FAILED";
+                default:
+                    return "ROUTE_PROBE_FAILED";
             }
         }
 
