@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.2.1"
+VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(
+    encoding="utf-8"
+).strip()
 TAG = f"foundation-engine-v{VERSION}"
 REPOSITORY_URL = (
     "https://github.com/daniileliseev1337/llm-foundation-installer"

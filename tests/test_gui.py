@@ -19,6 +19,9 @@ import pytest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+FOUNDATION_VERSION = (REPOSITORY_ROOT / "VERSION").read_text(
+    encoding="utf-8"
+).strip()
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
 POWERSHELLS = [
     value
@@ -352,7 +355,7 @@ def _accepted_foundation(root: Path) -> Path:
                     "plan",
                     "rollback",
                 ],
-                "engine_version": "0.2.1",
+                "engine_version": FOUNDATION_VERSION,
                 "foundation_ps1_sha256": script_hash,
                 "network": "offline",
                 "protocol_version": 1,
@@ -364,7 +367,7 @@ def _accepted_foundation(root: Path) -> Path:
         )
         + "\n"
     ).encode("utf-8")
-    asset = package_root / "foundation-engine-0.2.1.zip"
+    asset = package_root / f"foundation-engine-{FOUNDATION_VERSION}.zip"
     with zipfile.ZipFile(asset, "w") as archive:
         for name, payload in sorted(engine_files.items()):
             archive.writestr(name, payload)
@@ -378,7 +381,7 @@ def _accepted_foundation(root: Path) -> Path:
     evidence = package_root / "acceptance-evidence.json"
     evidence_value = {
         "schema_version": 1,
-        "engine_version": "0.2.1",
+        "engine_version": FOUNDATION_VERSION,
         "installer_version": "0.3.0",
         "FOUNDATION_SYNTHETIC": "PASS",
         "deterministic_engine_bundle": "PASS",
@@ -391,8 +394,8 @@ def _accepted_foundation(root: Path) -> Path:
     release_value = {
         "schema_version": 1,
         "target": "foundation",
-        "version": "0.2.1",
-        "tag": "foundation-engine-v0.2.1",
+        "version": FOUNDATION_VERSION,
+        "tag": f"foundation-engine-v{FOUNDATION_VERSION}",
         "channel": "stable",
         "source": {
             "repository": (
@@ -424,7 +427,7 @@ def _accepted_foundation(root: Path) -> Path:
         "repository": (
             "daniileliseev1337/llm-foundation-installer"
         ),
-        "tag": "foundation-engine-v0.2.1",
+        "tag": f"foundation-engine-v{FOUNDATION_VERSION}",
         "release_state": {
             "draft": False,
             "prerelease": False,
@@ -448,7 +451,7 @@ def _accepted_foundation(root: Path) -> Path:
         {
             "schema_version": 1,
             "target": "foundation",
-            "engine_version": "0.2.1",
+            "engine_version": FOUNDATION_VERSION,
             "package_acceptance": "PASS",
             "asset": release_value["asset"],
             "engine_files": engine_records,
@@ -750,7 +753,7 @@ def _owner_claude_candidate(root: Path) -> Path:
             key: release_value[key] for key in binding_keys
         },
         "foundation": {
-            "version": "0.2.1",
+            "version": FOUNDATION_VERSION,
             "evidence_sha256": _sha256(
                 foundation / "acceptance-evidence.json"
             ),
@@ -819,7 +822,7 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
         encoding="utf-8"
     ).strip()
     assert app_version == "0.3.0"
-    assert engine_version == "0.2.1"
+    assert engine_version == FOUNDATION_VERSION
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
@@ -3866,7 +3869,9 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     assert manifest["owner_claude_state"] == "PROVIDER_READY"
     assert manifest["windows_warning_expected"] is True
     assert manifest["foundation_release"]["package_acceptance"] == "PASS"
-    assert manifest["foundation_release"]["engine_version"] == "0.2.1"
+    assert manifest["foundation_release"]["engine_version"] == (
+        FOUNDATION_VERSION
+    )
     foundation_acceptance = json.loads(
         (
             package_source
