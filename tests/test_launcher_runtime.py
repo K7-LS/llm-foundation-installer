@@ -235,10 +235,10 @@ def _compile_fake_singbox(path: Path) -> None:
                         return;
                     }
                     if (Environment.GetEnvironmentVariable(
-                            "K7_FAKE_REQUIRE_USER_AGENT") == "1" &&
+                            "K7_FAKE_REQUIRE_CURL_PROBE") == "1" &&
                         !Regex.IsMatch(
                             headers,
-                            "(?im)^User-Agent:\\s*\\S+"))
+                            "(?im)^User-Agent:\\s*curl/"))
                     {
                         byte[] denied = Encoding.ASCII.GetBytes(
                             "HTTP/1.1 403 Forbidden\r\n" +
@@ -818,7 +818,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
     environment = dict(os.environ)
     environment["K7_FAKE_FORWARD_LOG"] = str(forward_log)
     environment["K7_FAKE_UPSTREAM_PORT"] = str(upstream.server_port)
-    environment["K7_FAKE_REQUIRE_USER_AGENT"] = "1"
+    environment["K7_FAKE_REQUIRE_CURL_PROBE"] = "1"
     try:
         result = subprocess.run(
             [
