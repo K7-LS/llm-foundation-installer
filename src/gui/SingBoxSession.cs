@@ -31,6 +31,8 @@ namespace LlmFoundationInstaller
         internal string nonce { get; set; }
         internal List<string> lifecycle { get; set; }
         internal SingBoxSessionResult stop_result { get; set; }
+        internal object diagnostic_gate { get; set; }
+        internal string runtime_reason { get; set; }
     }
 
     internal static class SingBoxSession
@@ -143,7 +145,10 @@ namespace LlmFoundationInstaller
                 result.status = "FAILED";
                 if (result.cleanup_verified)
                 {
-                    result.reason = failure;
+                    result.reason = RuntimeFailureReason(
+                        running,
+                        failure
+                    );
                 }
             }
             return result;
@@ -199,7 +204,9 @@ namespace LlmFoundationInstaller
                 session_root = root,
                 listen_port = port,
                 nonce = nonce,
-                lifecycle = lifecycle
+                lifecycle = lifecycle,
+                diagnostic_gate = new object(),
+                runtime_reason = null
             };
             try
             {
@@ -236,13 +243,14 @@ namespace LlmFoundationInstaller
                     );
                 }
                 lifecycle.Add("CONFIG_CHECKED");
-                Process process = Process.Start(
-                    RuntimeStartInfo(
-                        runtime.executable_path,
-                        "run",
-                        configPath
-                    )
+                ProcessStartInfo start = RuntimeStartInfo(
+                    runtime.executable_path,
+                    "run",
+                    configPath
                 );
+                start.RedirectStandardError = true;
+                start.StandardErrorEncoding = Encoding.UTF8;
+                Process process = Process.Start(start);
                 if (process == null)
                 {
                     throw new InvalidOperationException(
@@ -250,6 +258,14 @@ namespace LlmFoundationInstaller
                     );
                 }
                 running.process = process;
+                process.ErrorDataReceived += delegate(
+                    object sender,
+                    DataReceivedEventArgs eventArgs
+                )
+                {
+                    RecordRuntimeDiagnostic(running, eventArgs.Data);
+                };
+                process.BeginErrorReadLine();
                 File.WriteAllText(
                     statePath,
                     new JavaScriptSerializer().Serialize(
@@ -317,6 +333,11 @@ namespace LlmFoundationInstaller
                 {
                     running.process.Kill();
                     running.process.WaitForExit(10000);
+                }
+                if (running.process != null &&
+                    running.process.HasExited)
+                {
+                    running.process.WaitForExit();
                 }
                 processStopped = running.process == null ||
                     running.process.HasExited;
@@ -618,6 +639,41 @@ namespace LlmFoundationInstaller
             catch
             {
                 return false;
+            }
+        }
+
+        private static void RecordRuntimeDiagnostic(
+            RunningSingBoxSession running,
+            string line
+        )
+        {
+            if (running == null || String.IsNullOrWhiteSpace(line))
+            {
+                return;
+            }
+            string value = line.ToLowerInvariant();
+            if (!value.Contains("authentication required"))
+            {
+                return;
+            }
+            lock (running.diagnostic_gate)
+            {
+                running.runtime_reason = "PROXY_AUTH_FAILED";
+            }
+        }
+
+        private static string RuntimeFailureReason(
+            RunningSingBoxSession running,
+            string fallback
+        )
+        {
+            if (running == null)
+            {
+                return fallback;
+            }
+            lock (running.diagnostic_gate)
+            {
+                return running.runtime_reason ?? fallback;
             }
         }
 
