@@ -15,6 +15,7 @@
     "statsig.com"
   ],
   "targets": {
+    "chrome-browser": [],
     "codex-cli": [
       "chatgpt.com",
       "openai.com",

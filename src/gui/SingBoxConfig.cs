@@ -178,6 +178,12 @@ namespace LlmFoundationInstaller
                     { "outbound", "upstream" }
                 }
             };
+            string finalOutbound = String.Equals(
+                    targetId,
+                    "chrome-browser",
+                    StringComparison.Ordinal)
+                ? "upstream"
+                : "direct";
             return new Dictionary<string, object>
             {
                 {
@@ -220,7 +226,7 @@ namespace LlmFoundationInstaller
                     {
                         { "auto_detect_interface", true },
                         { "rules", rules },
-                        { "final", "direct" }
+                        { "final", finalOutbound }
                     }
                 }
             };
@@ -242,7 +248,12 @@ namespace LlmFoundationInstaller
                 uses_tls = route == "SingBoxHttps",
                 uses_auth =
                     profile.proxy.auth.mode == "UsernamePassword",
-                route_final = "direct",
+                route_final = String.Equals(
+                        targetId,
+                        "chrome-browser",
+                        StringComparison.Ordinal)
+                    ? "upstream"
+                    : "direct",
                 secret_redacted = true
             };
         }

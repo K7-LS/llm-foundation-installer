@@ -51,7 +51,15 @@ namespace LlmFoundationInstaller
                 edition.included_target_ids,
                 StringComparer.Ordinal
             );
-            List<LaunchTarget> targets = ClientBootstrap.Load(bundleRoot).clients
+            List<LaunchTarget> targets = new List<LaunchTarget>();
+            targets.Add(new LaunchTarget
+            {
+                target_id = "chrome-browser",
+                client_id = "chrome-browser",
+                role = "desktop",
+                display_name = "Google Chrome — proxy"
+            });
+            targets.AddRange(ClientBootstrap.Load(bundleRoot).clients
                 .Where(source => included.Contains(source.target))
                 .Select(source => new LaunchTarget
                 {
@@ -59,8 +67,7 @@ namespace LlmFoundationInstaller
                     client_id = source.id,
                     role = source.role,
                     display_name = source.display_name
-                })
-                .ToList();
+                }));
             if (included.Contains("codex"))
             {
                 targets.Add(new LaunchTarget
@@ -126,6 +133,16 @@ namespace LlmFoundationInstaller
             {
                 return VsCodeIntegration.Resolve(home);
             }
+            if (String.Equals(
+                    target.target_id,
+                    "chrome-browser",
+                    StringComparison.Ordinal))
+            {
+                return ChromeBrowserIntegration.Resolve(
+                    bundleRoot,
+                    home
+                );
+            }
             ClientSource source = ClientBootstrap.Load(bundleRoot).clients
                 .First(entry => String.Equals(
                     entry.id,
@@ -156,6 +173,18 @@ namespace LlmFoundationInstaller
             {
                 return ResolveManagedCommand(home, source, target);
             }
+            if (String.Equals(
+                    source.install_mode,
+                    "official-installer",
+                    StringComparison.Ordinal))
+            {
+                return ResolveOfficialDesktop(
+                    bundleRoot,
+                    home,
+                    source,
+                    target
+                );
+            }
             if (!String.Equals(
                     source.install_mode,
                     "managed-desktop",
@@ -169,6 +198,76 @@ namespace LlmFoundationInstaller
                 );
             }
             return ResolveManagedDesktop(home, source, target);
+        }
+
+        private static LaunchTargetResolution ResolveOfficialDesktop(
+            string bundleRoot,
+            string home,
+            ClientSource source,
+            LaunchTarget target
+        )
+        {
+            try
+            {
+                string version;
+                string executable =
+                    ClientBootstrap.ResolveOfficialDesktopPath(
+                        home,
+                        source,
+                        ClientBootstrap.Load(bundleRoot).test_only,
+                        out version
+                    );
+                int comparison;
+                if (!String.Equals(
+                        version,
+                        source.version,
+                        StringComparison.Ordinal) &&
+                    (!TryCompareVersions(
+                        version,
+                        source.version,
+                        out comparison) || comparison < 0))
+                {
+                    throw new InvalidOperationException();
+                }
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    launch_mode = "executable",
+                    executable_path = executable,
+                    sha256 = BundleIntegrity.Sha256(executable),
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Blocked(
+                    target.target_id,
+                    target.client_id,
+                    target.role,
+                    "OFFICIAL_DESKTOP_INTEGRITY_FAILED"
+                );
+            }
+        }
+
+        private static bool TryCompareVersions(
+            string left,
+            string right,
+            out int comparison
+        )
+        {
+            comparison = 0;
+            Version leftValue;
+            Version rightValue;
+            if (!Version.TryParse(left, out leftValue) ||
+                !Version.TryParse(right, out rightValue))
+            {
+                return false;
+            }
+            comparison = leftValue.CompareTo(rightValue);
+            return true;
         }
 
         public static LaunchTargetResolution ResolveStoreRecord(
@@ -522,6 +621,99 @@ namespace LlmFoundationInstaller
                 official_url = null,
                 action = null,
                 extension_path = null,
+                reason = reason
+            };
+        }
+    }
+
+    internal static class ChromeBrowserIntegration
+    {
+        public static LaunchTargetResolution Resolve(
+            string bundleRoot,
+            string home
+        )
+        {
+            try
+            {
+                string local = Path.Combine(
+                    Path.GetFullPath(home),
+                    "AppData",
+                    "Local"
+                );
+                List<string> candidates = new List<string>
+                {
+                    Path.Combine(
+                        local,
+                        "Google",
+                        "Chrome",
+                        "Application",
+                        "chrome.exe"
+                    ),
+                    Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.ProgramFiles
+                        ),
+                        "Google",
+                        "Chrome",
+                        "Application",
+                        "chrome.exe"
+                    ),
+                    Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.ProgramFilesX86
+                        ),
+                        "Google",
+                        "Chrome",
+                        "Application",
+                        "chrome.exe"
+                    )
+                };
+                string executable = candidates
+                    .Where(path => !String.IsNullOrWhiteSpace(path))
+                    .FirstOrDefault(File.Exists);
+                if (executable == null)
+                {
+                    return Blocked("CHROME_NOT_FOUND");
+                }
+                executable = Path.GetFullPath(executable);
+                if ((File.GetAttributes(executable) &
+                        FileAttributes.ReparsePoint) != 0)
+                {
+                    return Blocked("CHROME_INTEGRITY_FAILED");
+                }
+                if (!ClientBootstrap.Load(bundleRoot).test_only)
+                {
+                    ClientBootstrap.VerifyInstalledPublisher(
+                        executable,
+                        "Google LLC"
+                    );
+                }
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = "chrome-browser",
+                    client_id = "chrome-browser",
+                    role = "desktop",
+                    launch_mode = "chrome",
+                    executable_path = executable,
+                    sha256 = BundleIntegrity.Sha256(executable),
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Blocked("CHROME_INTEGRITY_FAILED");
+            }
+        }
+
+        private static LaunchTargetResolution Blocked(string reason)
+        {
+            return new LaunchTargetResolution
+            {
+                status = "BLOCKED",
+                target_id = "chrome-browser",
+                client_id = "chrome-browser",
+                role = "desktop",
                 reason = reason
             };
         }

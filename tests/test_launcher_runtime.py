@@ -351,6 +351,61 @@ def _compile_fake_singbox(path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def _compile_argument_probe(path: Path) -> None:
+    roots = [
+        Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")),
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+    ]
+    compilers: list[Path] = []
+    for root in roots:
+        compilers.extend(
+            root.glob(
+                "Microsoft Visual Studio/*/*/MSBuild/Current/Bin/Roslyn/csc.exe"
+            )
+        )
+    framework = Path(
+        "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    )
+    if framework.is_file():
+        compilers.append(framework)
+    assert compilers, "C# compiler is unavailable"
+    source = path.with_suffix(".cs")
+    source.write_text(
+        textwrap.dedent(
+            r"""
+            using System;
+            using System.IO;
+            public static class ArgumentProbe
+            {
+                public static int Main(string[] args)
+                {
+                    File.WriteAllText(
+                        Environment.GetEnvironmentVariable("K7_TEST_OUTPUT"),
+                        String.Join("\n", args)
+                    );
+                    return 0;
+                }
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(sorted(compilers)[0]),
+            "/nologo",
+            "/target:exe",
+            f"/out:{path}",
+            str(source),
+        ],
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_official_runtime_lock_is_immutable_and_versioned() -> None:
     value = json.loads(RUNTIME_LOCK.read_text(encoding="utf-8"))
     runtime = value["runtime"]
@@ -1138,6 +1193,65 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
     commands = command_log.read_text(encoding="utf-8").splitlines()
     assert commands[0].startswith("check -c ")
     assert commands[1].startswith("run -c ")
+
+    chrome = (
+        home
+        / "AppData"
+        / "Local"
+        / "Google"
+        / "Chrome"
+        / "Application"
+        / "chrome.exe"
+    )
+    chrome.parent.mkdir(parents=True)
+    _compile_argument_probe(chrome)
+    chrome_config = tmp_path / "chrome-singbox.json"
+    returncode, summary = _run_json(
+        bundle,
+        "--write-singbox-config-test-json",
+        str(home),
+        "chrome-browser",
+        "SingBoxHttp",
+        "18082",
+        str(chrome_config),
+    )
+    assert returncode == 0
+    assert summary["target_id"] == "chrome-browser"
+    assert summary["route_final"] == "upstream"
+    assert json.loads(chrome_config.read_text(encoding="utf-8"))["route"][
+        "final"
+    ] == "upstream"
+
+    chrome_arguments = tmp_path / "chrome-arguments.txt"
+    chrome_environment = dict(environment)
+    chrome_environment["K7_TEST_OUTPUT"] = str(chrome_arguments)
+    chrome_launch = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--launch-target-json",
+            str(home),
+            "chrome-browser",
+            "SingBoxHttp",
+        ],
+        cwd=bundle,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        env=chrome_environment,
+        timeout=30,
+    )
+    assert chrome_launch.returncode == 0, (
+        chrome_launch.stdout + chrome_launch.stderr
+    )
+    chrome_result = json.loads(chrome_launch.stdout)
+    assert chrome_result["status"] == "PASS"
+    assert chrome_result["target_id"] == "chrome-browser"
+    arguments = chrome_arguments.read_text(encoding="utf-8").splitlines()
+    assert any(
+        value.startswith("--proxy-server=http://127.0.0.1:")
+        for value in arguments
+    )
+    assert any(value.startswith("--user-data-dir=") for value in arguments)
 
     failed_environment = dict(environment)
     failed_environment["K7_FAKE_CHECK_FAIL"] = "1"

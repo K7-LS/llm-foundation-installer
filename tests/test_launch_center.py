@@ -329,6 +329,7 @@ def _compile_environment_probe(path: Path) -> None:
         (
             "Employee",
             [
+                "chrome-browser",
                 "codex-cli",
                 "codex-desktop",
                 "opencode-cli",
@@ -339,6 +340,7 @@ def _compile_environment_probe(path: Path) -> None:
         (
             "Owner",
             [
+                "chrome-browser",
                 "codex-cli",
                 "codex-desktop",
                 "claude-code",
@@ -392,6 +394,7 @@ def test_complete_target_catalog_matches_real_launch_center_cards(
     _, employee_product = _run_json(employee, "--product-json")
     _, owner_product = _run_json(owner, "--product-json")
     employee_targets = [
+        "chrome-browser",
         "codex-cli",
         "codex-desktop",
         "opencode-cli",
@@ -406,6 +409,13 @@ def test_complete_target_catalog_matches_real_launch_center_cards(
     assert _launch_target_tags(
         REPOSITORY / "src" / "gui" / "LaunchCenterOwnerView.xaml"
     ) == set(owner_product["targets"])
+    employee_xaml = (
+        REPOSITORY / "src" / "gui" / "LaunchCenterEmployeeView.xaml"
+    ).read_text(encoding="utf-8")
+    assert 'x:Name="ProxyType"' in employee_xaml
+    assert 'SelectedIndex="1"' in employee_xaml
+    assert "Протокол самого прокси-сервера" in employee_xaml
+    assert "При смене HTTP/HTTPS замените также адрес и порт" in employee_xaml
 
 
 def test_installer_binary_exposes_launch_center_fallback(

@@ -427,13 +427,13 @@
                     <ColumnDefinition Width="130" />
                     <ColumnDefinition Width="130" />
                   </Grid.ColumnDefinitions>
-                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Тип" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Тип прокси" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" ToolTip="При смене типа замените также сервер и порт" />
                   <TextBlock Grid.Row="0" Grid.Column="1" Text="Сервер" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
                   <TextBlock Grid.Row="0" Grid.Column="2" Text="Порт" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
                   <TextBlock Grid.Row="0" Grid.Column="3" Text="Авторизация" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
                   <TextBlock Grid.Row="0" Grid.Column="4" Text="Логин" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
                   <TextBlock Grid.Row="0" Grid.Column="5" Text="Пароль" Style="{StaticResource Caption}" FontSize="11" Margin="2,0,0,4" />
-                  <ComboBox x:Name="ProxyType" Grid.Row="1" Grid.Column="0" Height="38" SelectedIndex="0" Margin="0,0,8,0">
+                  <ComboBox x:Name="ProxyType" Grid.Row="1" Grid.Column="0" Height="38" SelectedIndex="1" Margin="0,0,8,0" ToolTip="Протокол самого прокси-сервера, не открываемого сайта">
                     <ComboBoxItem Content="HTTP" Tag="HTTP" />
                     <ComboBoxItem Content="HTTPS" Tag="HTTPS" />
                     <ComboBoxItem Content="SOCKS5" Tag="SOCKS5" />

@@ -110,6 +110,16 @@
         <StackPanel Grid.Column="0">
           <TextBlock Text="ВЫБЕРИТЕ КЛИЕНТА" FontFamily="Cascadia Mono" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,0,0,10" />
           <ListBox x:Name="LaunchTargetList" Background="Transparent" BorderThickness="0" SelectedIndex="0">
+            <ListBoxItem Tag="chrome-browser" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
+              <Border Background="#FFFFFF" BorderBrush="#30BCED" BorderThickness="2" CornerRadius="14" Padding="20">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <Border Width="44" Height="44" CornerRadius="22" Background="#FFF0E8"><TextBlock Text="G" FontFamily="Bahnschrift SemiCondensed" FontSize="22" FontWeight="Bold" Foreground="#D94818" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                  <StackPanel Grid.Column="1" Margin="13,0,0,0"><TextBlock Text="Google Chrome" FontFamily="Bahnschrift SemiCondensed" FontSize="21" FontWeight="SemiBold" /><TextBlock Text="Браузер через выбранный маршрут" Foreground="{StaticResource Muted}" Margin="0,3,0,0" /></StackPanel>
+                  <TextBlock Grid.Column="2" Text="ГОТОВО" FontFamily="Cascadia Mono" FontSize="10" Foreground="#146B5A" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </ListBoxItem>
             <ListBoxItem Tag="codex-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,12">
               <Border Background="#FFFFFF" BorderBrush="#30BCED" BorderThickness="2" CornerRadius="14" Padding="20">
                 <Grid>
@@ -175,13 +185,13 @@
                   <TextBlock Text="НАСТРОЙКИ SING-BOX" FontFamily="Cascadia Mono" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,0,0,8" />
                   <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /><ColumnDefinition Width="75" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <StackPanel><TextBlock Text="Тип" FontSize="11" Foreground="{StaticResource Muted}" /><ComboBox x:Name="ProxyType" Height="32" SelectedIndex="0" Margin="0,4,8,0"><ComboBoxItem Content="HTTP" Tag="HTTP" /><ComboBoxItem Content="HTTPS" Tag="HTTPS" /></ComboBox></StackPanel>
+                    <StackPanel><TextBlock Text="Тип прокси" FontSize="11" Foreground="{StaticResource Muted}" /><ComboBox x:Name="ProxyType" Height="32" SelectedIndex="1" Margin="0,4,8,0" ToolTip="Протокол самого прокси-сервера, не открываемого сайта"><ComboBoxItem Content="HTTP" Tag="HTTP" /><ComboBoxItem Content="HTTPS" Tag="HTTPS" /></ComboBox></StackPanel>
                     <StackPanel Grid.Column="1"><TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyHost" Height="32" Margin="0,4,8,0" /></StackPanel>
                     <StackPanel Grid.Column="2"><TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyPort" Height="32" Margin="0,4,8,0" /></StackPanel>
                     <StackPanel Grid.Column="3"><TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource Muted}" /><TextBox x:Name="ProxyUsername" Height="32" Margin="0,4,8,0" /></StackPanel>
                     <StackPanel Grid.Column="4"><TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource Muted}" /><PasswordBox x:Name="ProxyPassword" Height="32" Margin="0,4,0,0" /></StackPanel>
                   </Grid>
-                  <TextBlock Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите клиент. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0" />
+                  <TextBlock Text="Тип, адрес и порт — единый профиль одного прокси. При смене HTTP/HTTPS замените также адрес и порт. Затем сохраните и проверьте; Launch Center сам управляет sing-box." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,10,0,0" />
                   <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                     <Button x:Name="SaveConnection" Content="Сохранить" Padding="10,6" />
                     <Button x:Name="TestConnection" Content="Сохранить и проверить" Padding="10,6" Margin="8,0,0,0" />

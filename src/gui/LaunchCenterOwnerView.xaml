@@ -88,6 +88,11 @@
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
           <TextBlock Text="ВЫБОР КЛИЕНТА" FontFamily="Cascadia Mono" FontSize="10" Foreground="#77CBB9" />
           <ListBox x:Name="LaunchTargetList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectedIndex="0" Margin="0,14,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBoxItem Tag="chrome-browser" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
+              <Border Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="13">
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="GOOGLE CHROME" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="Браузер через маршрут" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
+              </Border>
+            </ListBoxItem>
             <ListBoxItem Tag="codex-desktop" Style="{StaticResource ClientListItem}" Padding="0" Margin="0,0,0,9">
               <Border Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="13">
                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" Foreground="#30BCED" /><TextBlock Text="OpenAI Codex" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel><TextBlock Grid.Column="1" Text="ГОТОВО" Foreground="#77CBB9" FontFamily="Cascadia Mono" FontSize="9" VerticalAlignment="Center" /></Grid>
@@ -136,8 +141,8 @@
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <RadioButton x:Name="RouteDirect" GroupName="Route" Content="НАПРЯМУЮ" IsChecked="True" Style="{StaticResource Route}" />
                 <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource Route}" />
-                <RadioButton x:Name="RouteHttp" GroupName="Route" Content="HTTP" Style="{StaticResource Route}" />
-                <RadioButton x:Name="RouteHttps" GroupName="Route" Content="HTTPS" Style="{StaticResource Route}" Margin="0" />
+                <RadioButton x:Name="RouteHttp" GroupName="Route" Content="ПРОКСИ HTTP" Style="{StaticResource Route}" ToolTip="Незашифрованный протокол самого прокси-сервера" />
+                <RadioButton x:Name="RouteHttps" GroupName="Route" Content="ПРОКСИ HTTPS" Style="{StaticResource Route}" Margin="0" ToolTip="TLS-протокол самого прокси-сервера" />
               </StackPanel>
             </Grid>
             <Grid Grid.Row="1" Margin="0,24,0,18">
@@ -158,7 +163,7 @@
                   <StackPanel Grid.Column="2"><TextBlock Text="Логин" FontSize="11" Foreground="#91AAAD" /><TextBox x:Name="ProxyUsername" Height="32" Margin="0,4,8,0" /></StackPanel>
                   <StackPanel Grid.Column="3"><TextBlock Text="Пароль" FontSize="11" Foreground="#91AAAD" /><PasswordBox x:Name="ProxyPassword" Height="32" Margin="0,4,0,0" /></StackPanel>
                 </Grid>
-                <TextBlock Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите клиент. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." TextWrapping="Wrap" Foreground="#91AAAD" FontSize="11" Margin="0,10,0,0" />
+                <TextBlock Text="Тип, адрес и порт — единый профиль одного прокси. При смене HTTP/HTTPS замените также адрес и порт. Затем сохраните и проверьте; Launch Center сам управляет sing-box." TextWrapping="Wrap" Foreground="#91AAAD" FontSize="11" Margin="0,10,0,0" />
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                   <Button x:Name="SaveConnection" Content="Сохранить" Padding="10,6" />
                   <Button x:Name="TestConnection" Content="Сохранить и проверить" Padding="10,6" Margin="8,0,0,0" />
