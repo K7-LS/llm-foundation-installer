@@ -144,13 +144,13 @@
             <TextBlock Grid.Column="3" Text="Авторизация" Style="{StaticResource Mono}" Margin="0,0,7,4" />
             <TextBlock Grid.Column="4" Text="Логин" Style="{StaticResource Mono}" Margin="0,0,7,4" />
             <TextBlock Grid.Column="5" Text="Пароль" Style="{StaticResource Mono}" Margin="0,0,7,4" />
-            <ComboBox x:Name="ProxyType" Grid.Row="1" Grid.Column="0" Height="34" SelectedIndex="0" Margin="0,0,7,0"><ComboBoxItem Content="HTTP" Tag="HTTP" /><ComboBoxItem Content="HTTPS" Tag="HTTPS" /></ComboBox>
+            <ComboBox x:Name="ProxyType" Grid.Row="1" Grid.Column="0" Height="34" SelectedIndex="1" Margin="0,0,7,0" ToolTip="Протокол самого прокси-сервера, не открываемого сайта"><ComboBoxItem Content="HTTP" Tag="HTTP" /><ComboBoxItem Content="HTTPS" Tag="HTTPS" /></ComboBox>
             <TextBox x:Name="ProxyHost" Grid.Row="1" Grid.Column="1" Height="34" Padding="8,5" Margin="0,0,7,0" ToolTip="Сервер" />
             <TextBox x:Name="ProxyPort" Grid.Row="1" Grid.Column="2" Height="34" Padding="8,5" Margin="0,0,7,0" ToolTip="Порт" />
             <ComboBox x:Name="ProxyAuth" Grid.Row="1" Grid.Column="3" Height="34" SelectedIndex="0" Margin="0,0,7,0"><ComboBoxItem Content="Без входа" Tag="None" /><ComboBoxItem Content="Логин" Tag="UsernamePassword" /></ComboBox>
             <TextBox x:Name="ProxyUsername" Grid.Row="1" Grid.Column="4" Height="34" Padding="8,5" Margin="0,0,7,0" IsEnabled="False" ToolTip="Пользователь" />
             <PasswordBox x:Name="ProxyPassword" Grid.Row="1" Grid.Column="5" Height="34" Padding="8,5" IsEnabled="False" ToolTip="Пароль" />
-            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,0" Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите маршрут в Launch Center. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." />
+            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,0" Text="Тип, адрес и порт — единый профиль одного прокси. При смене HTTP/HTTPS замените также адрес и порт. Затем сохраните и проверьте; Launch Center сам управляет sing-box." />
           </Grid>
           <Grid Grid.Row="3">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

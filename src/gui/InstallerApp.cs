@@ -192,9 +192,9 @@ namespace LlmFoundationInstaller
     {
         private static readonly string[][] Definitions = new[]
         {
-            new[] { "codex", "Codex", "codex-cli" },
-            new[] { "claude", "Claude", "claude-code" },
-            new[] { "opencode", "OpenCode", "opencode" }
+            new[] { "codex", "Codex", "codex-cli", "codex-cli" },
+            new[] { "claude", "Claude", "claude-code", "claude-code" },
+            new[] { "opencode", "OpenCode", "opencode", "opencode-cli" }
         };
 
         public static CatalogResult Inspect(
@@ -247,14 +247,20 @@ namespace LlmFoundationInstaller
                 }
                 string detected = null;
                 string clientState = "not_checked";
-                string supported = package == null
-                    ? null
-                    : package.supported_version;
+                ClientSource primarySource = ClientBootstrap.Load(bundleRoot)
+                    .clients.FirstOrDefault(source => String.Equals(
+                        source.id,
+                        definition[3],
+                        StringComparison.Ordinal
+                    ));
+                string supported = primarySource == null
+                    ? (package == null ? null : package.supported_version)
+                    : primarySource.version;
                 if (detectClients)
                 {
                     ClientDetectionResult detection = definition[0] == "codex"
                         ? DetectCodex(bundleRoot, storeRecord)
-                        : DetectCli(definition[2]);
+                        : DetectCli(definition[3]);
                     detected = detection.version;
                     clientState = detected == null
                         ? "missing"
@@ -272,7 +278,7 @@ namespace LlmFoundationInstaller
                 {
                     id = definition[0],
                     display_name = definition[1],
-                    client_id = definition[2],
+                    client_id = definition[3],
                     package_state = state,
                     supported_version = supported,
                     detected_version = detected,
@@ -1884,6 +1890,13 @@ namespace LlmFoundationInstaller
             }
             if (String.Equals(
                     targetId,
+                    "chrome-browser",
+                    StringComparison.Ordinal))
+            {
+                return "Запустить Chrome →";
+            }
+            if (String.Equals(
+                    targetId,
                     "vscode-codex",
                     StringComparison.Ordinal))
             {
@@ -1921,6 +1934,13 @@ namespace LlmFoundationInstaller
             }
             if (String.Equals(
                     targetId,
+                    "chrome-browser",
+                    StringComparison.Ordinal))
+            {
+                return "GOOGLE CHROME";
+            }
+            if (String.Equals(
+                    targetId,
                     "vscode-codex",
                     StringComparison.Ordinal))
             {
@@ -1948,6 +1968,13 @@ namespace LlmFoundationInstaller
             if (String.IsNullOrWhiteSpace(targetId))
             {
                 return "НЕ ВЫБРАН";
+            }
+            if (String.Equals(
+                    targetId,
+                    "chrome-browser",
+                    StringComparison.Ordinal))
+            {
+                return "ВЫБРАННЫЙ ПРОКСИ";
             }
             if (String.Equals(
                     targetId,

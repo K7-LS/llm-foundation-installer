@@ -392,6 +392,26 @@ namespace LlmFoundationInstaller
                 }
                 string localProxy = "http://127.0.0.1:" +
                     session.listen_port.ToString();
+                if (String.Equals(
+                        target.launch_mode,
+                        "chrome",
+                        StringComparison.Ordinal))
+                {
+                    string profile = Path.Combine(
+                        Path.GetFullPath(home),
+                        ".llm-foundation",
+                        "browser",
+                        "chrome-proxy-profile"
+                    );
+                    Directory.CreateDirectory(profile);
+                    start.Arguments =
+                        QuoteLaunchArgument(
+                            "--proxy-server=" + localProxy
+                        ) + " " +
+                        QuoteLaunchArgument(
+                            "--user-data-dir=" + profile
+                        );
+                }
                 start.EnvironmentVariables["HTTP_PROXY"] = localProxy;
                 start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
                 start.EnvironmentVariables["http_proxy"] = localProxy;
@@ -771,6 +791,11 @@ namespace LlmFoundationInstaller
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
+        }
+
+        private static string QuoteLaunchArgument(string value)
+        {
+            return "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
         }
 
         private static void PauseAfterRouteRegistrationForTest(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import http.server
@@ -81,6 +82,108 @@ def _compile_versioned_codex(path: Path, version: str) -> None:
                 public static int Main(string[] args)
                 {{
                     Console.WriteLine("codex {version}");
+                    return 0;
+                }}
+            }}
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(compiler),
+            "/nologo",
+            "/target:exe",
+            f"/out:{path}",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _compile_versioned_desktop(path: Path, version: str) -> None:
+    compiler = _find_csharp_compiler()
+    if compiler is None:
+        pytest.skip("C# compiler is unavailable")
+    source = path.with_suffix(".cs")
+    source.write_text(
+        textwrap.dedent(
+            f"""
+            using System;
+            using System.IO;
+            using System.Reflection;
+            [assembly: AssemblyFileVersion("{version}.0")]
+            [assembly: AssemblyInformationalVersion("{version}")]
+            public static class FixtureDesktop
+            {{
+                public static int Main(string[] args)
+                {{
+                    string output = Environment.GetEnvironmentVariable(
+                        "K7_TEST_OUTPUT"
+                    );
+                    if (!String.IsNullOrWhiteSpace(output))
+                    {{
+                        File.WriteAllText(output, String.Join("\\n", args));
+                    }}
+                    return 0;
+                }}
+            }}
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            str(compiler),
+            "/nologo",
+            "/target:exe",
+            f"/out:{path}",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _compile_opencode_installer(path: Path, payload: bytes) -> None:
+    compiler = _find_csharp_compiler()
+    if compiler is None:
+        pytest.skip("C# compiler is unavailable")
+    encoded = base64.b64encode(payload).decode("ascii")
+    source = path.with_suffix(".cs")
+    source.write_text(
+        textwrap.dedent(
+            f"""
+            using System;
+            using System.IO;
+            public static class FixtureInstaller
+            {{
+                public static int Main(string[] args)
+                {{
+                    string home = Environment.GetEnvironmentVariable(
+                        "USERPROFILE"
+                    );
+                    string root = Path.Combine(
+                        home,
+                        "AppData",
+                        "Local",
+                        "Programs",
+                        "OpenCode"
+                    );
+                    Directory.CreateDirectory(root);
+                    File.WriteAllBytes(
+                        Path.Combine(root, "OpenCode.exe"),
+                        Convert.FromBase64String("{encoded}")
+                    );
                     return 0;
                 }}
             }}
@@ -199,6 +302,10 @@ def _local_client_source_lock(
     install_mode: str = "download-only",
     detect_commands: list[str] | None = None,
     archive_entry: str | None = None,
+    client_id: str = "fixture-client",
+    target: str = "fixture",
+    role: str = "cli",
+    required_for_employee: bool = False,
 ) -> Path:
     _write_json(
         path,
@@ -213,12 +320,12 @@ def _local_client_source_lock(
             },
             "clients": [
                 {
-                    "id": "fixture-client",
-                    "target": "fixture",
+                    "id": client_id,
+                    "target": target,
                     "display_name": "Fixture Client",
-                    "role": "cli",
+                    "role": role,
                     "required_for_base": True,
-                    "required_for_employee": False,
+                    "required_for_employee": required_for_employee,
                     "version": version,
                     "source_kind": "download",
                     "url": url,
@@ -231,7 +338,7 @@ def _local_client_source_lock(
                     "detect_commands": (
                         detect_commands
                         if detect_commands is not None
-                        else ["fixture-client.exe"]
+                        else [f"{client_id}.exe"]
                     ),
                     "version_arguments": ["--version"],
                     "store_identity": None,
@@ -935,9 +1042,56 @@ def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
         ("codex-cli", "0.146.0-alpha.3.1", "download"),
         ("codex-desktop", "store-current", "store"),
         ("claude-code", "2.1.218", "download"),
-        ("opencode-cli", "1.18.7", "download"),
-        ("opencode-desktop", "1.18.7", "download"),
+        ("opencode-cli", "1.18.13", "download"),
+        ("opencode-desktop", "1.18.13", "download"),
     ]
+
+
+def test_opencode_sources_use_current_cli_and_real_desktop_installer() -> None:
+    source_lock = json.loads(
+        (REPOSITORY_ROOT / "client-sources.lock.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    by_id = {entry["id"]: entry for entry in source_lock["clients"]}
+
+    cli = by_id["opencode-cli"]
+    assert cli["version"] == "1.18.13"
+    assert cli["url"] == (
+        "https://github.com/anomalyco/opencode/releases/download/"
+        "v1.18.13/opencode-windows-x64.zip"
+    )
+    assert cli["sha256"] == (
+        "4cc2bd079255db237def148aa0771d5117e0791b96da2b281891a45a2a7d15e2"
+    )
+    desktop = by_id["opencode-desktop"]
+    assert desktop["version"] == "1.18.13"
+    assert desktop["url"] == (
+        "https://github.com/anomalyco/opencode/releases/download/"
+        "v1.18.13/opencode-desktop-win-x64.exe"
+    )
+    assert desktop["sha256"] == (
+        "3d1796daa0762ec49cdb27f8418b8e0d2dafb37d89dd4ea766b42bdd7cd6d260"
+    )
+    assert desktop["artifact_kind"] == "installer-exe"
+    assert desktop["install_mode"] == "official-installer"
+
+
+def test_opencode_catalog_uses_cli_as_primary_client(gui_bundle: Path) -> None:
+    result = subprocess.run(
+        [str(gui_bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    catalog = json.loads(result.stdout)
+    opencode = next(row for row in catalog["targets"] if row["id"] == "opencode")
+    assert opencode["client_id"] == "opencode-cli"
+    assert opencode["supported_version"] == "1.18.13"
 
 
 def test_codex_desktop_source_uses_exact_store_product_and_identity(
@@ -2579,6 +2733,158 @@ def test_managed_desktop_newer_version_blocks_downgrade_before_download(
         thread.join(timeout=5)
 
 
+def test_opencode_desktop_installer_installs_then_resolves_real_app(
+    tmp_path: Path,
+) -> None:
+    installed_fixture = tmp_path / "OpenCode.exe"
+    _compile_versioned_desktop(installed_fixture, "1.0.0")
+    installer = tmp_path / "opencode-desktop-win-x64.exe"
+    _compile_opencode_installer(installer, installed_fixture.read_bytes())
+    content = installer.read_bytes()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=(
+                f"http://127.0.0.1:{server.server_port}/"
+                "opencode-desktop-win-x64.exe"
+            ),
+            sha256=hashlib.sha256(content).hexdigest(),
+            artifact_kind="installer-exe",
+            install_mode="official-installer",
+            detect_commands=[],
+            client_id="opencode-desktop",
+            target="opencode",
+            role="desktop",
+            required_for_employee=True,
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+            edition="Employee",
+            product_role="LaunchCenter",
+        )
+        executable = bundle / "LLMFoundationInstaller.exe"
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        staging = tmp_path / "client-staging"
+
+        missing = subprocess.run(
+            [
+                str(executable),
+                "--client-plan-json",
+                str(home),
+                "opencode-desktop",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert missing.returncode == 0, missing.stdout + missing.stderr
+        assert json.loads(missing.stdout)["status"] == "INSTALL_AVAILABLE"
+
+        installed = subprocess.run(
+            [
+                str(executable),
+                "--install-client-json",
+                str(home),
+                "opencode-desktop",
+                str(staging),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert json.loads(installed.stdout) == {
+            "status": "INSTALLED",
+            "client_id": "opencode-desktop",
+            "version": "1.0.0",
+            "relative_install_path": (
+                "AppData/Local/Programs/OpenCode/OpenCode.exe"
+            ),
+            "path_persisted": False,
+            "authentication_touched": False,
+        }
+        installed_app = (
+            home
+            / "AppData"
+            / "Local"
+            / "Programs"
+            / "OpenCode"
+            / "OpenCode.exe"
+        )
+        assert installed_app.read_bytes() == installed_fixture.read_bytes()
+        assert not (home / ".llm-foundation" / "apps").exists()
+
+        ready = subprocess.run(
+            [
+                str(executable),
+                "--client-plan-json",
+                str(home),
+                "opencode-desktop",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert ready.returncode == 0, ready.stdout + ready.stderr
+        assert json.loads(ready.stdout)["status"] == "READY"
+
+        resolved = subprocess.run(
+            [
+                str(executable),
+                "--resolve-launch-target-json",
+                str(home),
+                "opencode-desktop",
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert resolved.returncode == 0, resolved.stdout + resolved.stderr
+        resolution = json.loads(resolved.stdout)
+        assert resolution["status"] == "RESOLVED"
+        assert resolution["executable_path"] == str(installed_app.resolve())
+        assert resolution["sha256"] == hashlib.sha256(
+            installed_fixture.read_bytes()
+        ).hexdigest()
+        assert Handler.requests == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_codex_newer_version_is_ready_without_download(
     tmp_path: Path,
 ):
@@ -2922,10 +3228,12 @@ def test_singbox_connection_ui_contract_is_consistent_in_both_editions(
     assert 'Visibility="Collapsed"' in xaml, edition
     assert 'Content="HTTP" Tag="HTTP"' in xaml, edition
     assert 'Content="HTTPS" Tag="HTTPS"' in xaml, edition
+    assert 'x:Name="ProxyType"' in xaml and 'SelectedIndex="1"' in xaml
+    assert "Протокол самого прокси-сервера" in xaml
     assert 'Tag="None"' in xaml, edition
     assert 'Tag="UsernamePassword"' in xaml, edition
     assert "Сохранить и проверить" in xaml, edition
-    assert "Launch Center сам запускает и останавливает sing-box" in xaml, edition
+    assert "При смене HTTP/HTTPS замените также адрес и порт" in xaml, edition
 
 
 def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
@@ -3144,7 +3452,7 @@ def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: 
     assert [row["client_id"] for row in payload["targets"]] == [
         "codex-cli",
         "claude-code",
-        "opencode",
+        "opencode-cli",
     ]
     assert all(row["package_state"] == "missing" for row in payload["targets"])
     assert payload["install_enabled"] is False
