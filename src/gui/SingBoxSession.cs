@@ -31,6 +31,8 @@ namespace LlmFoundationInstaller
         internal string nonce { get; set; }
         internal List<string> lifecycle { get; set; }
         internal SingBoxSessionResult stop_result { get; set; }
+        internal object diagnostic_gate { get; set; }
+        internal string runtime_reason { get; set; }
     }
 
     internal static class SingBoxSession
@@ -93,26 +95,7 @@ namespace LlmFoundationInstaller
                     "connection-test",
                     route
                 );
-                HttpWebRequest request = (HttpWebRequest)
-                    WebRequest.Create(endpoint);
-                request.UserAgent = "K7-AI-Launch-Center";
-                request.Proxy = new ExplicitWebProxy(
-                    "http://127.0.0.1:" +
-                    running.listen_port.ToString()
-                );
-                request.Timeout = 15000;
-                request.ReadWriteTimeout = 15000;
-                using (HttpWebResponse response = (HttpWebResponse)
-                    request.GetResponse())
-                {
-                    int status = (int)response.StatusCode;
-                    if (status < 200 || status >= 400)
-                    {
-                        throw new InvalidOperationException(
-                            "ROUTE_PROBE_FAILED"
-                        );
-                    }
-                }
+                RunCurlProbe(running.listen_port, endpoint);
                 running.lifecycle.Add("ROUTE_PROBE_PASS");
             }
             catch (Exception exception)
@@ -127,7 +110,7 @@ namespace LlmFoundationInstaller
                         true
                     );
                 }
-                failure = "ROUTE_PROBE_FAILED";
+                failure = ProbeFailureReason(exception);
             }
 
             SingBoxSessionResult result = StopVerified(running);
@@ -143,7 +126,10 @@ namespace LlmFoundationInstaller
                 result.status = "FAILED";
                 if (result.cleanup_verified)
                 {
-                    result.reason = failure;
+                    result.reason = RuntimeFailureReason(
+                        running,
+                        failure
+                    );
                 }
             }
             return result;
@@ -199,7 +185,9 @@ namespace LlmFoundationInstaller
                 session_root = root,
                 listen_port = port,
                 nonce = nonce,
-                lifecycle = lifecycle
+                lifecycle = lifecycle,
+                diagnostic_gate = new object(),
+                runtime_reason = null
             };
             try
             {
@@ -236,13 +224,14 @@ namespace LlmFoundationInstaller
                     );
                 }
                 lifecycle.Add("CONFIG_CHECKED");
-                Process process = Process.Start(
-                    RuntimeStartInfo(
-                        runtime.executable_path,
-                        "run",
-                        configPath
-                    )
+                ProcessStartInfo start = RuntimeStartInfo(
+                    runtime.executable_path,
+                    "run",
+                    configPath
                 );
+                start.RedirectStandardError = true;
+                start.StandardErrorEncoding = Encoding.UTF8;
+                Process process = Process.Start(start);
                 if (process == null)
                 {
                     throw new InvalidOperationException(
@@ -250,6 +239,14 @@ namespace LlmFoundationInstaller
                     );
                 }
                 running.process = process;
+                process.ErrorDataReceived += delegate(
+                    object sender,
+                    DataReceivedEventArgs eventArgs
+                )
+                {
+                    RecordRuntimeDiagnostic(running, eventArgs.Data);
+                };
+                process.BeginErrorReadLine();
                 File.WriteAllText(
                     statePath,
                     new JavaScriptSerializer().Serialize(
@@ -317,6 +314,11 @@ namespace LlmFoundationInstaller
                 {
                     running.process.Kill();
                     running.process.WaitForExit(10000);
+                }
+                if (running.process != null &&
+                    running.process.HasExited)
+                {
+                    running.process.WaitForExit();
                 }
                 processStopped = running.process == null ||
                     running.process.HasExited;
@@ -394,6 +396,23 @@ namespace LlmFoundationInstaller
         )
         {
             return RecoverOwnedSessionsInternal(home, null, true);
+        }
+
+        public static SingBoxSessionResult ResetManagedSessions(
+            string home
+        )
+        {
+            SingBoxSessionResult result = RecoverOwnedSessionsInternal(
+                home,
+                null,
+                false
+            );
+            result.uses_proxy = true;
+            if (result.cleanup_verified)
+            {
+                result.lifecycle.Add("MANAGED_SESSIONS_RESET");
+            }
+            return result;
         }
 
         private static SingBoxSessionResult RecoverOwnedSessionsInternal(
@@ -602,6 +621,190 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
+        }
+
+        private static void RecordRuntimeDiagnostic(
+            RunningSingBoxSession running,
+            string line
+        )
+        {
+            if (running == null || String.IsNullOrWhiteSpace(line))
+            {
+                return;
+            }
+            string value = line.ToLowerInvariant();
+            if (!value.Contains("authentication required"))
+            {
+                return;
+            }
+            lock (running.diagnostic_gate)
+            {
+                running.runtime_reason = "PROXY_AUTH_FAILED";
+            }
+        }
+
+        private static string RuntimeFailureReason(
+            RunningSingBoxSession running,
+            string fallback
+        )
+        {
+            if (running == null)
+            {
+                return fallback;
+            }
+            lock (running.diagnostic_gate)
+            {
+                return running.runtime_reason ?? fallback;
+            }
+        }
+
+        private static string ProbeFailureReason(Exception exception)
+        {
+            WebException web = exception as WebException;
+            if (web == null)
+            {
+                return "ROUTE_PROBE_FAILED";
+            }
+            HttpWebResponse response = web.Response as HttpWebResponse;
+            if (response != null)
+            {
+                int status = (int)response.StatusCode;
+                if (status == 407)
+                {
+                    return "PROXY_AUTH_FAILED";
+                }
+                if (status == 401 || status == 403)
+                {
+                    return "PROXY_ACCESS_DENIED";
+                }
+            }
+            switch (web.Status)
+            {
+                case WebExceptionStatus.Timeout:
+                    return "PROXY_TIMEOUT";
+                case WebExceptionStatus.NameResolutionFailure:
+                case WebExceptionStatus.ProxyNameResolutionFailure:
+                    return "PROXY_DNS_FAILED";
+                case WebExceptionStatus.TrustFailure:
+                case WebExceptionStatus.SecureChannelFailure:
+                    return "PROXY_TLS_FAILED";
+                case WebExceptionStatus.ConnectFailure:
+                    return "PROXY_CONNECT_FAILED";
+                case WebExceptionStatus.ConnectionClosed:
+                case WebExceptionStatus.ReceiveFailure:
+                case WebExceptionStatus.SendFailure:
+                    return "PROXY_UPSTREAM_FAILED";
+                default:
+                    return "ROUTE_PROBE_FAILED";
+            }
+        }
+
+        private static void RunCurlProbe(int listenPort, string endpoint)
+        {
+            string curl = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "curl.exe"
+            );
+            if (!File.Exists(curl))
+            {
+                throw new InvalidOperationException(
+                    "PROBE_CLIENT_UNAVAILABLE"
+                );
+            }
+            ProcessStartInfo start = new ProcessStartInfo
+            {
+                FileName = curl,
+                Arguments =
+                    "--silent --show-error " +
+                    "--proxy " + QuoteArgument(
+                        "http://127.0.0.1:" + listenPort.ToString()
+                    ) + " " +
+                    "--connect-timeout 10 --max-time 15 " +
+                    "--output NUL --write-out " +
+                    QuoteArgument("%{http_code}") + " " +
+                    QuoteArgument(endpoint),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            using (Process process = Process.Start(start))
+            {
+                if (process == null)
+                {
+                    throw new InvalidOperationException(
+                        "PROBE_CLIENT_START_FAILED"
+                    );
+                }
+                string output = process.StandardOutput.ReadToEnd();
+                process.StandardError.ReadToEnd();
+                if (!process.WaitForExit(20000))
+                {
+                    process.Kill();
+                    process.WaitForExit(5000);
+                    throw new WebException(
+                        "Proxy route probe timed out",
+                        WebExceptionStatus.Timeout
+                    );
+                }
+                if (process.ExitCode != 0)
+                {
+                    throw CurlProbeFailure(process.ExitCode);
+                }
+                int status;
+                if (!Int32.TryParse(output.Trim(), out status) ||
+                    status < 200 ||
+                    status >= 400)
+                {
+                    throw new InvalidOperationException(
+                        "ROUTE_PROBE_FAILED"
+                    );
+                }
+            }
+        }
+
+        private static WebException CurlProbeFailure(int exitCode)
+        {
+            WebExceptionStatus status;
+            switch (exitCode)
+            {
+                case 5:
+                case 6:
+                    status = WebExceptionStatus.NameResolutionFailure;
+                    break;
+                case 7:
+                    status = WebExceptionStatus.ConnectFailure;
+                    break;
+                case 28:
+                    status = WebExceptionStatus.Timeout;
+                    break;
+                case 35:
+                case 51:
+                case 53:
+                case 54:
+                case 58:
+                case 59:
+                case 60:
+                case 64:
+                case 66:
+                case 77:
+                case 80:
+                case 82:
+                case 83:
+                case 90:
+                case 91:
+                    status = WebExceptionStatus.SecureChannelFailure;
+                    break;
+                default:
+                    status = WebExceptionStatus.ReceiveFailure;
+                    break;
+            }
+            return new WebException(
+                "Proxy route probe failed",
+                status
+            );
         }
 
         private static int RunCheck(

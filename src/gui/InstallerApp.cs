@@ -1431,6 +1431,12 @@ namespace LlmFoundationInstaller
             RadioButton https = view.FindName(
                 "RouteHttps"
             ) as RadioButton;
+            RadioButton proxy = view.FindName(
+                "ProxyMode"
+            ) as RadioButton;
+            ComboBox proxyType = view.FindName(
+                "ProxyType"
+            ) as ComboBox;
             TextBlock selectedClientName = view.FindName(
                 "SelectedClientName"
             ) as TextBlock;
@@ -1479,16 +1485,35 @@ namespace LlmFoundationInstaller
                         : "Пакет проверен";
                 }
             };
+            Func<string> selectedRoute = delegate
+            {
+                if (direct != null && direct.IsChecked == true)
+                {
+                    return "Direct";
+                }
+                if (vpn != null && vpn.IsChecked == true)
+                {
+                    return "VPN";
+                }
+                if (proxy != null && proxy.IsChecked == true)
+                {
+                    return ConnectionUi.SelectedTag(proxyType) == "HTTPS"
+                        ? "SingBoxHttps"
+                        : "SingBoxHttp";
+                }
+                if (http != null && http.IsChecked == true)
+                {
+                    return "SingBoxHttp";
+                }
+                if (https != null && https.IsChecked == true)
+                {
+                    return "SingBoxHttps";
+                }
+                return "Direct";
+            };
             Action refreshRoute = delegate
             {
-                string route = direct != null &&
-                    direct.IsChecked == true
-                    ? "Direct"
-                    : (vpn != null && vpn.IsChecked == true
-                        ? "VPN"
-                        : (http != null && http.IsChecked == true
-                            ? "SingBoxHttp"
-                            : "SingBoxHttps"));
+                string route = selectedRoute();
                 string routeLabel = RouteLabel(route);
                 if (selectedRouteName != null)
                 {
@@ -1533,6 +1558,17 @@ namespace LlmFoundationInstaller
             {
                 https.Checked += routeChanged;
             }
+            if (proxy != null)
+            {
+                proxy.Checked += routeChanged;
+            }
+            if (proxyType != null)
+            {
+                proxyType.SelectionChanged += delegate
+                {
+                    refreshRoute();
+                };
+            }
             refreshLabel();
             refreshRoute();
             if (!interactive)
@@ -1569,17 +1605,7 @@ namespace LlmFoundationInstaller
                 {
                     return;
                 }
-                string route = direct != null &&
-                    direct.IsChecked == true
-                    ? "Direct"
-                    : (vpn != null && vpn.IsChecked == true
-                        ? "VPN"
-                        : (http != null && http.IsChecked == true
-                            ? "SingBoxHttp"
-                            : (https != null &&
-                                https.IsChecked == true
-                                ? "SingBoxHttps"
-                                : "Direct")));
+                string route = selectedRoute();
                 EditionProfile edition = EditionProfile.LoadEmbedded();
                 string home = Environment.GetFolderPath(
                     Environment.SpecialFolder.UserProfile
@@ -2955,7 +2981,12 @@ namespace LlmFoundationInstaller
                                 ? connection.error
                                 : "CONNECTION_TEST_FAILED");
                         contract.Status.Text =
-                            DescribeTestFailure(reason);
+                            DescribeTestFailure(reason) +
+                            (singBox != null &&
+                                singBox.cleanup_verified
+                                ? " Временная сессия SingBox уже очищена; " +
+                                    "следующая проверка начнётся с чистого состояния."
+                                : " Нажмите «Сбросить маршрут» перед повтором.");
                         contract.Status.Foreground = new SolidColorBrush(
                             Color.FromRgb(161, 92, 0)
                         );
@@ -3002,6 +3033,58 @@ namespace LlmFoundationInstaller
                             ? Color.FromRgb(22, 122, 88)
                             : Color.FromRgb(161, 92, 0)
                     );
+                };
+            }
+            if (contract.Reset != null)
+            {
+                contract.Reset.IsEnabled = true;
+                contract.Reset.Click += async delegate
+                {
+                    contract.Reset.IsEnabled = false;
+                    contract.Test.IsEnabled = false;
+                    contract.Save.IsEnabled = false;
+                    contract.Status.Text =
+                        "Сбрасываем только управляемые маршруты SingBox и " +
+                        "восстанавливаем системный прокси…";
+                    contract.Status.Foreground = new SolidColorBrush(
+                        Color.FromRgb(49, 87, 199)
+                    );
+                    try
+                    {
+                        SingBoxSessionResult reset = await Task.Run(
+                            delegate
+                            {
+                                return ClientLauncher.ResetManagedRoute(
+                                    UserHome()
+                                );
+                            }
+                        );
+                        contract.Status.Text = reset.cleanup_verified
+                            ? "Сброс завершён. Управляемые сессии SingBox закрыты, " +
+                                "системный прокси восстановлен. Можно запускать заново."
+                            : "Сброс выполнен не полностью (" +
+                                (reset.reason ?? "RESET_FAILED") +
+                                "). Закройте другой Launch Center и повторите.";
+                        contract.Status.Foreground = new SolidColorBrush(
+                            reset.cleanup_verified
+                                ? Color.FromRgb(22, 122, 88)
+                                : Color.FromRgb(161, 92, 0)
+                        );
+                    }
+                    catch (Exception exception)
+                    {
+                        contract.Status.Text = "Сброс не выполнен: " +
+                            exception.Message;
+                        contract.Status.Foreground = new SolidColorBrush(
+                            Color.FromRgb(161, 92, 0)
+                        );
+                    }
+                    finally
+                    {
+                        contract.Reset.IsEnabled = true;
+                        contract.Test.IsEnabled = true;
+                        contract.Save.IsEnabled = true;
+                    }
                 };
             }
         }
@@ -3055,6 +3138,39 @@ namespace LlmFoundationInstaller
             {
                 action = "SingBox запущен, но запрос через него не прошёл. " +
                     "Проверьте сервер, порт, логин, пароль и доступность прокси.";
+            }
+            else if (stableReason == "PROXY_AUTH_FAILED")
+            {
+                action = "Прокси отклонил авторизацию. Проверьте логин и пароль.";
+            }
+            else if (stableReason == "PROXY_ACCESS_DENIED")
+            {
+                action = "Прокси запретил запрос. Проверьте доступ для этого " +
+                    "сервера и учётной записи.";
+            }
+            else if (stableReason == "PROXY_TLS_FAILED")
+            {
+                action = "Не удалось установить защищённое соединение с прокси. " +
+                    "Проверьте, что выбран тип HTTPS и порт действительно TLS.";
+            }
+            else if (stableReason == "PROXY_DNS_FAILED")
+            {
+                action = "Имя прокси-сервера не разрешается. Проверьте адрес.";
+            }
+            else if (stableReason == "PROXY_TIMEOUT")
+            {
+                action = "Прокси не ответил за 15 секунд. Проверьте порт и " +
+                    "доступность сервера.";
+            }
+            else if (stableReason == "PROXY_CONNECT_FAILED")
+            {
+                action = "Соединение с прокси не установлено. Проверьте адрес, " +
+                    "порт и блокировку сети.";
+            }
+            else if (stableReason == "PROXY_UPSTREAM_FAILED")
+            {
+                action = "Локальный SingBox запустился, но внешний прокси закрыл " +
+                    "соединение. Проверьте тип HTTP/HTTPS, порт и учётные данные.";
             }
             else if (
                 stableReason == "SESSION_CLEANUP_FAILED" ||
@@ -3171,6 +3287,24 @@ namespace LlmFoundationInstaller
                 {
                     "stop_enabled",
                     contract.Stop != null && contract.Stop.IsEnabled
+                },
+                {
+                    "reset_enabled",
+                    contract.Reset != null && contract.Reset.IsEnabled
+                },
+                {
+                    "status_wrapping",
+                    contract.Status.TextWrapping.ToString()
+                },
+                {
+                    "singbox_route_count",
+                    (contract.Proxy == null ? 0 : 1) +
+                    (contract.Http == null ? 0 : 1) +
+                    (contract.Https == null ? 0 : 1)
+                },
+                {
+                    "proxy_type_selector",
+                    contract.ProxyType != null
                 },
                 { "status_text", contract.Status.Text },
                 {
@@ -3351,6 +3485,7 @@ namespace LlmFoundationInstaller
         public Button Save { get; private set; }
         public Button Test { get; private set; }
         public Button Stop { get; private set; }
+        public Button Reset { get; private set; }
         public TextBlock Status { get; private set; }
 
         public IEnumerable<RadioButton> Routes
@@ -3421,6 +3556,7 @@ namespace LlmFoundationInstaller
             contract.Save = Required<Button>(view, "SaveConnection");
             contract.Test = Required<Button>(view, "TestConnection");
             contract.Stop = Optional<Button>(view, "StopRoute");
+            contract.Reset = Optional<Button>(view, "ResetRoute");
             contract.Status = Required<TextBlock>(view, "ConnectionStatus");
             return contract;
         }
@@ -3929,6 +4065,16 @@ namespace LlmFoundationInstaller
                         session
                     ));
                     return session.status == "PASS" ? 0 : 20;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--reset-managed-route-json")
+                {
+                    SingBoxSessionResult reset =
+                        ClientLauncher.ResetManagedRoute(args[1]);
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        reset
+                    ));
+                    return reset.status == "PASS" ? 0 : 20;
                 }
                 if ((args.Length == 3 || args.Length == 4) &&
                     args[0] == "--system-proxy-watchdog")

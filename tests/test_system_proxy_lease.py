@@ -1181,3 +1181,79 @@ def test_watchdog_does_not_stop_singbox_owned_by_another_live_process(
         if process.poll() is None:
             process.kill()
         process.wait(timeout=10)
+
+
+def test_explicit_reset_stops_verified_managed_session_even_with_live_owner(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+) -> None:
+    """The user reset kills only a hash-verified managed sing-box session."""
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    returncode, runtime = _run_bundle_json(
+        appx_lease_bundle,
+        "--ensure-runtime-json",
+        str(home),
+    )
+    assert returncode == 0
+    executable = Path(str(runtime["executable_path"]))
+    config = tmp_path / "reset-config.json"
+    config.write_text('{"listen_port":18120}', encoding="utf-8")
+    process = subprocess.Popen(
+        [str(executable), "run", "-c", str(config)],
+        cwd=appx_lease_bundle,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    session_root = (
+        home
+        / ".llm-foundation"
+        / "launcher-state"
+        / "sessions"
+        / uuid.uuid4().hex
+    )
+    session_root.mkdir(parents=True)
+    (session_root / "owned-state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "nonce": uuid.uuid4().hex,
+                "owner_pid": os.getpid(),
+                "process_id": process.pid,
+                "listen_port": 18120,
+                "executable_path": str(executable),
+                "executable_sha256": hashlib.sha256(
+                    executable.read_bytes()
+                ).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        try:
+            reset = subprocess.run(
+                [
+                    str(appx_lease_bundle / "LLMFoundationInstaller.exe"),
+                    "--reset-managed-route-json",
+                    str(home),
+                ],
+                cwd=appx_lease_bundle,
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=8,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail("reset command was not handled")
+        assert reset.stdout.strip(), reset.stderr
+        value = json.loads(reset.stdout)
+        assert reset.returncode == 0
+        assert value["status"] == "PASS"
+        assert value["cleanup_verified"] is True
+        assert "MANAGED_SESSIONS_RESET" in value["lifecycle"]
+        assert process.poll() is not None
+        assert not session_root.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)

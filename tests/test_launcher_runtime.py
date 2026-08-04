@@ -222,15 +222,23 @@ def _compile_fake_singbox(path: Path) -> None:
                         return;
                     }
                     if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_PROXY_AUTH_FAILED") == "1")
+                    {
+                        Console.Error.WriteLine(
+                            "authentication required"
+                        );
+                        return;
+                    }
+                    if (Environment.GetEnvironmentVariable(
                             "K7_FAKE_PROXY_BROKEN") == "1")
                     {
                         return;
                     }
                     if (Environment.GetEnvironmentVariable(
-                            "K7_FAKE_REQUIRE_USER_AGENT") == "1" &&
+                            "K7_FAKE_REQUIRE_CURL_PROBE") == "1" &&
                         !Regex.IsMatch(
                             headers,
-                            "(?im)^User-Agent:\\s*\\S+"))
+                            "(?im)^User-Agent:\\s*curl/"))
                     {
                         byte[] denied = Encoding.ASCII.GetBytes(
                             "HTTP/1.1 403 Forbidden\r\n" +
@@ -810,7 +818,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
     environment = dict(os.environ)
     environment["K7_FAKE_FORWARD_LOG"] = str(forward_log)
     environment["K7_FAKE_UPSTREAM_PORT"] = str(upstream.server_port)
-    environment["K7_FAKE_REQUIRE_USER_AGENT"] = "1"
+    environment["K7_FAKE_REQUIRE_CURL_PROBE"] = "1"
     try:
         result = subprocess.run(
             [
@@ -874,7 +882,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         assert failed.returncode == 20
         assert failed_value["status"] == "FAILED"
         assert failed_value["uses_proxy"] is True
-        assert failed_value["reason"] == "ROUTE_PROBE_FAILED"
+        assert failed_value["reason"] == "PROXY_UPSTREAM_FAILED"
         assert failed_value["cleanup_verified"] is True
         assert Upstream.received_paths == ["/route-check"]
         assert forward_log.read_text(encoding="utf-8").splitlines() == [
@@ -882,6 +890,32 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         ]
         assert sentinel not in failed.stdout
         assert sentinel not in failed.stderr
+
+        auth_environment = dict(environment)
+        auth_environment["K7_FAKE_PROXY_AUTH_FAILED"] = "1"
+        auth_failed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                route,
+                endpoint,
+            ],
+            cwd=bundle,
+            env=auth_environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert auth_failed.stdout.strip(), auth_failed.stderr
+        auth_value = json.loads(auth_failed.stdout)
+        assert auth_failed.returncode == 20
+        assert auth_value["status"] == "FAILED"
+        assert auth_value["reason"] == "PROXY_AUTH_FAILED"
+        assert auth_value["cleanup_verified"] is True
+        assert "authentication required" not in auth_failed.stdout
+        assert "authentication required" not in auth_failed.stderr
 
         cleanup_failed_environment = dict(broken_environment)
         cleanup_failed_environment["K7_FAKE_CLEANUP_BLOCK"] = "1"

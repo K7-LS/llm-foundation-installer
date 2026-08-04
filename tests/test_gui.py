@@ -3022,6 +3022,59 @@ def test_four_view_connection_contract(
         )
 
 
+@pytest.mark.parametrize("product_role", ["Installer", "LaunchCenter"])
+def test_employee_connection_error_area_wraps_and_offers_managed_reset(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    product_role: str,
+) -> None:
+    """A long actionable failure must stay visible and resettable."""
+    bundle = connection_ui_bundles[("Employee", product_role)]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    result = subprocess.run(
+        [str(executable), "--ui-connection-state-json", "SingBoxHttps"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["status_wrapping"] == "Wrap"
+    assert value["reset_enabled"] is True
+
+
+def test_employee_launch_center_has_one_singbox_route_with_type_selector(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+) -> None:
+    """HTTP and HTTPS share one route without silently changing protocol."""
+    bundle = connection_ui_bundles[("Employee", "LaunchCenter")]
+    executable = bundle / "LLMFoundationInstaller.exe"
+
+    for route, proxy_type in (
+        ("SingBoxHttp", "HTTP"),
+        ("SingBoxHttps", "HTTPS"),
+    ):
+        result = subprocess.run(
+            [str(executable), "--ui-connection-state-json", route],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        value = json.loads(result.stdout)
+        assert value["mode"] == "Proxy"
+        assert value["proxy_type"] == proxy_type
+        assert value["singbox_route_count"] == 1
+        assert value["proxy_type_selector"] is True
+
+
 @pytest.mark.parametrize(
     ("edition", "product_role", "resource"),
     [

@@ -195,6 +195,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -239,12 +240,12 @@
             <PasswordBox x:Name="ProxyPassword" Grid.Row="1" Grid.Column="5" Height="36" Padding="9,6" IsEnabled="False" ToolTip="Пароль" />
             <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,0" Text="1. Заполните данные. 2. Нажмите «Сохранить и проверить». 3. Запустите маршрут в Launch Center. Launch Center сам запускает и останавливает sing-box; отдельный скрипт не нужен." />
           </Grid>
-          <Grid Grid.Row="3">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBlock x:Name="ConnectionStatus" Text="Напрямую · готово к локальной проверке" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
-            <Button x:Name="TestConnection" Grid.Column="1" Content="Тест маршрута" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" />
-            <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить и проверить" Style="{StaticResource SecondaryButton}" />
-          </Grid>
+          <TextBlock x:Name="ConnectionStatus" Grid.Row="3" Text="Напрямую · готово к локальной проверке" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10" />
+          <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="TestConnection" Content="Тест маршрута" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" />
+            <Button x:Name="SaveConnection" Content="Сохранить и проверить" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" />
+            <Button x:Name="ResetRoute" Content="Сбросить маршрут" Style="{StaticResource SecondaryButton}" />
+          </StackPanel>
         </Grid>
       </Border>
 
