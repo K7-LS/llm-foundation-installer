@@ -355,6 +355,7 @@ schema `1`. Для каждой записи требовать только и�
 
 - `id`;
 - `version`;
+- `compatibility_epoch`;
 - `minimum_compatible_version`;
 - `maximum_exclusive_version`;
 - `payload_path`;
@@ -466,12 +467,18 @@ suffix. Компилировать с `CultureInvariant | IgnoreCase` и match t
 - `missing` — файла нет;
 - `exact` — version и SHA-256 совпадают;
 - `older` — распознанная версия ниже package version;
-- `compatible-newer` — распознанная managed version выше candidate, но входит
-  в `[minimum_compatible_version, maximum_exclusive_version)`;
+- `compatible-newer` — распознанная managed version выше candidate, входит в
+  `[minimum_compatible_version, maximum_exclusive_version)` и имеет тот же
+  `compatibility_epoch` в committed shared receipt;
 - `incompatible-newer` — распознанная managed version выше candidate и вне
   объявленного range;
 - `conflict` — unmanaged file, wrong hash при exact version, неоднозначный или
   неуспешный version probe.
+
+Сначала проверять ownership. Любой существующий EXE, shim или policy без
+committed Foundation receipt классифицировать как `conflict`, независимо от
+распознанной version. Состояния `older` и `compatible-newer` допустимы только
+при совпадении текущих hashes с этим receipt.
 
 Для `compatible-newer` сохранить установленный shared tool без изменения и
 продолжить target base transaction. Требовать совпадение EXE, shim и policy
@@ -482,10 +489,14 @@ hashes с shared state от ранее committed Foundation transaction и пр�
 ownership.
 
 Для первого rollout все три target packages объявляют candidate `1.0.143` и
-range `[1.0.143,2.0.0)`. Publisher gate сравнивает range во всех трёх stable
-target manifests. Следующее обновление OfficeCLI сначала публикует новый
-Foundation asset и policy, затем target packages с совместимым range. Старый
-target package не понижает уже установленный совместимый shared tool.
+range `[1.0.143,2.0.0)`, `compatibility_epoch=officecli-managed-v1`. Номер
+версии сам по себе не доказывает совместимость: новый Foundation release может
+сохранить epoch только после shim/command compatibility matrix с предыдущим
+candidate; несовместимый release получает новый epoch. Publisher gate
+сравнивает range и epoch во всех трёх stable target manifests. Следующее
+обновление OfficeCLI сначала публикует новый Foundation asset и policy, затем
+target packages с совместимым range. Старый target package не понижает уже
+установленный совместимый shared tool.
 
 ## Foundation Transaction and Rollback
 
@@ -677,7 +688,8 @@ release и его acceptance не проверены. Не мигрироват�
 - Probe: exact path, exit `0`, 10-sec timeout, 4-KiB output cap и full-output
   regex; negative cases four-component, prerelease, build suffix и лишняя
   строка.
-- Compatible-newer сохраняется с проверкой committed provenance;
+- Compatible-newer сохраняется с проверкой committed provenance, version range
+  и compatibility epoch; mismatch epoch даёт incompatible-newer;
   incompatible-newer не вызывает downgrade и блокируется до мутации.
 - Wrong hash и wrong version не оставляют частичную установку.
 - Bare `officecli` завершается `BLOCKED_BARE_INVOCATION` и не изменяет agent
