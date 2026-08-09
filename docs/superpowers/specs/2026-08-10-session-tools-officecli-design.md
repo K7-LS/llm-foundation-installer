@@ -188,6 +188,13 @@ Wrapper files входят в тот же snapshot и rollback, что target tr
 3. Завершить preflight с `0`, в том числе при offline/no-update.
 4. Только после preflight запустить vendor client.
 
+Ограничить весь preflight 30 секундами wall-clock, включая lock wait, latest
+check, все `gh` subprocesses, download, verification, apply и cleanup. По
+deadline остановить дочернее process tree, восстановить незавершённый atomic
+replace, удалить только staging текущей transaction, освободить lock и
+запустить vendor client с последней проверенной копией. Не продлевать timeout
+последовательными per-command budgets.
+
 Это единственная обязательная same-session гарантия для Codex и Claude: новый
 skill уже находится на диске до запуска процесса и до построения discovery
 контекста.
@@ -256,8 +263,41 @@ package-managed. Не удалять неизвестный или изменё�
 
 Foundation vNext принимает как старый manifest без новых полей, так и новый
 manifest с granular skill directories, `retired_managed_paths` и
-`shared_tools`. Protocol остаётся `1`; список команд и network=`offline` не
-меняются.
+`session_tools_baseline` и `shared_tools`. Protocol остаётся `1`; список команд
+и network=`offline` не меняются.
+
+### Session-owned baseline
+
+Не включать `ru-writing-style` одновременно в base `managed_surface` и
+session-tools state. В target repository skill остаётся обычным source и
+catalog entry, но release builder исключает его destination из normal target
+files и помещает bytes в специальный package payload:
+
+`session-tools-baseline/tools/ru-writing-style/...`.
+
+Добавить optional `session_tools_baseline` в package manifest schema `1`:
+
+- `manifest_path`;
+- `manifest_sha256`;
+- `tools` с тем же строгим schema, что session asset;
+- `retired_tool_ids`.
+
+Foundation валидирует baseline payload, устанавливает его в target skills root
+и создаёт session-tools ownership/state в той же package transaction. Не
+включать эти destinations в base managed-surface digest и package-owned file
+hashes. Foundation doctor:
+
+- сверяет destination с session-tools state, а не с package baseline bytes;
+- принимает более новый verified session release без downgrade;
+- устанавливает baseline только при missing state/destination;
+- блокирует unmanaged collision;
+- удаляет retired tool только при совпадении ownership marker.
+
+Session updater и Foundation используют один state schema и один lock. После
+auto-pull изменение session-owned skill не создаёт base drift. Foundation
+также кладёт проверенную копию baseline manifest в
+`<target-base>/runtime/session-tools-baseline.json`; updater использует её
+только для recovery первого state, а не как package hash после auto-pull.
 
 Проверить миграцию минимум на трёх homes:
 
@@ -294,6 +334,8 @@ Auto-pull consumer не выполняет push. Legacy owner auto-push оста
 - artifact kind: `portable-exe`;
 - install mode: `foundation-shared`;
 - version arguments: `--version`;
+- version pattern:
+  `(?<![0-9A-Za-z])v?(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9A-Za-z.])`;
 - signature required: `false`;
 - license: `Apache-2.0`.
 
@@ -319,13 +361,33 @@ schema `1`. Для каждой записи требовать только и�
 - `version_pattern` с named capture `version`;
 - `timeout_seconds`;
 - `path_entry`;
-- `environment`.
+- `environment`;
+- `shim`.
 
 Для OfficeCLI закрепить payload path
-`shared-tools/officecli/officecli.exe` и install path
-`.llm-foundation/bin/officecli.exe`. В `environment` объявить current-user
-`OFFICECLI_SKIP_UPDATE=1`, чтобы upstream background updater не изменял
-Foundation-managed binary.
+`shared-tools/officecli/officecli.exe` и private install path
+`.llm-foundation/libexec/officecli/officecli.exe`. Не помещать upstream EXE в
+PATH. В `shim` объявить command path `.llm-foundation/bin/officecli.cmd` и
+политику:
+
+- всегда устанавливать process `OFFICECLI_SKIP_UPDATE=1`;
+- пустой вызов отклонять с `BLOCKED_BARE_INVOCATION`;
+- отклонять первые arguments `install`, `skills`, `mcp`, `update` и
+  `self-update` с `BLOCKED_MANAGED_INSTALL`;
+- остальные arguments передавать private EXE без изменения.
+
+Объект `shim` имеет exact fields `schema_version`, `template_id`,
+`command_path`, `empty_invocation`, `blocked_first_arguments` и
+`process_environment`. Использовать `schema_version=1` и release-bound
+`template_id=officecli-managed-v1`. Foundation генерирует bytes только из
+этого встроенного template, записывает emitted SHA-256 в shared state и
+сверяет его в doctor.
+
+В `environment` дополнительно объявить current-user
+`OFFICECLI_SKIP_UPDATE=1`, чтобы прямой запуск private EXE также не включал
+upstream background updater. Shim не разрешает bare self-install, который иначе
+копирует binary, устанавливает skills в обнаруженные agent catalogs и может
+регистрировать MCP fallback.
 
 Включить payload в обычный sorted `files` array. Разрешить его вне target
 managed surface только при полном совпадении с записью `shared_tools`.
@@ -351,8 +413,8 @@ bootstrap для уже установленной native base без обнов
 
 ### Version detection
 
-Проверять exact install path, а не случайный `officecli` из PATH. Для каждого
-запуска version probe:
+Проверять private exact install path, а не случайный `officecli` из PATH. Для
+каждого запуска version probe:
 
 - установить `OFFICECLI_SKIP_UPDATE=1` в process environment;
 - вызвать `<install_path> --version`;
@@ -361,6 +423,13 @@ bootstrap для уже установленной native base без обнов
 - требовать exit code `0`;
 - извлечь ровно один semver через pinned `version_pattern`;
 - сравнить parsed semver с package version.
+
+Закрепить .NET-compatible pattern:
+
+`(?<![0-9A-Za-z])v?(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9A-Za-z.])`.
+
+Требовать ровно одно совпадение во всём bounded output и exact equality capture
+`version` с package version для состояния `exact`.
 
 Состояния plan:
 
@@ -382,10 +451,10 @@ Foundation владеет одной транзакцией base package плю�
 содержит:
 
 - текущую target managed surface;
-- прежний `.llm-foundation/bin/officecli.exe`, если он был;
+- прежний private OfficeCLI EXE и `officecli.cmd`, если они были;
 - прежний current-user PATH;
 - прежнее значение `OFFICECLI_SKIP_UPDATE` и факт его отсутствия;
-- прежний shared-tool state.
+- прежний shared-tool state;
 - прежний target managed wrapper, если он был.
 
 Порядок install:
@@ -393,19 +462,21 @@ Foundation владеет одной транзакцией base package плю�
 1. Проверить package, client contract и shared tool plan.
 2. Создать durable snapshot и journal.
 3. Установить granular target surface.
-4. Атомарно заменить OfficeCLI через temp file в том же каталоге.
+4. Атомарно заменить private OfficeCLI EXE через temp file в том же каталоге.
 5. Идемпотентно добавить `.llm-foundation/bin` в current-user PATH.
 6. Установить current-user `OFFICECLI_SKIP_UPDATE=1`.
-7. Создать или обновить target managed wrapper.
-8. Оставить journal до отдельного успешного `doctor`.
+7. Создать или обновить `officecli.cmd` и target managed wrapper.
+8. Проверить, что command resolution находит shim, а не private EXE.
+9. Оставить journal до отдельного успешного `doctor`.
 
-Doctor проверяет package state, exact binary SHA-256, exact parsed version,
-PATH, persistent environment и повторный version probe. После PASS удалить
-rollback payload и пометить transaction committed.
+Doctor проверяет package state, exact private binary SHA-256, exact parsed
+version, shim hash/behavior, PATH, persistent environment и повторный version
+probe через private EXE и public shim. После PASS удалить rollback payload и
+пометить transaction committed.
 
 При install/doctor failure `$sync-base` и GUI вызывают тот же Foundation
-`rollback`. Он восстанавливает target surface, binary, PATH, environment и
-shared state. При прерывании следующий `plan` возвращает
+`rollback`. Он восстанавливает target surface, private binary, shim, PATH,
+environment и shared state. При прерывании следующий `plan` возвращает
 `ROLLBACK_REQUIRED`.
 
 Хранить shared state в
@@ -500,6 +571,8 @@ release и его acceptance не проверены. Не мигрироват�
   duplicate key/id/path, symlink и hash mismatch.
 - Проверка file/count/expanded-size limits.
 - Fail-open при offline, timeout и занятом lock.
+- Общий 30-sec wall-clock timeout завершает дочерние processes и cleanup до
+  запуска vendor client.
 - Rollback при прерывании atomic replace.
 - UTF-8 test с кириллицей без `PYTHONIOENCODING`.
 - Live same-session discovery отдельно для Claude, Codex и OpenCode через
@@ -516,8 +589,14 @@ release и его acceptance не проверены. Не мигрироват�
 - Probe: exact path, exit `0`, 10-sec timeout, 4-KiB output cap, один semver.
 - No-downgrade для newer version до мутации.
 - Wrong hash и wrong version не оставляют частичную установку.
-- Doctor проверяет command, version, hash, PATH, environment и state.
-- Rollback восстанавливает binary, PATH, environment и target base.
+- Bare `officecli` завершается `BLOCKED_BARE_INVOCATION` и не изменяет agent
+  skills, MCP config, private binary или PATH.
+- `officecli install`, `skills`, `mcp`, `update` и `self-update` завершаются
+  `BLOCKED_MANAGED_INSTALL` без изменений.
+- Doctor проверяет private binary, shim, command resolution, version, hash,
+  PATH, environment и state.
+- Rollback восстанавливает private binary, shim, PATH, environment и target
+  base.
 - Новый installer и старый `$sync-base` дают эквивалентный final state.
 
 ### Release boundaries
