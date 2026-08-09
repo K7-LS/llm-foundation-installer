@@ -125,12 +125,14 @@ Foundation build переносит проверенную запись в `shar
 `ClientBootstrap.cs` отдельную runtime-установку OfficeCLI.
 
 Foundation release builder скачивает exact asset и проверяет SHA-256. Stable
-Foundation release asset содержит engine files, `shared-tools.lock.json` и
-`shared-tools/officecli/officecli.exe`; Foundation release manifest связывает
-их hashes и sizes. Target builders принимают только проверенный Foundation
-release плюс `package-acceptance.json` и включают те же OfficeCLI bytes в каждый
-target ZIP, который требует tool. Foundation остаётся единственным runtime
-transaction owner для нового installer и `$sync-base`.
+Foundation release asset содержит engine files, `shared-tools.lock.json`,
+`shared-tools/officecli/officecli.exe`, собранный Foundation shim
+`support/officecli-shim.exe` и `support/officecli-command-policy.json`.
+Foundation release manifest связывает их hashes и sizes. Target builders
+принимают только проверенный Foundation release плюс `package-acceptance.json`
+и включают те же OfficeCLI, shim и policy bytes в каждый target ZIP, который
+требует tool. Foundation остаётся единственным runtime transaction owner для
+нового installer и `$sync-base`.
 
 ## Trust Chain for Session Tools
 
@@ -335,7 +337,7 @@ Auto-pull consumer не выполняет push. Legacy owner auto-push оста
 - install mode: `foundation-shared`;
 - version arguments: `--version`;
 - version pattern:
-  `(?<![0-9A-Za-z])v?(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9A-Za-z.])`;
+  `\A(?:officecli[ \t]+)?v?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\z`;
 - signature required: `false`;
 - license: `Apache-2.0`.
 
@@ -353,6 +355,8 @@ schema `1`. Для каждой записи требовать только и�
 
 - `id`;
 - `version`;
+- `minimum_compatible_version`;
+- `maximum_exclusive_version`;
 - `payload_path`;
 - `sha256`;
 - `bytes`;
@@ -367,27 +371,47 @@ schema `1`. Для каждой записи требовать только и�
 Для OfficeCLI закрепить payload path
 `shared-tools/officecli/officecli.exe` и private install path
 `.llm-foundation/libexec/officecli/officecli.exe`. Не помещать upstream EXE в
-PATH. В `shim` объявить command path `.llm-foundation/bin/officecli.cmd` и
-политику:
+PATH. В `shim` объявить public command
+`.llm-foundation/bin/officecli.exe`. Это собранный Foundation binary, а не
+shell-wrapper и не upstream EXE.
 
-- всегда устанавливать process `OFFICECLI_SKIP_UPDATE=1`;
+Объект `shim` имеет exact fields `schema_version`, `payload_path`, `sha256`,
+`bytes`, `command_path`, `policy_path`, `policy_sha256`, `policy_bytes` и
+`process_environment`. Использовать `schema_version=1`. Foundation проверяет
+и атомарно устанавливает готовые release-bound shim и policy bytes; runtime не
+генерирует их из локального template.
+
+Shim получает уже разобранный Windows `string[] args`, не вызывает shell и
+запускает private EXE через `ProcessStartInfo.ArgumentList`. Сравнивать command
+tokens через ASCII-normalization и `OrdinalIgnoreCase`; не-ASCII command token
+отклонять. Применить строгую grammar:
+
 - пустой вызов отклонять с `BLOCKED_BARE_INVOCATION`;
-- отклонять первые arguments `install`, `skills`, `mcp`, `update` и
-  `self-update` с `BLOCKED_MANAGED_INSTALL`;
-- остальные arguments передавать private EXE без изменения.
+- разрешить одиночные `--version`, `--help`, `-h` и `-?`;
+- перед command разрешить не более одного exact global option `--json`;
+- отклонять `--`, неизвестный leading option и tokens с префиксом `/` или `@`;
+- определить command как следующий token и проверить его по allowlist;
+- отклонять неизвестный command с `BLOCKED_UNKNOWN_COMMAND`;
+- отклонять `install`, `skills`, `skill`, `mcp`, `mcp-serve`, `config`,
+  `update`, `self-update`, `__update-check__` и `__resident-serve__` с
+  `BLOCKED_MANAGED_INSTALL`;
+- после принятого command передать исходный argv private EXE без пересборки
+  строки.
 
-Объект `shim` имеет exact fields `schema_version`, `template_id`,
-`command_path`, `empty_invocation`, `blocked_first_arguments` и
-`process_environment`. Использовать `schema_version=1` и release-bound
-`template_id=officecli-managed-v1`. Foundation генерирует bytes только из
-этого встроенного template, записывает emitted SHA-256 в shared state и
-сверяет его в doctor.
+Release-bound policy для `v1.0.143` содержит exact allowlist `open`, `close`,
+`watch`, `unwatch`, `mark`, `unmark`, `get-marks`, `goto`, `view`, `get`,
+`query`, `set`, `add`, `remove`, `move`, `swap`, `refresh`, `raw`, `raw-set`,
+`add-part`, `validate`, `save`, `batch`, `dump`, `import`, `create`, `merge`,
+`plugins`, `help` и `load_skill`. Смена OfficeCLI version требует нового
+проверенного policy asset и shim tests; нельзя автоматически наследовать новые
+upstream commands.
 
-В `environment` дополнительно объявить current-user
-`OFFICECLI_SKIP_UPDATE=1`, чтобы прямой запуск private EXE также не включал
-upstream background updater. Shim не разрешает bare self-install, который иначе
-копирует binary, устанавливает skills в обнаруженные agent catalogs и может
-регистрировать MCP fallback.
+В `process_environment` и persistent current-user `environment` объявить
+`OFFICECLI_NO_AUTO_INSTALL=1` и `OFFICECLI_SKIP_UPDATE=1`. Первая переменная
+отключает upstream `MaybeAutoInstall`, вторая — background updater. Bare вызов
+дополнительно блокируется shim до запуска private EXE. Это не даёт штатному
+пути OfficeCLI копировать binary, устанавливать skills в обнаруженные agent
+catalogs или регистрировать MCP fallback.
 
 Включить payload в обычный sorted `files` array. Разрешить его вне target
 managed surface только при полном совпадении с записью `shared_tools`.
@@ -416,68 +440,126 @@ bootstrap для уже установленной native base без обнов
 Проверять private exact install path, а не случайный `officecli` из PATH. Для
 каждого запуска version probe:
 
-- установить `OFFICECLI_SKIP_UPDATE=1` в process environment;
+- установить `OFFICECLI_NO_AUTO_INSTALL=1` и `OFFICECLI_SKIP_UPDATE=1` в
+  process environment;
 - вызвать `<install_path> --version`;
 - ограничить время 10 секундами;
 - ограничить объединённый stdout/stderr 4 KiB;
 - требовать exit code `0`;
-- извлечь ровно один semver через pinned `version_pattern`;
+- удалить только один конечный `CRLF` или `LF`, затем сопоставить весь
+  оставшийся output с pinned `version_pattern`;
 - сравнить parsed semver с package version.
 
 Закрепить .NET-compatible pattern:
 
-`(?<![0-9A-Za-z])v?(?<version>[0-9]+\.[0-9]+\.[0-9]+)(?![0-9A-Za-z.])`.
+`\A(?:officecli[ \t]+)?v?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\z`.
 
-Требовать ровно одно совпадение во всём bounded output и exact equality capture
-`version` с package version для состояния `exact`.
+Требовать одно совпадение всего bounded output и exact equality capture
+`version` с package version для состояния `exact`. Отклонять лишние строки,
+leading/trailing whitespace, four-component version, prerelease и build
+suffix. Компилировать с `CultureInvariant | IgnoreCase` и match timeout 100 ms.
+Добавить negative tests `v1.1.0.143`, `v9.1.0.143`,
+`v1.0.143-alpha` и `1.0.143+build`.
 
 Состояния plan:
 
 - `missing` — файла нет;
 - `exact` — version и SHA-256 совпадают;
 - `older` — распознанная версия ниже package version;
-- `newer` — распознанная версия выше package version;
+- `compatible-newer` — распознанная managed version выше candidate, но входит
+  в `[minimum_compatible_version, maximum_exclusive_version)`;
+- `incompatible-newer` — распознанная managed version выше candidate и вне
+  объявленного range;
 - `conflict` — unmanaged file, wrong hash при exact version, неоднозначный или
   неуспешный version probe.
 
-Для `newer` завершить plan кодом `BLOCKED_NO_DOWNGRADE` до любой мутации. Для
-`conflict` не перезаписывать файл без доказанного managed ownership.
+Для `compatible-newer` сохранить установленный shared tool без изменения и
+продолжить target base transaction. Требовать совпадение EXE, shim и policy
+hashes с shared state от ранее committed Foundation transaction и проверять
+сохранённый digest принятого package/release manifest. Для
+`incompatible-newer` завершить plan кодом `BLOCKED_NO_DOWNGRADE` до любой
+мутации. Для `conflict` не перезаписывать файл без доказанного managed
+ownership.
+
+Для первого rollout все три target packages объявляют candidate `1.0.143` и
+range `[1.0.143,2.0.0)`. Publisher gate сравнивает range во всех трёх stable
+target manifests. Следующее обновление OfficeCLI сначала публикует новый
+Foundation asset и policy, затем target packages с совместимым range. Старый
+target package не понижает уже установленный совместимый shared tool.
 
 ## Foundation Transaction and Rollback
 
-Foundation владеет одной транзакцией base package плюс shared tools.
+Foundation владеет одной user-global транзакцией base package плюс shared
+tools. Все Foundation install для Codex, Claude и OpenCode сериализовать через
+exclusive lock
+`%USERPROFILE%/.llm-foundation/state/foundation/install.lock`.
 
-До первой мутации записать journal в target transaction state. Snapshot
-содержит:
+Команда `install` держит global lock непрерывно на всём внутреннем workflow
+`plan -> snapshot -> install -> doctor -> commit/rollback`. Отдельные команды
+`plan`, `doctor` и `rollback` также берут этот lock; `install` повторяет plan
+после захвата, поэтому результат внешнего `plan` не является разрешением на
+мутацию. При изменении target surface дополнительно брать
+`state/session-tools/<target>/update.lock` в фиксированном порядке: сначала
+global Foundation lock, затем target lock. SessionStart updater берёт только
+target lock и не читает и не меняет shared OfficeCLI state.
 
-- текущую target managed surface;
-- прежний private OfficeCLI EXE и `officecli.cmd`, если они были;
+Хранить durable transactions в
+`state/foundation/transactions/<transaction-id>/journal.json`, а единственный
+active pointer — в `state/foundation/active.json`. Journal содержит
+`transaction_id`, target, package/release digests, все snapshot paths, прежний
+shared-tool receipt, PATH/environment и фазу. До первой мутации атомарно
+записать journal и active pointer. Перед каждой заменой дописать и сбросить на
+диск operation record с path, expected-before hash/absence и intended-after
+hash/absence; после atomic replace отметить operation applied. Committed target
+и shared receipts не перезаписывать до успешного doctor.
+
+После захвата свободного global lock наличие незавершённого `active.json`
+означает stale transaction. `plan` возвращает `ROLLBACK_REQUIRED` до любой
+мутации. `rollback` работает только под global lock и только когда
+`transaction_id` совпадает в active pointer и journal. Для каждой operation
+текущее состояние обязано совпасть с declared before или after fingerprint;
+иначе вернуть hard conflict и не восстанавливать snapshot. Cleanup удаляет
+только каталог своей transaction. После commit active pointer уже отсутствует,
+поэтому foreign/stale rollback не может восстановить shared state поверх
+committed transaction другого target.
+
+Snapshot содержит:
+
+- текущую target managed surface и target state;
+- прежние private OfficeCLI EXE, public shim и policy, если они были;
 - прежний current-user PATH;
-- прежнее значение `OFFICECLI_SKIP_UPDATE` и факт его отсутствия;
-- прежний shared-tool state;
+- прежние значения `OFFICECLI_NO_AUTO_INSTALL` и `OFFICECLI_SKIP_UPDATE` с
+  признаками их отсутствия;
+- прежний shared-tool state и provenance receipt;
 - прежний target managed wrapper, если он был.
 
-Порядок install:
+Порядок install под обоими locks:
 
-1. Проверить package, client contract и shared tool plan.
-2. Создать durable snapshot и journal.
+1. Проверить package, client contract, active pointer и shared tool plan.
+2. Создать durable snapshot, journal и active pointer.
 3. Установить granular target surface.
-4. Атомарно заменить private OfficeCLI EXE через temp file в том же каталоге.
+4. Для missing/older атомарно заменить private OfficeCLI EXE, shim и policy
+   через temp files в соответствующих каталогах; для compatible-newer
+   сохранить весь проверенный shared tool комплект.
 5. Идемпотентно добавить `.llm-foundation/bin` в current-user PATH.
-6. Установить current-user `OFFICECLI_SKIP_UPDATE=1`.
-7. Создать или обновить `officecli.cmd` и target managed wrapper.
-8. Проверить, что command resolution находит shim, а не private EXE.
-9. Оставить journal до отдельного успешного `doctor`.
+6. Установить current-user `OFFICECLI_NO_AUTO_INSTALL=1` и
+   `OFFICECLI_SKIP_UPDATE=1`.
+7. Создать или обновить target managed wrapper.
+8. Проверить, что command resolution находит Foundation shim, а не private EXE.
+9. Выполнить doctor в той же locked transaction.
+10. При PASS атомарно записать committed target/shared receipts, удалить
+    active pointer, затем удалить rollback payload.
 
-Doctor проверяет package state, exact private binary SHA-256, exact parsed
-version, shim hash/behavior, PATH, persistent environment и повторный version
-probe через private EXE и public shim. После PASS удалить rollback payload и
-пометить transaction committed.
+Doctor проверяет package state, private binary SHA-256, строго parsed version,
+shim и policy hashes/behavior, command resolution, PATH, обе persistent
+environment variables и повторный version probe через private EXE и public
+shim. Для compatible-newer он проверяет сохранённый committed provenance и
+не требует hash старого candidate package.
 
-При install/doctor failure `$sync-base` и GUI вызывают тот же Foundation
-`rollback`. Он восстанавливает target surface, private binary, shim, PATH,
-environment и shared state. При прерывании следующий `plan` возвращает
-`ROLLBACK_REQUIRED`.
+При install/doctor failure тот же engine вызывает rollback до освобождения
+global lock. Он восстанавливает target surface, private binary, shim, policy,
+PATH, environment и shared state только для своего transaction id. При
+прерывании следующий `plan` возвращает `ROLLBACK_REQUIRED`.
 
 Хранить shared state в
 `%USERPROFILE%/.llm-foundation/state/shared-tools/officecli/current.json`.
@@ -552,9 +634,14 @@ release и его acceptance не проверены. Не мигрироват�
 - Session manifest invalid: reject full snapshot, not a partial subset.
 - Hash mismatch: reject snapshot and restore previous.
 - Local unmanaged collision: keep local directory and name the conflicting id.
-- Busy lock: bounded wait, then fail-open with `SKIPPED_LOCK_BUSY`.
+- Busy session lock: bounded wait, then fail-open with `SKIPPED_LOCK_BUSY`.
+- Busy Foundation global lock: bounded wait, затем
+  `BLOCKED_FOUNDATION_BUSY` без мутации; второй `$sync-base` можно повторить.
 - OfficeCLI wrong hash/version: rollback whole Foundation transaction.
-- OfficeCLI newer: stop before mutation with `BLOCKED_NO_DOWNGRADE`.
+- OfficeCLI compatible-newer: preserve verified shared tool and continue target
+  base install.
+- OfficeCLI incompatible-newer: stop before mutation with
+  `BLOCKED_NO_DOWNGRADE`.
 - Rollback failure: preserve journal and return hard failure.
 
 ## Acceptance
@@ -582,21 +669,36 @@ release и его acceptance не проверены. Не мигрироват�
 
 - Старый `$sync-base` принимает новый package manifest и извлекает Foundation
   protocol `1`.
-- План missing/exact/older/newer/conflict.
+- План missing/exact/older/compatible-newer/incompatible-newer/conflict.
 - Установка exact binary по закреплённому SHA-256 из package payload.
 - Один shared install для каждого target package.
-- Идемпотентный PATH и `OFFICECLI_SKIP_UPDATE=1`.
-- Probe: exact path, exit `0`, 10-sec timeout, 4-KiB output cap, один semver.
-- No-downgrade для newer version до мутации.
+- Идемпотентный PATH, `OFFICECLI_NO_AUTO_INSTALL=1` и
+  `OFFICECLI_SKIP_UPDATE=1`.
+- Probe: exact path, exit `0`, 10-sec timeout, 4-KiB output cap и full-output
+  regex; negative cases four-component, prerelease, build suffix и лишняя
+  строка.
+- Compatible-newer сохраняется с проверкой committed provenance;
+  incompatible-newer не вызывает downgrade и блокируется до мутации.
 - Wrong hash и wrong version не оставляют частичную установку.
 - Bare `officecli` завершается `BLOCKED_BARE_INVOCATION` и не изменяет agent
   skills, MCP config, private binary или PATH.
-- `officecli install`, `skills`, `mcp`, `update` и `self-update` завершаются
-  `BLOCKED_MANAGED_INSTALL` без изменений.
-- Doctor проверяет private binary, shim, command resolution, version, hash,
-  PATH, environment и state.
-- Rollback восстанавливает private binary, shim, PATH, environment и target
-  base.
+- Проверить case variants, singular `skill`, leading `--json`, неизвестные
+  options, `--`, `/`, `@`, stateful/internal aliases и неизвестный command.
+  Они завершаются управляемым block code без запуска private EXE.
+- Allowlisted commands передают точный argv в fake private executable без
+  shell parsing; `--version` и help forms проходят отдельные exact paths.
+- В isolated user profile снять до/после snapshot `.claude/skills`,
+  `.agents/skills`, `.config/opencode/skills`, MCP configs, private binary,
+  PATH и environment. Bare/blocked вызовы не меняют snapshot.
+- Doctor проверяет private binary, shim, policy, command resolution, version,
+  hashes, PATH, обе environment variables и state.
+- Два параллельных `$sync-base` для разных targets сериализуются global lock:
+  второй ждёт или получает `BLOCKED_FOUNDATION_BUSY`, не откатывает чужой
+  commit и после повтора получает единый shared state.
+- Stale journal требует rollback с exact transaction id; foreign id не
+  восстанавливается и не удаляется.
+- Rollback восстанавливает private binary, shim, policy, PATH, environment,
+  shared state и target base.
 - Новый installer и старый `$sync-base` дают эквивалентный final state.
 
 ### Release boundaries
