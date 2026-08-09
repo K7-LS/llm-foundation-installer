@@ -355,6 +355,7 @@ schema `1`. Для каждой записи требовать только и�
 
 - `id`;
 - `version`;
+- `bundle_version`;
 - `compatibility_epoch`;
 - `minimum_compatible_version`;
 - `maximum_exclusive_version`;
@@ -462,23 +463,34 @@ suffix. Компилировать с `CultureInvariant | IgnoreCase` и match t
 Добавить negative tests `v1.1.0.143`, `v9.1.0.143`,
 `v1.0.143-alpha` и `1.0.143+build`.
 
+`bundle_version` — монотонный semver всего managed комплекта: upstream EXE,
+Foundation shim, policy и environment contract. Увеличивать его при изменении
+любого элемента, даже если upstream `version` не изменилась. Первый rollout
+использует `bundle_version=1.0.0`.
+
 Состояния plan:
 
 - `missing` — файла нет;
-- `exact` — version и SHA-256 совпадают;
-- `older` — распознанная версия ниже package version;
-- `compatible-newer` — распознанная managed version выше candidate, входит в
+- `exact` — совпадают `bundle_version`, OfficeCLI version/SHA-256,
+  compatibility epoch, shim hash, policy hash и environment contract;
+- `managed-older` — committed bundle version ниже package bundle version и
+  publisher monotonicity contract допускает обновление;
+- `compatible-newer` — committed bundle version выше package bundle version,
+  OfficeCLI version входит в
   `[minimum_compatible_version, maximum_exclusive_version)` и имеет тот же
-  `compatibility_epoch` в committed shared receipt;
-- `incompatible-newer` — распознанная managed version выше candidate и вне
-  объявленного range;
+  `compatibility_epoch`;
+- `incompatible-newer` — committed bundle version выше candidate, но OfficeCLI
+  version или compatibility epoch несовместимы;
 - `conflict` — unmanaged file, wrong hash при exact version, неоднозначный или
   неуспешный version probe.
 
 Сначала проверять ownership. Любой существующий EXE, shim или policy без
 committed Foundation receipt классифицировать как `conflict`, независимо от
-распознанной version. Состояния `older` и `compatible-newer` допустимы только
-при совпадении текущих hashes с этим receipt.
+распознанной version. Состояния `managed-older` и `compatible-newer` допустимы
+только при совпадении текущего полного bundle с этим receipt. Одинаковый
+`bundle_version` при различии любого identity field означает `conflict`, а не
+update. Committed bundle с меньшим номером, но более новой upstream version,
+также означает `conflict`: publisher нарушил monotonicity contract.
 
 Для `compatible-newer` сохранить установленный shared tool без изменения и
 продолжить target base transaction. Требовать совпадение EXE, shim и policy
@@ -488,15 +500,17 @@ hashes с shared state от ранее committed Foundation transaction и пр�
 мутации. Для `conflict` не перезаписывать файл без доказанного managed
 ownership.
 
-Для первого rollout все три target packages объявляют candidate `1.0.143` и
-range `[1.0.143,2.0.0)`, `compatibility_epoch=officecli-managed-v1`. Номер
-версии сам по себе не доказывает совместимость: новый Foundation release может
-сохранить epoch только после shim/command compatibility matrix с предыдущим
-candidate; несовместимый release получает новый epoch. Publisher gate
-сравнивает range и epoch во всех трёх stable target manifests. Следующее
-обновление OfficeCLI сначала публикует новый Foundation asset и policy, затем
-target packages с совместимым range. Старый target package не понижает уже
-установленный совместимый shared tool.
+Для первого rollout все три target packages объявляют candidate `1.0.143`,
+`bundle_version=1.0.0`, range `[1.0.143,2.0.0)` и
+`compatibility_epoch=officecli-managed-v1`. Номер upstream version сам по себе
+не доказывает совместимость: новый Foundation release может сохранить epoch
+только после shim/command compatibility matrix с предыдущим candidate;
+несовместимый release получает новый epoch. Publisher gate сравнивает bundle
+version, range и epoch во всех трёх stable target manifests. Следующее
+обновление OfficeCLI сначала публикует новый Foundation asset и policy с
+большим bundle version, затем target packages с совместимым range. Старый
+target package не понижает уже установленный совместимый shared tool или его
+более новую policy при той же upstream version.
 
 ## Foundation Transaction and Rollback
 
@@ -549,8 +563,8 @@ Snapshot содержит:
 1. Проверить package, client contract, active pointer и shared tool plan.
 2. Создать durable snapshot, journal и active pointer.
 3. Установить granular target surface.
-4. Для missing/older атомарно заменить private OfficeCLI EXE, shim и policy
-   через temp files в соответствующих каталогах; для compatible-newer
+4. Для missing/managed-older атомарно заменить private OfficeCLI EXE, shim и
+   policy через temp files в соответствующих каталогах; для compatible-newer
    сохранить весь проверенный shared tool комплект.
 5. Идемпотентно добавить `.llm-foundation/bin` в current-user PATH.
 6. Установить current-user `OFFICECLI_NO_AUTO_INSTALL=1` и
@@ -680,7 +694,8 @@ release и его acceptance не проверены. Не мигрироват�
 
 - Старый `$sync-base` принимает новый package manifest и извлекает Foundation
   protocol `1`.
-- План missing/exact/older/compatible-newer/incompatible-newer/conflict.
+- План missing/exact/managed-older/compatible-newer/incompatible-newer/conflict;
+  exact включает весь bundle, а не только upstream EXE.
 - Установка exact binary по закреплённому SHA-256 из package payload.
 - Один shared install для каждого target package.
 - Идемпотентный PATH, `OFFICECLI_NO_AUTO_INSTALL=1` и
@@ -691,6 +706,9 @@ release и его acceptance не проверены. Не мигрироват�
 - Compatible-newer сохраняется с проверкой committed provenance, version range
   и compatibility epoch; mismatch epoch даёт incompatible-newer;
   incompatible-newer не вызывает downgrade и блокируется до мутации.
+- При одинаковой OfficeCLI `1.0.143` newer bundle сохраняет более новые shim и
+  policy; older bundle обновляет их. Одинаковый bundle version с другим hash
+  даёт conflict.
 - Wrong hash и wrong version не оставляют частичную установку.
 - Bare `officecli` завершается `BLOCKED_BARE_INVOCATION` и не изменяет agent
   skills, MCP config, private binary или PATH.
