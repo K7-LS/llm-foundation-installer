@@ -190,9 +190,18 @@ commit. Launcher отклоняет missing, tampered или target-mismatched r
 `UseShellExecute=false` и `Arguments`, сформированным
 `WindowsArgv.Serialize(string[] args)`. Передаются только fixed tokens
 `-NoLogo`, `-NoProfile`, `-NonInteractive`, `-ExecutionPolicy`, `Bypass`,
-`-File`, exact `updater_path` и `-ManagedPreflight`; пользовательские arguments
-не передаются updater и не интерпретируются PowerShell. Не использовать
-`cmd.exe`, `%ComSpec%`, `-Command`, string interpolation или shell operators.
+`-File`, exact `updater_path`, `-ManagedPreflight`, а также пары
+`-TransactionId <guid>`, `-StartTick <int64>`,
+`-MutationCutoffTick <int64>`, `-KillTick <int64>`,
+`-HardDeadlineTick <int64>` и `-StopwatchFrequency <int64>`. Значения создаёт
+launcher из одного `Stopwatch.GetTimestamp()`/`Stopwatch.Frequency`, они не
+принимаются от пользователя и сериализуются как отдельные argv tokens.
+Updater требует canonical GUID, положительные decimal integers, частоту равную
+локальной `Stopwatch.Frequency` и строгий порядок
+`start < mutation-cutoff < kill < hard-deadline`; иначе завершает preflight до
+mutation. Пользовательские arguments не передаются updater и не
+интерпретируются PowerShell. Не использовать `cmd.exe`, `%ComSpec%`, `-Command`,
+string interpolation или shell operators.
 
 Launcher назначает updater process в Windows Job Object с
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` и измеряет единый 30-секундный monotonic
@@ -276,14 +285,17 @@ canary можно дополнительно вызвать `ctx.skill.reload`, 
 7. При ошибке восстановить previous и удалить staging.
 8. Хранить максимум одну previous copy на tool.
 
-До первой mutation записать
+До создания staging или иной transaction-owned filesystem entry записать
 `%USERPROFILE%/.llm-foundation/state/session-tools/<target>/active-transaction.json`
 через temp file, write-through flush и atomic replace. Exact journal schema `1`
-содержит transaction id, target, committed receipt hash, previous state hash,
+содержит launcher-generated transaction id, monotonic tick contract, phase,
+target, committed receipt hash, previous state hash,
 staging/previous/destination paths, ожидаемые hashes и для каждой операции
-`intent`/`applied`. Каждый `intent` durable до filesystem mutation; `applied`
-durable сразу после неё. Пути обязаны находиться в проверенных target state и
-skills roots; reparse ancestors отклоняются.
+`intent`/`applied`. Начальная phase `created` связывает ещё отсутствующий
+staging path; phase `staged` записывается после его полной проверки. Каждый
+`intent` durable до filesystem mutation; `applied` durable сразу после неё.
+Пути обязаны находиться в проверенных target state и skills roots; reparse
+ancestors отклоняются.
 
 Один и тот же recovery algorithm реализовать в updater для cooperative error и
 в compiled launcher для killed updater. Он сначала валидирует journal, receipt,
@@ -765,6 +777,10 @@ release и его acceptance не проверены. Не мигрироват�
   повторной интерпретации.
 - Updater получает только fixed arguments; до-mutation timeout закрывает Job
   Object и запускает fake vendor с прежним state не позднее 30 секунд.
+- Updater отклоняет malformed GUID/ticks, неверную Stopwatch frequency и любой
+  порядок deadline, отличный от launcher contract, до создания staging.
+- Инъекция kill в phases `created` и `staged` доказывает удаление только
+  journal-bound staging текущей transaction и сохранение соседних каталогов.
 - Инъекция kill после каждого `intent` и `applied` перехода доказывает, что
   launcher-side recovery восстанавливает byte-identical destination/state,
   удаляет только transaction-owned staging/journal и лишь затем запускает fake
