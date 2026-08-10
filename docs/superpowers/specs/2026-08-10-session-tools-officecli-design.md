@@ -282,16 +282,20 @@ canary можно дополнительно вызвать `ctx.skill.reload`, 
 
 ## Session Tools Apply Contract
 
+Protocol `1` применяет ровно один tool из принятого asset. Пункты ниже относятся
+к этому единственному destination; multi-tool snapshot требует новой версии
+transaction protocol.
+
 1. Хранить lock в
    `%USERPROFILE%/.llm-foundation/state/session-tools/<target>/update.lock`.
 2. Скачать и проверить release во временном каталоге вне destination.
-3. Собрать каждый tool в sibling staging directory.
+3. Собрать tool в sibling staging directory.
 4. Проверить destination ownership до замены.
 5. Атомарно переименовать текущую managed copy в previous, затем staging в
    destination.
-6. Записать state только после успешной замены всех tools.
+6. Записать state только после успешной замены tool.
 7. При ошибке восстановить previous и удалить staging.
-8. Хранить максимум одну previous copy на tool.
+8. Хранить максимум одну previous copy.
 
 До создания staging или иной transaction-owned filesystem entry записать
 `%USERPROFILE%/.llm-foundation/state/session-tools/<target>/active-transaction.json`
@@ -313,9 +317,10 @@ transaction-owned staging/previous, journal и stale lock marker. Existing
 active journal восстанавливается до network check при следующем запуске.
 Не начинать новый apply, пока active journal не закрыт.
 
-State schema `1` содержит target, release tag/version, release manifest hash,
-session manifest hash, tool/file hashes, destination, ownership marker и время
-проверки. Не записывать cwd, имя пользователя, prompt или transcript.
+State schema `1` содержит target, release tag/version,
+`release_manifest_sha256`, session manifest hash, tool/file hashes,
+destination, ownership marker и время проверки. Не записывать cwd, имя
+пользователя, prompt или transcript.
 
 Брать baseline ownership из проверенного
 `<target-base>/runtime/session-tools-baseline.json`. При первом запуске:
@@ -528,8 +533,10 @@ Foundation проверяет bytes и SHA-256 до записи.
 5. новый engine читает optional `shared_tools` и встроенный OfficeCLI payload.
 
 Foundation vNext принимает optional `-ReleaseManifest` и
-`-ReleaseManifestSha256`. Новый `$sync-base` передаёт оба значения явно. Для
-первого bootstrap старым `$sync-base`, когда параметры отсутствуют, Foundation
+`-ReleaseManifestSha256`. Принимать только режим `both` или `neither`; mixed
+mode отклонять до чтения package. Явный SHA-256 задавать как ровно 64 lowercase
+hex symbols. Новый `$sync-base` передаёт оба значения явно. Для первого
+bootstrap старым `$sync-base`, когда оба параметра отсутствуют, Foundation
 читает только exact sibling `release-manifest.json` рядом с `-Package`.
 Foundation строго проверяет schema, target/tag/version/client binding,
 asset name/size/SHA против фактического ZIP и `package_manifest_sha256` против
@@ -537,6 +544,21 @@ asset name/size/SHA против фактического ZIP и `package_manife
 release-manifest bytes. Отсутствующий, неоднозначный или несвязанный sibling
 manifest блокирует создание baseline state; не подменять его package-manifest
 hash.
+
+Открыть manifest и package отдельными `FileStream` с `FileShare.None`; при
+невозможности exclusive open завершить без mutation. Manifest прочитать один
+раз в immutable byte buffer и из тех же bytes вычислить SHA и выполнить strict
+parse. Package size/SHA и ZIP entries проверять через тот же удерживаемый handle
+без повторного открытия пути. Удерживать оба handles до завершения binding и
+создания transaction snapshot.
+
+Legacy sibling fallback сохраняет целостность bytes после начала Foundation,
+но не имеет независимого digest на transfer boundary между старым verifier и
+Foundation. Threat model первого bootstrap считает процесс и временный каталог
+текущего пользователя доверенными до exclusive open. Concurrent malicious
+same-user mutation до этого open находится вне legacy-bootstrap guarantee и не
+должна описываться как покрытая строгой end-to-end trust chain. После первого
+обновления использовать explicit pair с verified expected digest.
 
 Не выполнять сетевое скачивание из Foundation. Это сохраняет один-command
 bootstrap для уже установленной native base без обновления старого sync script.
@@ -827,6 +849,11 @@ release и его acceptance не проверены. Не мигрироват�
 
 - Старый `$sync-base` принимает новый package manifest и извлекает Foundation
   protocol `1`.
+- Foundation принимает release manifest только как explicit pair или exact
+  sibling fallback; mixed args, malformed SHA, missing/ambiguous sibling и
+  binding mismatch блокируются до mutation.
+- Manifest и package проверяются из удерживаемых exclusive handles; test
+  конкурентной замены между hash и parse не меняет принятые bytes.
 - План missing/exact/managed-older/compatible-newer/incompatible-newer/conflict;
   exact включает весь bundle, а не только upstream EXE.
 - Установка exact binary по закреплённому SHA-256 из package payload.
