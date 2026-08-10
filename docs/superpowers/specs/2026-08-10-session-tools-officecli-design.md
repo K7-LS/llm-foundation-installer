@@ -317,6 +317,14 @@ destination/state/previous fingerprints и удаляет staging целиком
 phase `staged` staging обязан совпадать с declared verified fingerprint; это
 исключение не применять к последующим phases.
 
+Перед cleanup partial staging проверить, что leaf является реальным каталогом,
+а не reparse point, и что каждый ancestor до transaction root не reparse.
+Без перехода по ссылкам просканировать metadata всего staging tree. При любом
+вложенном symlink, junction или ином reparse entry вернуть
+`BLOCKED_SESSION_RECOVERY`, сохранить journal и не запускать recursive delete.
+Cleanup разрешён только для полностью non-reparse tree; он не должен следовать
+по ссылкам или затрагивать их targets.
+
 Один и тот же recovery algorithm реализовать в updater для cooperative error и
 в compiled launcher для killed updater. Он сначала валидирует journal, receipt,
 path roots и hashes, затем идемпотентно восстанавливает previous destination и
@@ -835,6 +843,10 @@ release и его acceptance не проверены. Не мигрироват�
   порядок deadline, отличный от launcher contract, до создания staging.
 - Инъекция kill в phases `created` и `staged` доказывает удаление только
   journal-bound staging текущей transaction и сохранение соседних каталогов.
+- Отдельная инъекция kill во время заполнения `created` staging проверяет
+  cleanup реальных partial bytes. Leaf или nested reparse дают
+  `BLOCKED_SESSION_RECOVERY`; внешний target, соседние каталоги и journal
+  остаются byte-identical.
 - Инъекция kill после каждого `intent` и `applied` перехода доказывает, что
   launcher-side recovery восстанавливает byte-identical destination/state,
   удаляет только transaction-owned staging/journal и лишь затем запускает fake
