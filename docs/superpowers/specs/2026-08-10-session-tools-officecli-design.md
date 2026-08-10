@@ -309,6 +309,14 @@ staging path; phase `staged` записывается после его полн
 Пути обязаны находиться в проверенных target state и skills roots; reparse
 ancestors отклоняются.
 
+В phase `created` staging ещё не является проверенным payload: он может
+отсутствовать либо содержать частичные bytes, если процесс остановлен во время
+его заполнения. Recovery принимает такой staging только по exact
+transaction-derived path без reparse ancestors, требует неизменные
+destination/state/previous fingerprints и удаляет staging целиком. Начиная с
+phase `staged` staging обязан совпадать с declared verified fingerprint; это
+исключение не применять к последующим phases.
+
 Один и тот же recovery algorithm реализовать в updater для cooperative error и
 в compiled launcher для killed updater. Он сначала валидирует journal, receipt,
 path roots и hashes, затем идемпотентно восстанавливает previous destination и
