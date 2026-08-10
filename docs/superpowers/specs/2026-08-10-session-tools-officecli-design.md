@@ -195,11 +195,21 @@ commit. Launcher отклоняет missing, tampered или target-mismatched r
 `cmd.exe`, `%ComSpec%`, `-Command`, string interpolation или shell operators.
 
 Launcher назначает updater process в Windows Job Object с
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, измеряет единый 30-секундный monotonic
-deadline и при его исчерпании закрывает job, завершая process tree. После
-завершения или fail-open updater launcher запускает exact
-`vendor_executable_path` с `UseShellExecute=false`; исходный `string[] args`
-передаётся только через тот же `WindowsArgv.Serialize` без повторного parsing.
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` и измеряет единый 30-секундный monotonic
+deadline. Первые 22 секунды доступны для lock/network/verify/staging; updater
+не начинает mutation после этого cutoff. До 25-й секунды updater завершает
+локальный apply или cooperative cleanup. Если updater ещё работает, launcher
+закрывает job и завершает его process tree. Последние 5 секунд зарезервированы
+для in-process recovery внутри compiled launcher по durable journal, без
+нового дочернего процесса.
+
+После успешного preflight или подтверждённого recovery launcher запускает
+exact `vendor_executable_path` с `UseShellExecute=false`; исходный
+`string[] args` передаётся только через тот же `WindowsArgv.Serialize` без
+повторного parsing. Если launcher-side recovery не может доказать consistent
+destination/state до hard deadline, managed entrypoint возвращает
+`BLOCKED_SESSION_RECOVERY` и не запускает vendor поверх повреждённого managed
+state. Прямой vendor shortcut остаётся доступен как отдельный fail-open путь.
 
 Launch Center проверяет committed receipt и hash, затем запускает exact
 target-specific managed launcher тем же безопасным process-argument path.
@@ -220,11 +230,12 @@ managed-команда и VPN/SingBox environment используют одну 
 4. Только после preflight запустить vendor client.
 
 Ограничить весь preflight 30 секундами wall-clock, включая lock wait, latest
-check, все `gh` subprocesses, download, verification, apply и cleanup. По
-deadline остановить дочернее process tree, восстановить незавершённый atomic
-replace, удалить только staging текущей transaction, освободить lock и
-запустить vendor client с последней проверенной копией. Не продлевать timeout
-последовательными per-command budgets.
+check, все `gh` subprocesses, download, verification, apply и recovery. Соблюдать
+cutoffs 22/25/30 из launcher contract; не продлевать timeout последовательными
+per-command budgets. При timeout до mutation удалить только staging текущей
+transaction и запустить vendor с последней проверенной копией. При timeout во
+время mutation закрыть updater Job Object, выполнить launcher-side recovery и
+запустить vendor только после доказанного consistent state.
 
 Это единственная обязательная same-session гарантия для Codex и Claude: новый
 skill уже находится на диске до запуска процесса и до построения discovery
@@ -264,6 +275,23 @@ canary можно дополнительно вызвать `ctx.skill.reload`, 
 6. Записать state только после успешной замены всех tools.
 7. При ошибке восстановить previous и удалить staging.
 8. Хранить максимум одну previous copy на tool.
+
+До первой mutation записать
+`%USERPROFILE%/.llm-foundation/state/session-tools/<target>/active-transaction.json`
+через temp file, write-through flush и atomic replace. Exact journal schema `1`
+содержит transaction id, target, committed receipt hash, previous state hash,
+staging/previous/destination paths, ожидаемые hashes и для каждой операции
+`intent`/`applied`. Каждый `intent` durable до filesystem mutation; `applied`
+durable сразу после неё. Пути обязаны находиться в проверенных target state и
+skills roots; reparse ancestors отклоняются.
+
+Один и тот же recovery algorithm реализовать в updater для cooperative error и
+в compiled launcher для killed updater. Он сначала валидирует journal, receipt,
+path roots и hashes, затем идемпотентно восстанавливает previous destination и
+previous state либо признаёт полностью committed new state. Он удаляет только
+transaction-owned staging/previous, journal и stale lock marker. Existing
+active journal восстанавливается до network check при следующем запуске.
+Не начинать новый apply, пока active journal не закрыт.
 
 State schema `1` содержит target, release tag/version, release manifest hash,
 session manifest hash, tool/file hashes, destination, ownership marker и время
@@ -735,8 +763,14 @@ release и его acceptance не проверены. Не мигрироват�
   trailing backslashes, backslashes перед quote, `%`, `!`, `^`, `&`, `|`,
   `<`, `>` и кириллицы; все значения доходят до fake vendor executable без
   повторной интерпретации.
-- Updater получает только fixed arguments; timeout закрывает Job Object и
-  завершает дочернее process tree до запуска fake vendor executable.
+- Updater получает только fixed arguments; до-mutation timeout закрывает Job
+  Object и запускает fake vendor с прежним state не позднее 30 секунд.
+- Инъекция kill после каждого `intent` и `applied` перехода доказывает, что
+  launcher-side recovery восстанавливает byte-identical destination/state,
+  удаляет только transaction-owned staging/journal и лишь затем запускает fake
+  vendor. Повторный recovery является no-op.
+- Tampered/unsafe journal и recovery, не завершившийся к hard deadline, дают
+  `BLOCKED_SESSION_RECOVERY`; fake vendor через managed entrypoint не стартует.
 - SessionStart fallback при direct launch не блокирует session.
 - Сохранение unmanaged local skill во время `$sync-base` и session update.
 - Отклонение mutable/raw source, path traversal, executable extension,
