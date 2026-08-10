@@ -108,6 +108,14 @@ duplicate file path, регистронезависимые коллизии Win
 
 Первый asset содержит только `ru-writing-style`.
 
+Schema `1` сохраняет лимит до 32 tools для детерминированной сборки и
+forward-compatible проверки, но runtime transaction protocol `1` принимает
+ровно один tool на asset. Singular journal связывает один staging, previous и
+destination; updater и promotion отклоняют zero/multi-tool asset до mutation с
+`BLOCKED_MULTI_TOOL_ASSET`. Поддержку нескольких destinations вводить только
+новой версией transaction protocol с per-tool durable operations и общей
+recovery проверкой полного snapshot.
+
 ### 2. Managed setup channel
 
 Применять канал для OfficeCLI и будущих инструментов, которые:
@@ -792,6 +800,8 @@ release и его acceptance не проверены. Не мигрироват�
 - Отклонение mutable/raw source, path traversal, executable extension,
   duplicate key/id/path, symlink и hash mismatch.
 - Проверка file/count/expanded-size limits.
+- Отклонение zero/multi-tool asset в runtime transaction protocol `1` до
+  mutation с `BLOCKED_MULTI_TOOL_ASSET`.
 - Fail-open при offline, timeout и занятом lock.
 - Общий 30-sec wall-clock timeout завершает дочерние processes и cleanup до
   запуска vendor client.
