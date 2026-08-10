@@ -96,6 +96,7 @@ namespace Foundation.ManagedLauncher
             string actualDestinationHash = Fingerprint(destinationPath);
             string actualPreviousHash = Fingerprint(previousPath);
             string actualStagingHash = Fingerprint(stagingPath);
+            bool actualStagingIsDirectory = Directory.Exists(stagingPath);
             string actualStateHash = Fingerprint(statePath);
             int durableStep = Applied(operations, "write_state") ? 3 :
                 Applied(operations, "move_staging_to_destination") ? 2 :
@@ -106,7 +107,8 @@ namespace Foundation.ManagedLauncher
             for (int candidate = maximumStep; candidate >= durableStep; candidate--)
             {
                 if (LayoutMatches(candidate, phase, actualDestinationHash, actualPreviousHash,
-                    actualStagingHash, actualStateHash, previousDestinationHash,
+                    actualStagingHash, actualStagingIsDirectory, actualStateHash,
+                    previousDestinationHash,
                     expectedStagingHash, expectedDestinationHash, previousStateHash,
                     expectedStateHash))
                 {
@@ -119,7 +121,6 @@ namespace Foundation.ManagedLauncher
             if (actualStep == 3)
             {
                 DeleteEntry(previousPath, hardDeadlineTick);
-                DeleteEntry(stagingPath, hardDeadlineTick);
             }
             else
             {
@@ -129,8 +130,11 @@ namespace Foundation.ManagedLauncher
                 {
                     MoveEntry(previousPath, destinationPath, hardDeadlineTick);
                 }
-                DeleteEntry(stagingPath, hardDeadlineTick);
             }
+            if (actualStep == 0 && String.Equals(phase, "created", StringComparison.Ordinal))
+                DeleteDirectoryEntry(stagingPath, hardDeadlineTick);
+            else
+                DeleteEntry(stagingPath, hardDeadlineTick);
 
             RequireFingerprint(destinationPath,
                 actualStep == 3 ? expectedDestinationHash : previousDestinationHash);
@@ -143,17 +147,20 @@ namespace Foundation.ManagedLauncher
         }
 
         private static bool LayoutMatches(int step, string phase, string actualDestinationHash,
-            string actualPreviousHash, string actualStagingHash, string actualStateHash,
-            string previousDestinationHash, string expectedStagingHash,
+            string actualPreviousHash, string actualStagingHash, bool actualStagingIsDirectory,
+            string actualStateHash, string previousDestinationHash, string expectedStagingHash,
             string expectedDestinationHash, string previousStateHash, string expectedStateHash)
         {
             string destinationHash = step >= 2 ? expectedDestinationHash :
                 step >= 1 ? "absent" : previousDestinationHash;
             string previousHash = step >= 1 ? previousDestinationHash : "absent";
             string stagingHash = step >= 2 ? "absent" : expectedStagingHash;
-            bool stagingMatches = (step == 0 &&
-                String.Equals(phase, "created", StringComparison.Ordinal)) ||
-                String.Equals(actualStagingHash, stagingHash, StringComparison.Ordinal);
+            bool createdStep = step == 0 &&
+                String.Equals(phase, "created", StringComparison.Ordinal);
+            bool stagingMatches = createdStep
+                ? actualStagingIsDirectory ||
+                    String.Equals(actualStagingHash, "absent", StringComparison.Ordinal)
+                : String.Equals(actualStagingHash, stagingHash, StringComparison.Ordinal);
             string stateHash = step >= 3 ? expectedStateHash : previousStateHash;
             return String.Equals(actualDestinationHash, destinationHash, StringComparison.Ordinal) &&
                 String.Equals(actualPreviousHash, previousHash, StringComparison.Ordinal) &&
@@ -334,6 +341,15 @@ namespace Foundation.ManagedLauncher
                 throw new InvalidOperationException("reparse path");
             if (Directory.Exists(path)) Directory.Delete(path, true);
             else if (File.Exists(path)) File.Delete(path);
+            CheckDeadline(deadline);
+        }
+
+        private static void DeleteDirectoryEntry(string path, long deadline)
+        {
+            CheckDeadline(deadline);
+            if (HasReparseAtOrAbove(path) || HasReparseInTree(path) || File.Exists(path))
+                throw new InvalidOperationException("invalid directory path");
+            if (Directory.Exists(path)) Directory.Delete(path, true);
             CheckDeadline(deadline);
         }
 

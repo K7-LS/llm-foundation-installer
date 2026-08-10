@@ -424,6 +424,8 @@ def test_created_journal_discards_partial_transaction_staging(tmp_path: Path) ->
     staging.mkdir()
     (staging / "partial.tmp").write_text("interrupted population", encoding="utf-8")
     value["phase"] = "created"
+    assert staging.is_dir()
+    assert not staging.is_symlink()
     assert _fingerprint(staging) not in {"absent", value["expected_staging_sha256"]}
     journal.write_text(json.dumps(value), encoding="utf-8")
 
@@ -435,6 +437,27 @@ def test_created_journal_discards_partial_transaction_staging(tmp_path: Path) ->
     assert not Path(value["previous_path"]).exists()
     assert not Path(value["destination_path"]).exists()
     assert vendor_log.exists()
+
+
+def test_created_journal_blocks_regular_file_at_staging_path(tmp_path: Path) -> None:
+    """Created staging may be absent or a directory, but never a regular file."""
+    launcher, vendor_log, environment, journal, value = _staged_journal_fixture(tmp_path)
+    staging = Path(value["staging_path"])
+    shutil.rmtree(staging)
+    staging_bytes = b"local-file-must-survive\x00\xff"
+    staging.write_bytes(staging_bytes)
+    value["phase"] = "created"
+    journal.write_text(json.dumps(value), encoding="utf-8")
+    journal_bytes = journal.read_bytes()
+
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 70, invocation.stdout + invocation.stderr
+    assert "BLOCKED_SESSION_RECOVERY" in invocation.stderr
+    assert staging.is_file()
+    assert staging.read_bytes() == staging_bytes
+    assert journal.read_bytes() == journal_bytes
+    assert not vendor_log.exists()
 
 
 def test_created_partial_staging_with_nested_reparse_blocks_and_preserves_neighbor(
