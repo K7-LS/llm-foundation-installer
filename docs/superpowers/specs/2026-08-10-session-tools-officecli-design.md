@@ -549,8 +549,11 @@ hash.
 невозможности exclusive open завершить без mutation. Manifest прочитать один
 раз в immutable byte buffer и из тех же bytes вычислить SHA и выполнить strict
 parse. Package size/SHA и ZIP entries проверять через тот же удерживаемый handle
-без повторного открытия пути. Удерживать оба handles до завершения binding и
-создания transaction snapshot.
+без повторного открытия пути. Удерживать manifest handle до создания
+transaction snapshot, а тот же package handle и `ZipArchive` — до последнего
+чтения candidate payload и завершения install/rollback. После snapshot
+устанавливать target surface, shared tools и launchers только из этого
+удерживаемого archive; не возвращаться к package path.
 
 Legacy sibling fallback сохраняет целостность bytes после начала Foundation,
 но не имеет независимого digest на transfer boundary между старым verifier и
@@ -854,6 +857,9 @@ release и его acceptance не проверены. Не мигрироват�
   binding mismatch блокируются до mutation.
 - Manifest и package проверяются из удерживаемых exclusive handles; test
   конкурентной замены между hash и parse не меняет принятые bytes.
+- Инъекция замены package между transaction snapshot и install не меняет
+  установленные bytes/final state; installer читает candidate только из того же
+  удерживаемого archive.
 - План missing/exact/managed-older/compatible-newer/incompatible-newer/conflict;
   exact включает весь bundle, а не только upstream EXE.
 - Установка exact binary по закреплённому SHA-256 из package payload.
