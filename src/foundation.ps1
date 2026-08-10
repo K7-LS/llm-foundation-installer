@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.1'
+$script:EngineVersion = '0.3.2'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -301,16 +301,26 @@ function Resolve-HomePath {
     param(
         [Parameter(Mandatory = $true)][string]$Relative,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
-        [switch]$AllowSessionState
+        [switch]$AllowSessionState,
+        [switch]$AllowSharedToolPath
     )
     $IsAllowedSessionState = $AllowSessionState -and
         $Relative -cmatch (
             '^\.llm-foundation/state/session-tools/' +
             '[a-z][a-z0-9-]{1,31}/state\.json$'
         )
+    $IsAllowedSharedToolPath = $AllowSharedToolPath -and
+        $Relative -cin @(
+            '.llm-foundation/bin',
+            '.llm-foundation/bin/officecli.exe',
+            '.llm-foundation/libexec/officecli/officecli.exe',
+            '.llm-foundation/libexec/officecli/officecli-command-policy.json',
+            '.llm-foundation/state/shared-tools/officecli/current.json'
+        )
     if (-not (Test-PortablePath $Relative) -or
         ((Test-ProtectedPath $Relative) -and
-            -not $IsAllowedSessionState)) {
+            -not $IsAllowedSessionState -and
+            -not $IsAllowedSharedToolPath)) {
         Throw-Foundation 'UNSAFE_PATH' "Unsafe managed path: $Relative"
     }
     $Root = [IO.Path]::GetFullPath($HomeRoot)
@@ -3845,13 +3855,13 @@ function Install-BundledOfficeCli {
     if ($null -eq $Tool) { return }
     $PrivateDestination = Resolve-HomePath (
         '.llm-foundation/libexec/officecli/officecli.exe'
-    ) $HomeRoot
+    ) $HomeRoot -AllowSharedToolPath
     $ShimDestination = Resolve-HomePath (
         '.llm-foundation/bin/officecli.exe'
-    ) $HomeRoot
+    ) $HomeRoot -AllowSharedToolPath
     $PolicyDestination = Resolve-HomePath (
         '.llm-foundation/libexec/officecli/officecli-command-policy.json'
-    ) $HomeRoot
+    ) $HomeRoot -AllowSharedToolPath
     $Pairs = @(
         @($Tool.private_exe, $PrivateDestination),
         @($Tool.shim, $ShimDestination),
@@ -3876,11 +3886,11 @@ function Install-BundledOfficeCli {
         )
     }
     Add-FoundationUserPath (
-        Resolve-HomePath '.llm-foundation/bin' $HomeRoot
+        Resolve-HomePath '.llm-foundation/bin' $HomeRoot -AllowSharedToolPath
     ) $HomeRoot
     $ReceiptPath = Resolve-HomePath (
         '.llm-foundation/state/shared-tools/officecli/current.json'
-    ) $HomeRoot
+    ) $HomeRoot -AllowSharedToolPath
     New-SafeDirectory (Split-Path -Parent $ReceiptPath) $HomeRoot
     $Receipt = [pscustomobject][ordered]@{
         schema_version = 1
@@ -3914,7 +3924,7 @@ function Test-BundledOfficeCliState {
     if ($null -eq $Tool) { return }
     $ReceiptPath = Resolve-HomePath (
         '.llm-foundation/state/shared-tools/officecli/current.json'
-    ) $HomeRoot
+    ) $HomeRoot -AllowSharedToolPath
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
         Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt is missing'
     }
@@ -3925,7 +3935,8 @@ function Test-BundledOfficeCliState {
         Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt differs'
     }
     foreach ($Row in @($Receipt.files)) {
-        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
+        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot `
+            -AllowSharedToolPath
         if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or
             (Get-FileSha256 $Destination) -cne [string]$Row.sha256 -or
             (Get-Item -LiteralPath $Destination).Length -ne [int64]$Row.bytes) {
