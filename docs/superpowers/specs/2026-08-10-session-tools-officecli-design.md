@@ -383,10 +383,26 @@ shell-wrapper и не upstream EXE.
 и атомарно устанавливает готовые release-bound shim и policy bytes; runtime не
 генерирует их из локального template.
 
-Shim получает уже разобранный Windows `string[] args`, не вызывает shell и
-запускает private EXE через `ProcessStartInfo.ArgumentList`. Сравнивать command
-tokens через ASCII-normalization и `OrdinalIgnoreCase`; не-ASCII command token
-отклонять. Применить строгую grammar:
+Shim собирается существующим .NET Framework toolchain, получает уже
+разобранный Windows `string[] args` и не вызывает shell. Для запуска private
+EXE использовать `ProcessStartInfo` с `UseShellExecute=false`, exact
+`FileName` и `Arguments`, сформированным только функцией
+`WindowsArgv.Serialize(string[] args)`. Она реализует обратное преобразование
+для Windows `CommandLineToArgvW`/CRT:
+
+- пустой argument сериализовать как `""`;
+- argument без whitespace и `"` передавать без кавычек;
+- остальные arguments заключать в `"`;
+- перед literal `"` сериализовать последовательность из `n` backslashes как
+  `2n+1` backslashes;
+- перед closing `"` сериализовать конечную последовательность из `n`
+  backslashes как `2n` backslashes;
+- между сериализованными arguments ставить один ASCII space.
+
+Не использовать `cmd.exe`, PowerShell, `ShellExecute`, interpolation или иной
+quoting path. Сравнивать command tokens через ASCII-normalization и
+`OrdinalIgnoreCase`; не-ASCII command token отклонять. Применить строгую
+grammar:
 
 - пустой вызов отклонять с `BLOCKED_BARE_INVOCATION`;
 - разрешить одиночные `--version`, `--help`, `-h` и `-?`;
@@ -397,8 +413,8 @@ tokens через ASCII-normalization и `OrdinalIgnoreCase`; не-ASCII command
 - отклонять `install`, `skills`, `skill`, `mcp`, `mcp-serve`, `config`,
   `update`, `self-update`, `__update-check__` и `__resident-serve__` с
   `BLOCKED_MANAGED_INSTALL`;
-- после принятого command передать исходный argv private EXE без пересборки
-  строки.
+- после принятого command передать исходный argv private EXE только через
+  `WindowsArgv.Serialize`.
 
 Release-bound policy для `v1.0.143` содержит exact allowlist `open`, `close`,
 `watch`, `unwatch`, `mark`, `unmark`, `get-marks`, `goto`, `view`, `get`,
@@ -716,7 +732,9 @@ release и его acceptance не проверены. Не мигрироват�
   options, `--`, `/`, `@`, stateful/internal aliases и неизвестный command.
   Они завершаются управляемым block code без запуска private EXE.
 - Allowlisted commands передают точный argv в fake private executable без
-  shell parsing; `--version` и help forms проходят отдельные exact paths.
+  shell parsing; round-trip покрывает empty argument, spaces, tabs, literal
+  quotes, trailing backslashes, backslashes перед quote и кириллицу.
+  `--version` и help forms проходят отдельные exact paths.
 - В isolated user profile снять до/после snapshot `.claude/skills`,
   `.agents/skills`, `.config/opencode/skills`, MCP configs, private binary,
   PATH и environment. Bare/blocked вызовы не меняют snapshot.
