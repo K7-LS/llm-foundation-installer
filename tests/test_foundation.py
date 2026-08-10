@@ -189,6 +189,8 @@ def _run(
     target: str | None = None,
     client: str | None = SUPPORTED_CLIENT,
     client_id: str = "codex-cli",
+    release_manifest: Path | None = None,
+    release_manifest_sha256: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     arguments = [
@@ -207,6 +209,12 @@ def _run(
         arguments.extend(["-Package", str(package)])
     if target is not None:
         arguments.extend(["-Target", target])
+    if release_manifest is not None:
+        arguments.extend(["-ReleaseManifest", str(release_manifest)])
+    if release_manifest_sha256 is not None:
+        arguments.extend(
+            ["-ReleaseManifestSha256", release_manifest_sha256]
+        )
     if client is not None:
         arguments.extend(["-ClientId", client_id])
         arguments.extend(["-ClientVersion", client])

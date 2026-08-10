@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "allowed_commands": [
+    "open", "close", "watch", "unwatch", "mark", "unmark", "get-marks",
+    "goto", "view", "get", "query", "set", "add", "remove", "move", "swap",
+    "refresh", "raw", "raw-set", "add-part", "validate", "save", "batch", "dump",
+    "import", "create", "merge", "plugins", "help", "load_skill"
+  ],
+  "process_environment": {
+    "OFFICECLI_NO_AUTO_INSTALL": "1",
+    "OFFICECLI_SKIP_UPDATE": "1"
+  }
+}
