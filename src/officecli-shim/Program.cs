@@ -64,7 +64,7 @@ namespace Foundation.OfficeCliShim
         private static bool Contains(IEnumerable<string> values, string value)
         {
             return values != null && values.Contains(
-                value, StringComparer.OrdinalIgnoreCase);
+                value, StringComparer.Ordinal);
         }
 
         private static bool IsAscii(string value)

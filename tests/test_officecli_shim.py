@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import textwrap
@@ -114,6 +115,26 @@ def _compile_fake_officecli(path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def _install_shim(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
+    host = _powershells()[0]
+    shim = tmp_path / "build" / "officecli.exe"
+    result = _build(host, shim)
+    assert result.returncode == 0, result.stderr
+
+    foundation = tmp_path / ".llm-foundation"
+    public = foundation / "bin" / "officecli.exe"
+    private = foundation / "libexec" / "officecli"
+    private.mkdir(parents=True)
+    public.parent.mkdir(parents=True)
+    shutil.copy2(shim, public)
+    shutil.copy2(POLICY, private / "officecli-command-policy.json")
+    marker = tmp_path / "forwarded-arguments.txt"
+    _compile_fake_officecli(private / "officecli.exe")
+    environment = os.environ.copy()
+    environment["OFFICECLI_SHIM_TEST_OUTPUT"] = str(marker)
+    return public, marker, environment
+
+
 def test_canonical_officecli_source_record_is_exact() -> None:
     """Changing the pinned asset or shared ownership must fail this contract."""
     source_lock = json.loads(SOURCE_LOCK.read_text(encoding="utf-8"))
@@ -132,6 +153,23 @@ def test_policy_has_exact_document_command_allowlist() -> None:
             "OFFICECLI_SKIP_UPDATE": "1",
         },
     }
+
+
+def test_version_pattern_matches_only_one_pinned_full_output_line() -> None:
+    """Removing full anchoring would accept prerelease, build, or extra output."""
+    pattern = OFFICECLI_RECORD["version_pattern"]
+    python_pattern = pattern.replace(r"\A", "").replace(r"\z", "$")
+    python_pattern = python_pattern.replace("(?<version>", "(?P<version>")
+    version = re.compile(python_pattern)
+
+    assert version.fullmatch("officecli 1.0.143") is not None
+    for invalid in (
+        "officecli 1.0.143.1",
+        "officecli 1.0.143-preview",
+        "officecli 1.0.143+build.1",
+        "officecli 1.0.143\nextra",
+    ):
+        assert version.fullmatch(invalid) is None
 
 
 def test_build_is_deterministic_in_powershell_7_and_51(tmp_path: Path) -> None:
@@ -154,23 +192,7 @@ def test_shim_blocks_non_document_commands_and_round_trips_allowed_arguments(
     tmp_path: Path,
 ) -> None:
     """Removing the policy gate or Windows quoting serializer must fail this runtime contract."""
-    host = _powershells()[0]
-    shim = tmp_path / "build" / "officecli.exe"
-    result = _build(host, shim)
-    assert result.returncode == 0, result.stderr
-
-    foundation = tmp_path / ".llm-foundation"
-    public = foundation / "bin" / "officecli.exe"
-    private = foundation / "libexec" / "officecli"
-    private.mkdir(parents=True)
-    public.parent.mkdir(parents=True)
-    shutil.copy2(shim, public)
-    shutil.copy2(POLICY, private / "officecli-command-policy.json")
-    marker = tmp_path / "forwarded-arguments.txt"
-    _compile_fake_officecli(private / "officecli.exe")
-
-    environment = os.environ.copy()
-    environment["OFFICECLI_SHIM_TEST_OUTPUT"] = str(marker)
+    public, marker, environment = _install_shim(tmp_path)
 
     blocked = [
         [], ["install"], ["skill"], ["skills"], ["mcp"], ["mcp-serve"],
@@ -198,3 +220,43 @@ def test_shim_blocks_non_document_commands_and_round_trips_allowed_arguments(
     )
     assert invocation.returncode == 23
     assert marker.read_text(encoding="utf-8").splitlines() == arguments
+
+
+def test_shim_blocks_case_variants_without_launching_private_executable(
+    tmp_path: Path,
+) -> None:
+    """Changing ordinal command matching to case-insensitive launches `Open`."""
+    public, marker, environment = _install_shim(tmp_path)
+
+    for arguments in (["Open"], ["OPEN"], ["oPeN"], ["--json", "Open"]):
+        invocation = subprocess.run(
+            [str(public), *arguments], check=False, capture_output=True, text=True,
+            encoding="utf-8", env=environment,
+        )
+        assert invocation.returncode != 23
+        assert not marker.exists(), arguments
+
+
+def test_shim_forwards_only_exact_version_and_help_forms(tmp_path: Path) -> None:
+    """Accepting non-exact version/help forms would launch the private executable."""
+    public, marker, environment = _install_shim(tmp_path)
+
+    for arguments in (["--version"], ["--help"], ["-h"], ["-?"]):
+        invocation = subprocess.run(
+            [str(public), *arguments], check=False, capture_output=True, text=True,
+            encoding="utf-8", env=environment,
+        )
+        assert invocation.returncode == 23
+        assert marker.read_text(encoding="utf-8").splitlines() == list(arguments)
+        marker.unlink()
+
+    for arguments in (
+        ["--version", "extra"], ["--help", "extra"], ["-h", "extra"],
+        ["-?", "extra"], ["--json", "--version"],
+    ):
+        invocation = subprocess.run(
+            [str(public), *arguments], check=False, capture_output=True, text=True,
+            encoding="utf-8", env=environment,
+        )
+        assert invocation.returncode != 23
+        assert not marker.exists(), arguments
