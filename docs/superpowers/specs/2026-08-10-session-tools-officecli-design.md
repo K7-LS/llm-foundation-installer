@@ -171,19 +171,41 @@ auto-pull. Добавление отдельного установщика GitH
 - сгенерированные команды `claude-managed`, `codex-managed` и
   `opencode-managed`.
 
-Foundation генерирует эти `.cmd` wrappers из release-bound шаблона внутри
-проверенного engine и кладёт их в `.llm-foundation/bin`. Wrapper сначала
-запускает target updater по фиксированному пути внутри target base, затем
-передаёт исходные arguments одноимённому vendor executable без `-managed`.
-Wrapper files входят в тот же snapshot и rollback, что target transaction.
-Не менять PowerShell profile, shell aliases и vendor shortcuts.
+Foundation устанавливает release-bound compiled launchers
+`claude-managed.exe`, `codex-managed.exe` и `opencode-managed.exe` в
+`.llm-foundation/bin`. Все три собираются тем же .NET Framework toolchain,
+получают уже разобранный Windows `string[] args` и определяют fixed target по
+собственному filename. Launcher files входят в тот же snapshot и rollback, что
+target transaction. Не менять PowerShell profile, shell aliases и vendor
+shortcuts.
 
-Launch Center не запускает `.cmd` через `cmd.exe`, `%ComSpec%`, PowerShell или
-иной shell. Для CLI target он выполняет тот же preflight напрямую: запускает
-target updater по фиксированному пути из committed target receipt, ждёт в
-пределах общего deadline, затем запускает exact vendor executable существующим
-безопасным process-argument path. Wrapper и Launch Center используют один
-updater и один state contract; отдельной логики обновления в GUI нет.
+Launcher читает только committed target receipt с exact fields
+`schema_version`, `target`, `launcher_path`, `launcher_sha256`, `updater_path`
+и `vendor_executable_path`. Foundation проверяет эти пути и launcher hash до
+commit. Launcher отклоняет missing, tampered или target-mismatched receipt до
+запуска дочерних процессов.
+
+Для updater launcher использует exact
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` с
+`UseShellExecute=false` и `Arguments`, сформированным
+`WindowsArgv.Serialize(string[] args)`. Передаются только fixed tokens
+`-NoLogo`, `-NoProfile`, `-NonInteractive`, `-ExecutionPolicy`, `Bypass`,
+`-File`, exact `updater_path` и `-ManagedPreflight`; пользовательские arguments
+не передаются updater и не интерпретируются PowerShell. Не использовать
+`cmd.exe`, `%ComSpec%`, `-Command`, string interpolation или shell operators.
+
+Launcher назначает updater process в Windows Job Object с
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, измеряет единый 30-секундный monotonic
+deadline и при его исчерпании закрывает job, завершая process tree. После
+завершения или fail-open updater launcher запускает exact
+`vendor_executable_path` с `UseShellExecute=false`; исходный `string[] args`
+передаётся только через тот же `WindowsArgv.Serialize` без повторного parsing.
+
+Launch Center проверяет committed receipt и hash, затем запускает exact
+target-specific managed launcher тем же безопасным process-argument path.
+Он не вызывает updater или vendor executable отдельно. Так GUI, ручная
+managed-команда и VPN/SingBox environment используют одну реализацию preflight;
+отдельной логики обновления в GUI нет.
 
 Перед запуском vendor process entrypoint вызывает target-specific
 `update-session-tools.ps1`. Скрипт живёт в target runtime и доставляется только
@@ -586,7 +608,7 @@ Snapshot содержит:
 - прежние значения `OFFICECLI_NO_AUTO_INSTALL` и `OFFICECLI_SKIP_UPDATE` с
   признаками их отсутствия;
 - прежний shared-tool state и provenance receipt;
-- прежний target managed wrapper, если он был.
+- прежний target managed launcher и receipt, если они были.
 
 Порядок install под обоими locks:
 
@@ -599,7 +621,7 @@ Snapshot содержит:
 5. Идемпотентно добавить `.llm-foundation/bin` в current-user PATH.
 6. Установить current-user `OFFICECLI_NO_AUTO_INSTALL=1` и
    `OFFICECLI_SKIP_UPDATE=1`.
-7. Создать или обновить target managed wrapper.
+7. Установить или обновить target managed launcher и receipt.
 8. Проверить, что command resolution находит Foundation shim, а не private EXE.
 9. Выполнить doctor в той же locked transaction.
 10. При PASS атомарно записать committed target/shared receipts, удалить
@@ -707,8 +729,14 @@ release и его acceptance не проверены. Не мигрироват�
 - No-op при том же stable tag и manifest hash.
 - Обновление changed skill до запуска vendor process через каждый managed
   entrypoint.
-- Эквивалентный результат wrapper и Launch Center при одном package/state;
-  Launch Center не вызывает shell и не интерпретирует user arguments.
+- Эквивалентный результат managed CLI и Launch Center при одном package/state:
+  оба запускают exact target launcher; shell не вызывается.
+- Launcher argv round-trip для empty argument, spaces, tabs, literal quotes,
+  trailing backslashes, backslashes перед quote, `%`, `!`, `^`, `&`, `|`,
+  `<`, `>` и кириллицы; все значения доходят до fake vendor executable без
+  повторной интерпретации.
+- Updater получает только fixed arguments; timeout закрывает Job Object и
+  завершает дочернее process tree до запуска fake vendor executable.
 - SessionStart fallback при direct launch не блокирует session.
 - Сохранение unmanaged local skill во время `$sync-base` и session update.
 - Отклонение mutable/raw source, path traversal, executable extension,
