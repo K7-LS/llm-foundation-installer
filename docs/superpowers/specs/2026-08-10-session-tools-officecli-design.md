@@ -178,6 +178,13 @@ Foundation генерирует эти `.cmd` wrappers из release-bound шаб
 Wrapper files входят в тот же snapshot и rollback, что target transaction.
 Не менять PowerShell profile, shell aliases и vendor shortcuts.
 
+Launch Center не запускает `.cmd` через `cmd.exe`, `%ComSpec%`, PowerShell или
+иной shell. Для CLI target он выполняет тот же preflight напрямую: запускает
+target updater по фиксированному пути из committed target receipt, ждёт в
+пределах общего deadline, затем запускает exact vendor executable существующим
+безопасным process-argument path. Wrapper и Launch Center используют один
+updater и один state contract; отдельной логики обновления в GUI нет.
+
 Перед запуском vendor process entrypoint вызывает target-specific
 `update-session-tools.ps1`. Скрипт живёт в target runtime и доставляется только
 полным base package через `$sync-base` или installer. Он не обновляет сам себя
@@ -378,10 +385,13 @@ PATH. В `shim` объявить public command
 shell-wrapper и не upstream EXE.
 
 Объект `shim` имеет exact fields `schema_version`, `payload_path`, `sha256`,
-`bytes`, `command_path`, `policy_path`, `policy_sha256`, `policy_bytes` и
-`process_environment`. Использовать `schema_version=1`. Foundation проверяет
-и атомарно устанавливает готовые release-bound shim и policy bytes; runtime не
-генерирует их из локального template.
+`bytes`, `command_path`, `policy_payload_path`, `policy_install_path`,
+`policy_sha256`, `policy_bytes` и `process_environment`. Для первого rollout
+использовать package path `support/officecli-command-policy.json` и installed
+path `.llm-foundation/libexec/officecli/officecli-command-policy.json`.
+Использовать `schema_version=1`. Foundation проверяет и атомарно устанавливает
+готовые release-bound shim и policy bytes; runtime не генерирует их из
+локального template.
 
 Shim собирается существующим .NET Framework toolchain, получает уже
 разобранный Windows `string[] args` и не вызывает shell. Для запуска private
@@ -448,10 +458,14 @@ Foundation проверяет bytes и SHA-256 до записи.
 Не выполнять сетевое скачивание из Foundation. Это сохраняет один-command
 bootstrap для уже установленной native base без обновления старого sync script.
 
-Новый GUI installer получает тот же проверенный target package и вызывает тот
-же Foundation workflow `plan -> install -> doctor`, а при ошибке `rollback`.
-Удалить OfficeCLI из самостоятельного managed-bin execution
-`ClientBootstrap.cs`; оставить там только vendor client bootstrap.
+Новый GUI installer получает тот же проверенный target package и вызывает
+Foundation `install`. Эта команда сама выполняет
+`plan -> snapshot -> install -> doctor -> commit/rollback` под одним global
+lock. Не вызывать отдельный rollback после успешного committed install.
+Необязательный внешний post-commit `doctor` является новой read-only
+проверкой: его failure показать пользователю, но не восстанавливать уже
+committed transaction. Удалить OfficeCLI из самостоятельного managed-bin
+execution `ClientBootstrap.cs`; оставить там только vendor client bootstrap.
 
 ### Version detection
 
@@ -693,6 +707,8 @@ release и его acceptance не проверены. Не мигрироват�
 - No-op при том же stable tag и manifest hash.
 - Обновление changed skill до запуска vendor process через каждый managed
   entrypoint.
+- Эквивалентный результат wrapper и Launch Center при одном package/state;
+  Launch Center не вызывает shell и не интерпретирует user arguments.
 - SessionStart fallback при direct launch не блокирует session.
 - Сохранение unmanaged local skill во время `$sync-base` и session update.
 - Отклонение mutable/raw source, path traversal, executable extension,
