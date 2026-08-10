@@ -5,195 +5,301 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace Foundation.ManagedLauncher
 {
     internal static class SessionRecovery
     {
+        private static readonly string[] OperationNames = new[]
+        {
+            "move_destination_to_previous",
+            "move_staging_to_destination",
+            "write_state"
+        };
+
+        private static readonly string[] PhaseNames = new[]
+        {
+            "created", "staged", "move_destination_intent", "move_destination_applied",
+            "move_staging_intent", "move_staging_applied", "state_write_intent",
+            "state_write_applied", "committed"
+        };
+
         internal static bool HasActiveJournal(string userProfile, string target)
         {
-            return File.Exists(Path.Combine(userProfile, ".llm-foundation", "state", "session-tools",
-                target, "active-transaction.json"));
+            return File.Exists(GetJournalPath(userProfile, target));
         }
 
         internal static bool TryRecover(string userProfile, LaunchReceipt receipt, long hardDeadlineTick)
         {
-            string stateRoot = Path.Combine(userProfile, ".llm-foundation", "state", "session-tools", receipt.Target);
-            string journalPath = Path.Combine(stateRoot, "active-transaction.json");
-            if (!File.Exists(journalPath))
-            {
-                return true;
-            }
-            if (hardDeadlineTick <= 0 || Stopwatch.GetTimestamp() >= hardDeadlineTick)
-            {
-                return false;
-            }
+            string journalPath = GetJournalPath(userProfile, receipt.Target);
+            if (!File.Exists(journalPath)) { return true; }
+            if (DeadlineReached(hardDeadlineTick)) { return false; }
 
+            Dictionary<string, object> journal;
+            string stateRoot = Path.GetDirectoryName(journalPath);
             try
             {
                 string content = File.ReadAllText(journalPath, new UTF8Encoding(false, true));
-                if (ContainsUnicodeEscapeInPropertyName(content) || Stopwatch.GetTimestamp() >= hardDeadlineTick)
-                {
-                    return false;
-                }
+                if (ContainsUnicodeEscapeInPropertyName(content)) { return false; }
                 JavaScriptSerializer serializer = new JavaScriptSerializer();
-                Dictionary<string, object> journal = serializer.DeserializeObject(content)
-                    as Dictionary<string, object>;
-                if (!IsValidJournal(journal, receipt, content, stateRoot, userProfile) ||
-                    Stopwatch.GetTimestamp() >= hardDeadlineTick)
-                {
-                    return false;
-                }
-
-                string phase = Convert.ToString(journal["phase"]);
-                bool hasAppliedOperation = HasAppliedOperation(journal);
-                if ((String.Equals(phase, "created", StringComparison.Ordinal) ||
-                    String.Equals(phase, "staged", StringComparison.Ordinal)) && hasAppliedOperation)
-                {
-                    return false;
-                }
-
-                string stagingPath = Path.GetFullPath(Convert.ToString(journal["staging_path"]));
-                if (!hasAppliedOperation)
-                {
-                    // До mutation безопасно удаляется только staging текущей transaction.
-                    DeleteEntry(stagingPath, hardDeadlineTick);
-                }
-                else
-                {
-                    RestorePreviousDestination(journal, hardDeadlineTick);
-                    DeleteEntry(stagingPath, hardDeadlineTick);
-                }
-                if (Stopwatch.GetTimestamp() >= hardDeadlineTick)
-                {
-                    return false;
-                }
-                File.Delete(journalPath);
-                return true;
+                journal = serializer.DeserializeObject(content) as Dictionary<string, object>;
+                if (!IsValidJournal(journal, receipt, content, stateRoot, userProfile,
+                    hardDeadlineTick)) { return false; }
             }
-            catch (Exception)
+            catch (Exception) { return false; }
+
+            bool recovered = false;
+            Thread worker = new Thread(delegate()
+            {
+                try { recovered = RecoverCore(journal, journalPath, hardDeadlineTick); }
+                catch (Exception) { recovered = false; }
+            });
+            worker.IsBackground = true;
+            worker.Start();
+            long remainingTicks = hardDeadlineTick - Stopwatch.GetTimestamp();
+            if (remainingTicks <= 0) { return false; }
+            long remainingMilliseconds = Math.Max(1L,
+                remainingTicks * 1000L / Stopwatch.Frequency);
+            if (!worker.Join((int)Math.Min(Int32.MaxValue, remainingMilliseconds)))
             {
                 return false;
             }
+            return recovered && !DeadlineReached(hardDeadlineTick);
+        }
+
+        private static bool RecoverCore(Dictionary<string, object> journal, string journalPath,
+            long hardDeadlineTick)
+        {
+            string phase = (string)journal["phase"];
+            string stagingPath = Path.GetFullPath((string)journal["staging_path"]);
+            string previousPath = Path.GetFullPath((string)journal["previous_path"]);
+            string destinationPath = Path.GetFullPath((string)journal["destination_path"]);
+            string statePath = Path.GetFullPath((string)journal["state_path"]);
+            string previousDestinationHash = (string)journal["previous_destination_sha256"];
+            string expectedDestinationHash = (string)journal["expected_destination_sha256"];
+            string previousStateHash = (string)journal["previous_state_sha256"];
+            string expectedStateHash = (string)journal["expected_state_sha256"];
+            string expectedStagingHash = (string)journal["expected_staging_sha256"];
+            Dictionary<string, object> operations = (Dictionary<string, object>)journal["operations"];
+            bool movedOld = Applied(operations, "move_destination_to_previous");
+            bool movedNew = Applied(operations, "move_staging_to_destination");
+            bool wroteState = Applied(operations, "write_state");
+
+            CheckDeadline(hardDeadlineTick);
+            RequireFingerprint(statePath, wroteState ? expectedStateHash : previousStateHash);
+            RequireFingerprint(destinationPath,
+                movedNew ? expectedDestinationHash : movedOld ? "absent" : previousDestinationHash);
+            RequireFingerprint(previousPath, movedOld ? previousDestinationHash : "absent");
+            RequireFingerprint(stagingPath, movedNew ? "absent" : expectedStagingHash);
+
+            if (String.Equals(phase, "committed", StringComparison.Ordinal) || wroteState)
+            {
+                if (!movedNew || !wroteState) { return false; }
+                DeleteEntry(previousPath, hardDeadlineTick);
+                DeleteEntry(stagingPath, hardDeadlineTick);
+                RequireFingerprint(destinationPath, expectedDestinationHash);
+                RequireFingerprint(statePath, expectedStateHash);
+            }
+            else
+            {
+                if (movedNew) { DeleteEntry(destinationPath, hardDeadlineTick); }
+                if (movedOld)
+                {
+                    MoveEntry(previousPath, destinationPath, hardDeadlineTick);
+                }
+                DeleteEntry(stagingPath, hardDeadlineTick);
+                RequireFingerprint(destinationPath, previousDestinationHash);
+                RequireFingerprint(statePath, previousStateHash);
+            }
+
+            CheckDeadline(hardDeadlineTick);
+            File.Delete(journalPath);
+            return true;
         }
 
         private static bool IsValidJournal(Dictionary<string, object> journal, LaunchReceipt receipt,
-            string content, string stateRoot, string userProfile)
+            string content, string stateRoot, string userProfile, long launcherHardDeadlineTick)
         {
             string[] required = new[]
             {
                 "schema_version", "target", "transaction_id", "phase", "receipt_sha256",
                 "start_tick", "mutation_cutoff_tick", "kill_tick", "hard_deadline_tick",
-                "stopwatch_frequency", "previous_state_sha256", "expected_destination_sha256",
-                "expected_state_sha256", "staging_path", "previous_path", "destination_path",
-                "state_path", "operations"
+                "stopwatch_frequency", "previous_destination_sha256", "previous_state_sha256",
+                "expected_staging_sha256", "expected_destination_sha256", "expected_state_sha256",
+                "staging_path", "previous_path", "destination_path", "state_path", "operations"
             };
-            if (journal == null || journal.Count != required.Length || required.Any(key => !journal.ContainsKey(key)) ||
+            if (journal == null || journal.Count != required.Length ||
+                required.Any(key => !journal.ContainsKey(key)) ||
                 required.Any(key => CountJsonKey(content, key) != 1) ||
                 !(journal["schema_version"] is int) || (int)journal["schema_version"] != 1 ||
-                !String.Equals(Convert.ToString(journal["target"]), receipt.Target, StringComparison.Ordinal) ||
-                !Guid.TryParseExact(Convert.ToString(journal["transaction_id"]), "D", out Guid ignored) ||
-                !String.Equals(Convert.ToString(journal["receipt_sha256"]), receipt.ReceiptSha256,
-                    StringComparison.OrdinalIgnoreCase) || !HasTickContract(journal) ||
-                !IsSha256OrAbsent(journal["previous_state_sha256"]) ||
-                !IsSha256OrAbsent(journal["expected_destination_sha256"]) ||
-                !IsSha256OrAbsent(journal["expected_state_sha256"]))
+                !(journal["target"] is string) ||
+                !String.Equals((string)journal["target"], receipt.Target, StringComparison.Ordinal) ||
+                !(journal["transaction_id"] is string) ||
+                !Guid.TryParseExact((string)journal["transaction_id"], "D", out Guid transactionId) ||
+                !(journal["phase"] is string) ||
+                !PhaseNames.Contains((string)journal["phase"], StringComparer.Ordinal) ||
+                !(journal["receipt_sha256"] is string) ||
+                !String.Equals((string)journal["receipt_sha256"], receipt.ReceiptSha256,
+                    StringComparison.Ordinal) ||
+                !HasTickContract(journal, launcherHardDeadlineTick))
+            {
+                return false;
+            }
+            foreach (string key in new[] { "previous_destination_sha256", "previous_state_sha256",
+                "expected_staging_sha256", "expected_destination_sha256", "expected_state_sha256" })
+            {
+                if (!IsSha256OrAbsent(journal[key])) { return false; }
+            }
+            if (OperationNames.Any(name => CountJsonKey(content, name) != 1) ||
+                CountJsonKey(content, "intent") != OperationNames.Length ||
+                CountJsonKey(content, "applied") != OperationNames.Length)
             {
                 return false;
             }
 
-            foreach (string key in new[] { "staging_path", "previous_path", "destination_path" })
+            string transactionRoot = Path.Combine(stateRoot, "transactions", transactionId.ToString("D"));
+            if (!PathsEqual(journal["staging_path"] as string, Path.Combine(transactionRoot, "staging")) ||
+                !PathsEqual(journal["previous_path"] as string, Path.Combine(transactionRoot, "previous")) ||
+                !PathsEqual(journal["state_path"] as string, Path.Combine(stateRoot, "state.json")))
             {
-                if (!IsPathWithinAny(Convert.ToString(journal[key]), GetAllowedRoots(userProfile, receipt.Target)))
+                return false;
+            }
+            string skillsRoot = GetSkillsRoot(userProfile, receipt.Target);
+            string destination = journal["destination_path"] as string;
+            if (String.IsNullOrWhiteSpace(destination) || !Path.IsPathRooted(destination) ||
+                !String.Equals(Path.GetDirectoryName(Path.GetFullPath(destination)),
+                    Path.GetFullPath(skillsRoot), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            foreach (string path in new[] { transactionRoot, (string)journal["staging_path"],
+                (string)journal["previous_path"], destination, (string)journal["state_path"] })
+            {
+                if (HasReparseAtOrAbove(path)) { return false; }
+            }
+            return HasExactOperationMap(journal);
+        }
+
+        private static bool HasExactOperationMap(Dictionary<string, object> journal)
+        {
+            Dictionary<string, object> operations = journal["operations"] as Dictionary<string, object>;
+            if (operations == null || operations.Count != OperationNames.Length ||
+                OperationNames.Any(name => !operations.ContainsKey(name))) { return false; }
+            foreach (string name in OperationNames)
+            {
+                Dictionary<string, object> record = operations[name] as Dictionary<string, object>;
+                if (record == null || record.Count != 2 || !record.ContainsKey("intent") ||
+                    !record.ContainsKey("applied") || !(record["intent"] is bool) ||
+                    !(record["applied"] is bool) || ((bool)record["applied"] && !(bool)record["intent"]))
                 {
                     return false;
                 }
             }
-            if (!IsPathWithin(Convert.ToString(journal["state_path"]), stateRoot)) { return false; }
-            object operations = journal["operations"];
-            Dictionary<string, object> operationMap = operations as Dictionary<string, object>;
-            if (operationMap == null || operationMap.Count == 0 || operationMap.Values.Any(value =>
-                !(value is Dictionary<string, object>) ||
-                !((Dictionary<string, object>)value).ContainsKey("intent") ||
-                !((Dictionary<string, object>)value).ContainsKey("applied") ||
-                !(((Dictionary<string, object>)value)["intent"] is bool) ||
-                !(((Dictionary<string, object>)value)["applied"] is bool) ||
-                ((bool)((Dictionary<string, object>)value)["applied"] &&
-                    !(bool)((Dictionary<string, object>)value)["intent"])))
+            bool[] actual = OperationNames.SelectMany(name =>
             {
-                return false;
+                Dictionary<string, object> record = (Dictionary<string, object>)operations[name];
+                return new[] { (bool)record["intent"], (bool)record["applied"] };
+            }).ToArray();
+            string phase = (string)journal["phase"];
+            int enabled = Array.IndexOf(PhaseNames, phase);
+            bool[] expected = new bool[6];
+            if (enabled >= 2)
+            {
+                int transition = enabled - 2;
+                for (int index = 0; index <= transition && index < expected.Length; index++)
+                    expected[index] = true;
             }
-            return true;
+            if (String.Equals(phase, "committed", StringComparison.Ordinal))
+                for (int index = 0; index < expected.Length; index++) expected[index] = true;
+            return actual.SequenceEqual(expected);
         }
 
-        private static bool HasAppliedOperation(Dictionary<string, object> journal)
-        {
-            Dictionary<string, object> operations = journal["operations"] as Dictionary<string, object>;
-            return operations.Values.Any(value => Convert.ToBoolean(
-                ((Dictionary<string, object>)value)["applied"]));
-        }
-
-        private static void RestorePreviousDestination(Dictionary<string, object> journal, long hardDeadlineTick)
-        {
-            string previousPath = Path.GetFullPath(Convert.ToString(journal["previous_path"]));
-            string destinationPath = Path.GetFullPath(Convert.ToString(journal["destination_path"]));
-            if (Stopwatch.GetTimestamp() >= hardDeadlineTick) { throw new TimeoutException(); }
-            DeleteEntry(destinationPath, hardDeadlineTick);
-            if (Directory.Exists(previousPath))
-            {
-                Directory.Move(previousPath, destinationPath);
-                return;
-            }
-            if (File.Exists(previousPath))
-            {
-                File.Move(previousPath, destinationPath);
-                return;
-            }
-            throw new InvalidOperationException("previous destination is missing");
-        }
-
-        private static void DeleteEntry(string path, long hardDeadlineTick)
-        {
-            if (Stopwatch.GetTimestamp() >= hardDeadlineTick) { throw new TimeoutException(); }
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, true);
-            }
-            else if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-
-        private static bool HasTickContract(Dictionary<string, object> journal)
+        private static bool HasTickContract(Dictionary<string, object> journal,
+            long launcherHardDeadlineTick)
         {
             long start, mutation, kill, deadline, frequency;
-            return TryPositiveInt64(journal["start_tick"], out start) &&
-                TryPositiveInt64(journal["mutation_cutoff_tick"], out mutation) &&
-                TryPositiveInt64(journal["kill_tick"], out kill) &&
-                TryPositiveInt64(journal["hard_deadline_tick"], out deadline) &&
-                TryPositiveInt64(journal["stopwatch_frequency"], out frequency) &&
-                frequency == Stopwatch.Frequency && start < mutation && mutation < kill && kill < deadline;
-        }
-
-        private static bool TryPositiveInt64(object value, out long result)
-        {
-            if (value is string || value == null)
-            {
-                result = 0;
-                return false;
-            }
+            if (!TryExactInteger(journal["start_tick"], out start) ||
+                !TryExactInteger(journal["mutation_cutoff_tick"], out mutation) ||
+                !TryExactInteger(journal["kill_tick"], out kill) ||
+                !TryExactInteger(journal["hard_deadline_tick"], out deadline) ||
+                !TryExactInteger(journal["stopwatch_frequency"], out frequency) ||
+                frequency != Stopwatch.Frequency || deadline > launcherHardDeadlineTick) return false;
             try
             {
-                result = Convert.ToInt64(value);
-                return result > 0;
+                return mutation == checked(start + 22L * frequency) &&
+                    kill == checked(start + 25L * frequency) &&
+                    deadline == checked(start + 30L * frequency);
             }
-            catch (Exception)
+            catch (OverflowException) { return false; }
+        }
+
+        private static bool TryExactInteger(object value, out long result)
+        {
+            if (value is int) { result = (int)value; return result > 0; }
+            if (value is long) { result = (long)value; return result > 0; }
+            result = 0;
+            return false;
+        }
+
+        private static bool Applied(Dictionary<string, object> operations, string name)
+        {
+            return (bool)((Dictionary<string, object>)operations[name])["applied"];
+        }
+
+        private static string Fingerprint(string path)
+        {
+            if (!File.Exists(path) && !Directory.Exists(path)) { return "absent"; }
+            if (HasReparseAtOrAbove(path)) { throw new InvalidOperationException("reparse path"); }
+            if (File.Exists(path)) { return LaunchReceipt.Sha256(path); }
+            StringBuilder canonical = new StringBuilder();
+            foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories)
+                .OrderBy(value => value, StringComparer.Ordinal))
             {
-                result = 0;
-                return false;
+                if (HasReparseAtOrAbove(file)) { throw new InvalidOperationException("reparse file"); }
+                string relative = file.Substring(path.TrimEnd(Path.DirectorySeparatorChar).Length + 1)
+                    .Replace('\\', '/');
+                canonical.Append(relative).Append('\0').Append(LaunchReceipt.Sha256(file)).Append('\n');
             }
+            using (SHA256 sha = SHA256.Create())
+            {
+                return BitConverter.ToString(sha.ComputeHash(new UTF8Encoding(false).GetBytes(
+                    canonical.ToString()))).Replace("-", String.Empty).ToLowerInvariant();
+            }
+        }
+
+        private static void RequireFingerprint(string path, string expected)
+        {
+            if (!String.Equals(Fingerprint(path), expected, StringComparison.Ordinal))
+                throw new InvalidOperationException("fingerprint mismatch");
+        }
+
+        private static void MoveEntry(string source, string destination, long deadline)
+        {
+            CheckDeadline(deadline);
+            if (Directory.Exists(source)) Directory.Move(source, destination);
+            else if (File.Exists(source)) File.Move(source, destination);
+            else throw new InvalidOperationException("recovery source missing");
+            CheckDeadline(deadline);
+        }
+
+        private static void DeleteEntry(string path, long deadline)
+        {
+            CheckDeadline(deadline);
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            else if (File.Exists(path)) File.Delete(path);
+            CheckDeadline(deadline);
+        }
+
+        private static void CheckDeadline(long deadline)
+        {
+            if (DeadlineReached(deadline)) { throw new TimeoutException(); }
+        }
+
+        private static bool DeadlineReached(long deadline)
+        {
+            return deadline <= 0 || Stopwatch.GetTimestamp() >= deadline;
         }
 
         private static bool IsSha256OrAbsent(object value)
@@ -204,44 +310,63 @@ namespace Foundation.ManagedLauncher
                     (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')));
         }
 
-        private static string[] GetAllowedRoots(string userProfile, string target)
+        private static string GetJournalPath(string userProfile, string target)
         {
-            string skillsRoot;
-            if (String.Equals(target, "claude", StringComparison.Ordinal))
-                skillsRoot = Path.Combine(userProfile, ".claude", "skills");
-            else if (String.Equals(target, "codex", StringComparison.Ordinal))
-                skillsRoot = Path.Combine(userProfile, ".agents", "skills");
-            else if (String.Equals(target, "opencode", StringComparison.Ordinal))
-                skillsRoot = Path.Combine(userProfile, ".config", "opencode", "skills");
-            else throw new InvalidOperationException("unknown target");
-            return new[] { Path.Combine(userProfile, ".llm-foundation", "state", "session-tools", target), skillsRoot };
+            return Path.Combine(userProfile, ".llm-foundation", "state", "session-tools", target,
+                "active-transaction.json");
         }
 
-        private static bool IsPathWithinAny(string candidate, IEnumerable<string> roots)
+        private static string GetSkillsRoot(string userProfile, string target)
         {
-            return roots.Any(root => IsPathWithin(candidate, root));
+            if (String.Equals(target, "claude", StringComparison.Ordinal))
+                return Path.Combine(userProfile, ".claude", "skills");
+            if (String.Equals(target, "codex", StringComparison.Ordinal))
+                return Path.Combine(userProfile, ".agents", "skills");
+            if (String.Equals(target, "opencode", StringComparison.Ordinal))
+                return Path.Combine(userProfile, ".config", "opencode", "skills");
+            throw new InvalidOperationException("unknown target");
+        }
+
+        private static bool PathsEqual(string left, string right)
+        {
+            return !String.IsNullOrWhiteSpace(left) && Path.IsPathRooted(left) &&
+                String.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasReparseAtOrAbove(string candidate)
+        {
+            string full = Path.GetFullPath(candidate);
+            FileSystemInfo current = File.Exists(full) ? (FileSystemInfo)new FileInfo(full) :
+                Directory.Exists(full) ? (FileSystemInfo)new DirectoryInfo(full) :
+                new DirectoryInfo(Path.GetDirectoryName(full));
+            while (current != null)
+            {
+                if (current.Exists && (current.Attributes & FileAttributes.ReparsePoint) != 0) return true;
+                DirectoryInfo directory = current as DirectoryInfo;
+                current = directory != null ? directory.Parent : ((FileInfo)current).Directory;
+            }
+            return false;
         }
 
         internal static bool ContainsUnicodeEscapeInPropertyName(string content)
         {
             for (int index = 0; index < content.Length; index++)
             {
-                if (content[index] != '"') { continue; }
+                if (content[index] != '"') continue;
                 int start = ++index;
                 bool escaped = false;
                 while (index < content.Length)
                 {
                     if (content[index] == '\\') { escaped = true; index += 2; continue; }
-                    if (content[index] == '"') { break; }
+                    if (content[index] == '"') break;
                     index++;
                 }
                 int after = index + 1;
-                while (after < content.Length && Char.IsWhiteSpace(content[after])) { after++; }
+                while (after < content.Length && Char.IsWhiteSpace(content[after])) after++;
                 if (after < content.Length && content[after] == ':' && escaped &&
-                    content.Substring(start, index - start).IndexOf("\\u", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return true;
-                }
+                    content.Substring(start, index - start).IndexOf("\\u",
+                        StringComparison.OrdinalIgnoreCase) >= 0) return true;
             }
             return false;
         }
@@ -257,43 +382,6 @@ namespace Foundation.ManagedLauncher
                 index += token.Length;
             }
             return count;
-        }
-
-        private static bool IsPathWithin(string candidate, string root)
-        {
-            if (String.IsNullOrWhiteSpace(candidate) || !Path.IsPathRooted(candidate))
-            {
-                return false;
-            }
-            string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            string fullCandidate = Path.GetFullPath(candidate);
-            return fullCandidate.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) &&
-                !IsReparsePoint(fullCandidate) &&
-                !HasReparseAncestor(fullCandidate, fullRoot);
-        }
-
-        private static bool IsReparsePoint(string path)
-        {
-            if (!File.Exists(path) && !Directory.Exists(path))
-            {
-                return false;
-            }
-            FileAttributes attributes = File.GetAttributes(path);
-            return (attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
-        }
-
-        private static bool HasReparseAncestor(string candidate, string root)
-        {
-            DirectoryInfo current = new DirectoryInfo(Path.GetDirectoryName(candidate));
-            while (current != null && current.FullName.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-            {
-                if ((current.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
-                {
-                    return true;
-                }
-                current = current.Parent;
-            }
-            return false;
         }
     }
 }
