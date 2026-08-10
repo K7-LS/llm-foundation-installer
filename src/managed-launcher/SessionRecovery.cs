@@ -72,6 +72,14 @@ namespace Foundation.ManagedLauncher
         private static bool RecoverCore(Dictionary<string, object> journal, string journalPath,
             long hardDeadlineTick)
         {
+#if FOUNDATION_RECOVERY_FAULT_INJECTION
+            int faultDelay;
+            if (Int32.TryParse(Environment.GetEnvironmentVariable(
+                "FOUNDATION_RECOVERY_FAULT_DELAY_MS"), out faultDelay) && faultDelay > 0)
+            {
+                Thread.Sleep(faultDelay);
+            }
+#endif
             string phase = (string)journal["phase"];
             string stagingPath = Path.GetFullPath((string)journal["staging_path"]);
             string previousPath = Path.GetFullPath((string)journal["previous_path"]);
@@ -83,40 +91,71 @@ namespace Foundation.ManagedLauncher
             string expectedStateHash = (string)journal["expected_state_sha256"];
             string expectedStagingHash = (string)journal["expected_staging_sha256"];
             Dictionary<string, object> operations = (Dictionary<string, object>)journal["operations"];
-            bool movedOld = Applied(operations, "move_destination_to_previous");
-            bool movedNew = Applied(operations, "move_staging_to_destination");
-            bool wroteState = Applied(operations, "write_state");
 
             CheckDeadline(hardDeadlineTick);
-            RequireFingerprint(statePath, wroteState ? expectedStateHash : previousStateHash);
-            RequireFingerprint(destinationPath,
-                movedNew ? expectedDestinationHash : movedOld ? "absent" : previousDestinationHash);
-            RequireFingerprint(previousPath, movedOld ? previousDestinationHash : "absent");
-            RequireFingerprint(stagingPath, movedNew ? "absent" : expectedStagingHash);
-
-            if (String.Equals(phase, "committed", StringComparison.Ordinal) || wroteState)
+            string actualDestinationHash = Fingerprint(destinationPath);
+            string actualPreviousHash = Fingerprint(previousPath);
+            string actualStagingHash = Fingerprint(stagingPath);
+            string actualStateHash = Fingerprint(statePath);
+            int durableStep = Applied(operations, "write_state") ? 3 :
+                Applied(operations, "move_staging_to_destination") ? 2 :
+                Applied(operations, "move_destination_to_previous") ? 1 : 0;
+            int maximumStep = phase.EndsWith("_intent", StringComparison.Ordinal)
+                ? durableStep + 1 : durableStep;
+            int actualStep = -1;
+            for (int candidate = maximumStep; candidate >= durableStep; candidate--)
             {
-                if (!movedNew || !wroteState) { return false; }
+                if (LayoutMatches(candidate, actualDestinationHash, actualPreviousHash,
+                    actualStagingHash, actualStateHash, previousDestinationHash,
+                    expectedStagingHash, expectedDestinationHash, previousStateHash,
+                    expectedStateHash))
+                {
+                    actualStep = candidate;
+                    break;
+                }
+            }
+            if (actualStep < 0) { return false; }
+
+            if (actualStep == 3)
+            {
                 DeleteEntry(previousPath, hardDeadlineTick);
                 DeleteEntry(stagingPath, hardDeadlineTick);
-                RequireFingerprint(destinationPath, expectedDestinationHash);
-                RequireFingerprint(statePath, expectedStateHash);
             }
             else
             {
-                if (movedNew) { DeleteEntry(destinationPath, hardDeadlineTick); }
-                if (movedOld)
+                if (actualStep >= 2) { DeleteEntry(destinationPath, hardDeadlineTick); }
+                if (actualStep >= 1 &&
+                    !String.Equals(previousDestinationHash, "absent", StringComparison.Ordinal))
                 {
                     MoveEntry(previousPath, destinationPath, hardDeadlineTick);
                 }
                 DeleteEntry(stagingPath, hardDeadlineTick);
-                RequireFingerprint(destinationPath, previousDestinationHash);
-                RequireFingerprint(statePath, previousStateHash);
             }
 
+            RequireFingerprint(destinationPath,
+                actualStep == 3 ? expectedDestinationHash : previousDestinationHash);
+            RequireFingerprint(statePath, actualStep == 3 ? expectedStateHash : previousStateHash);
+            RequireFingerprint(previousPath, "absent");
+            RequireFingerprint(stagingPath, "absent");
             CheckDeadline(hardDeadlineTick);
             File.Delete(journalPath);
             return true;
+        }
+
+        private static bool LayoutMatches(int step, string actualDestinationHash,
+            string actualPreviousHash, string actualStagingHash, string actualStateHash,
+            string previousDestinationHash, string expectedStagingHash,
+            string expectedDestinationHash, string previousStateHash, string expectedStateHash)
+        {
+            string destinationHash = step >= 2 ? expectedDestinationHash :
+                step >= 1 ? "absent" : previousDestinationHash;
+            string previousHash = step >= 1 ? previousDestinationHash : "absent";
+            string stagingHash = step >= 2 ? "absent" : expectedStagingHash;
+            string stateHash = step >= 3 ? expectedStateHash : previousStateHash;
+            return String.Equals(actualDestinationHash, destinationHash, StringComparison.Ordinal) &&
+                String.Equals(actualPreviousHash, previousHash, StringComparison.Ordinal) &&
+                String.Equals(actualStagingHash, stagingHash, StringComparison.Ordinal) &&
+                String.Equals(actualStateHash, stateHash, StringComparison.Ordinal);
         }
 
         private static bool IsValidJournal(Dictionary<string, object> journal, LaunchReceipt receipt,

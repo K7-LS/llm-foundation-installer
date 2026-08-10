@@ -414,12 +414,10 @@ namespace Foundation.ManagedLauncher
                     Console.Error.WriteLine("BLOCKED_SESSION_RECOVERY");
                     return BlockedRecoveryExitCode;
                 }
-                UpdaterResult updaterResult = RunUpdater(receipt, startTick, deadlineTick);
+                RunUpdater(receipt, startTick, deadlineTick);
                 bool hasRecoveryJournal = SessionRecovery.HasActiveJournal(userProfile, receipt.Target);
-                if ((updaterResult == UpdaterResult.UpdaterFailed && (!hasRecoveryJournal ||
-                    !SessionRecovery.TryRecover(userProfile, receipt, deadlineTick))) ||
-                    (updaterResult == UpdaterResult.Success &&
-                        !SessionRecovery.TryRecover(userProfile, receipt, deadlineTick)))
+                if (hasRecoveryJournal &&
+                    !SessionRecovery.TryRecover(userProfile, receipt, deadlineTick))
                 {
                     Console.Error.WriteLine("BLOCKED_SESSION_RECOVERY");
                     return BlockedRecoveryExitCode;

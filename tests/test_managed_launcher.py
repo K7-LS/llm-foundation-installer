@@ -62,6 +62,26 @@ def _build(host: str, output: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _build_fault_injection_launcher(output: Path) -> None:
+    compiler = _find_csharp_compiler()
+    assert compiler is not None, "C# compiler is unavailable"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            str(compiler), "/nologo", "/target:exe", "/platform:anycpu", "/optimize+",
+            "/checked+", "/deterministic+", "/codepage:65001", "/utf8output",
+            "/define:FOUNDATION_RECOVERY_FAULT_INJECTION",
+            f"/out:{output}", "/reference:System.Web.Extensions.dll",
+            str(SOURCE), str(RECOVERY),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def _compile_probe(path: Path, source: str) -> None:
     compiler = _find_csharp_compiler()
     assert compiler is not None, "C# compiler is unavailable"
@@ -129,12 +149,16 @@ def _write_receipt(launcher: Path, updater: Path, vendor: Path, target: str) -> 
 
 def _install_runtime(
     tmp_path: Path, target: str, updater_body: str = "exit 0\n",
+    recovery_fault_injection: bool = False,
 ) -> tuple[Path, Path, dict[str, str]]:
-    host = _powershells()[0]
     build = tmp_path / "build"
-    result = _build(host, build)
-    assert result.returncode == 0, result.stderr
     launcher = build / f"{target}-managed.exe"
+    if recovery_fault_injection:
+        _build_fault_injection_launcher(launcher)
+    else:
+        host = _powershells()[0]
+        result = _build(host, build)
+        assert result.returncode == 0, result.stderr
     updater = tmp_path / "update-session-tools.ps1"
     updater.write_text(updater_body, encoding="utf-8")
     vendor = tmp_path / "vendor.exe"
@@ -142,12 +166,16 @@ def _install_runtime(
         vendor,
         r'''
         using System;
+        using System.Diagnostics;
         using System.IO;
         class Vendor
         {
             static int Main(string[] args)
             {
                 File.WriteAllLines(Environment.GetEnvironmentVariable("MANAGED_LAUNCHER_VENDOR_LOG"), args);
+                string tickLog = Environment.GetEnvironmentVariable("MANAGED_LAUNCHER_VENDOR_TICK_LOG");
+                if (!String.IsNullOrEmpty(tickLog))
+                    File.WriteAllText(tickLog, Stopwatch.GetTimestamp().ToString());
                 return 41;
             }
         }
@@ -161,8 +189,12 @@ def _install_runtime(
     return launcher, vendor_log, environment
 
 
-def _staged_journal_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, str], Path, dict]:
-    launcher, vendor_log, environment = _install_runtime(tmp_path, "codex")
+def _staged_journal_fixture(
+    tmp_path: Path, recovery_fault_injection: bool = False,
+) -> tuple[Path, Path, dict[str, str], Path, dict]:
+    launcher, vendor_log, environment = _install_runtime(
+        tmp_path, "codex", recovery_fault_injection=recovery_fault_injection,
+    )
     receipt = launcher.with_suffix(".receipt.json")
     profile = Path(environment["USERPROFILE"])
     state_root = profile / ".llm-foundation" / "state" / "session-tools" / "codex"
@@ -568,9 +600,91 @@ def test_every_supported_journal_transition_recovers_to_a_verified_state(tmp_pat
         assert not previous.exists()
 
 
-def test_job_kills_updater_process_tree_before_hard_deadline(tmp_path: Path) -> None:
-    """A timed-out updater and its child cannot escape the kill-on-close Job Object."""
+@pytest.mark.parametrize(
+    ("has_previous", "phase", "actual_step"),
+    [
+        (False, "move_destination_applied", 1),
+        (False, "move_staging_intent", 2),
+        (True, "move_destination_intent", 1),
+        (True, "move_staging_intent", 2),
+    ],
+)
+def test_recovery_reconciles_move_before_durable_applied(
+    tmp_path: Path, has_previous: bool, phase: str, actual_step: int,
+) -> None:
+    """A kill between a filesystem move and applied must restore the verified old layout."""
+    launcher, vendor_log, environment = _install_runtime(tmp_path, "codex")
+    receipt = launcher.with_suffix(".receipt.json")
+    profile = Path(environment["USERPROFILE"])
+    state_root = profile / ".llm-foundation" / "state" / "session-tools" / "codex"
+    transaction_id = "12345678-1234-1234-1234-123456789abc"
+    transaction_root = state_root / "transactions" / transaction_id
+    staging = transaction_root / "staging"
+    previous = transaction_root / "previous"
+    destination = profile / ".agents" / "skills" / "crash-window"
+    staging.mkdir(parents=True)
+    destination.parent.mkdir(parents=True)
+    (staging / "payload.txt").write_text("new", encoding="utf-8")
+    expected_hash = _fingerprint(staging)
+    previous_hash = "absent"
+    if has_previous:
+        destination.mkdir(parents=True)
+        (destination / "payload.txt").write_text("old", encoding="utf-8")
+        previous_hash = _fingerprint(destination)
+    if actual_step >= 1 and has_previous:
+        destination.rename(previous)
+    if actual_step >= 2:
+        staging.rename(destination)
+
+    phases = [
+        "created", "staged", "move_destination_intent", "move_destination_applied",
+        "move_staging_intent", "move_staging_applied", "state_write_intent",
+        "state_write_applied", "committed",
+    ]
+    transition = max(-1, phases.index(phase) - 2)
+    flags = [index <= transition for index in range(6)]
+    ticks = _stopwatch_contract()
+    journal = state_root / "active-transaction.json"
+    journal.write_text(json.dumps({
+        "schema_version": 1, "target": "codex", "transaction_id": transaction_id,
+        "phase": phase, "receipt_sha256": _sha256(receipt),
+        "start_tick": ticks[0], "mutation_cutoff_tick": ticks[1],
+        "kill_tick": ticks[2], "hard_deadline_tick": ticks[3],
+        "stopwatch_frequency": ticks[4], "previous_destination_sha256": previous_hash,
+        "previous_state_sha256": "absent", "expected_staging_sha256": expected_hash,
+        "expected_destination_sha256": expected_hash, "expected_state_sha256": "absent",
+        "staging_path": str(staging), "previous_path": str(previous),
+        "destination_path": str(destination), "state_path": str(state_root / "state.json"),
+        "operations": {
+            "move_destination_to_previous": {"intent": flags[0], "applied": flags[1]},
+            "move_staging_to_destination": {"intent": flags[2], "applied": flags[3]},
+            "write_state": {"intent": flags[4], "applied": flags[5]},
+        },
+    }), encoding="utf-8")
+
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 41, invocation.stdout + invocation.stderr
+    assert _fingerprint(destination) == previous_hash
+    assert not staging.exists()
+    assert not previous.exists()
+    assert not journal.exists()
+    assert vendor_log.exists()
+
+
+def test_nonzero_updater_without_journal_launches_verified_vendor(tmp_path: Path) -> None:
+    """A pre-mutation updater failure keeps the last verified copy available."""
+    launcher, vendor_log, environment = _install_runtime(tmp_path, "claude", "exit 17\n")
+    invocation = subprocess.run([str(launcher), "safe"], check=False, capture_output=True,
+                                text=True, encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 41, invocation.stdout + invocation.stderr
+    assert vendor_log.read_text(encoding="utf-8").splitlines() == ["safe"]
+
+
+def test_job_kills_updater_tree_then_launches_verified_vendor(tmp_path: Path) -> None:
+    """A pre-mutation timeout kills the updater tree and keeps the verified vendor available."""
     updater_body = r'''
+    [IO.File]::WriteAllLines($env:MANAGED_LAUNCHER_UPDATER_TIMING_LOG, @($args[4], $args[12]))
     $child = $env:MANAGED_LAUNCHER_CHILD_SCRIPT
     $systemPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     Start-Process -FilePath $systemPowerShell -ArgumentList @(
@@ -580,6 +694,8 @@ def test_job_kills_updater_process_tree_before_hard_deadline(tmp_path: Path) -> 
     '''
     launcher, vendor_log, environment = _install_runtime(tmp_path, "claude", updater_body)
     child_marker = tmp_path / "escaped-child.txt"
+    updater_timing_log = tmp_path / "updater-timing.txt"
+    vendor_tick_log = tmp_path / "vendor-tick.txt"
     child_script = tmp_path / "child.ps1"
     child_script.write_text(
         "Start-Sleep -Seconds 27\n[IO.File]::WriteAllText($env:MANAGED_LAUNCHER_CHILD_MARKER, 'escaped')\n",
@@ -587,15 +703,41 @@ def test_job_kills_updater_process_tree_before_hard_deadline(tmp_path: Path) -> 
     )
     environment["MANAGED_LAUNCHER_CHILD_SCRIPT"] = str(child_script)
     environment["MANAGED_LAUNCHER_CHILD_MARKER"] = str(child_marker)
+    environment["MANAGED_LAUNCHER_UPDATER_TIMING_LOG"] = str(updater_timing_log)
+    environment["MANAGED_LAUNCHER_VENDOR_TICK_LOG"] = str(vendor_tick_log)
     started = time.monotonic()
     invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
                                 encoding="utf-8", env=environment, timeout=35)
     elapsed = time.monotonic() - started
-    assert invocation.returncode != 41
-    assert 24 <= elapsed < 30
-    assert not vendor_log.exists()
+    assert invocation.returncode == 41, invocation.stdout + invocation.stderr
+    launcher_start_tick, frequency = map(
+        int, updater_timing_log.read_text(encoding="utf-8-sig").splitlines(),
+    )
+    vendor_tick = int(vendor_tick_log.read_text(encoding="utf-8"))
+    launcher_elapsed = (vendor_tick - launcher_start_tick) / frequency
+    assert 24 <= launcher_elapsed < 30
+    assert elapsed < 33
+    assert vendor_log.exists()
     time.sleep(4)
     assert not child_marker.exists()
+
+
+def test_hung_recovery_is_bounded_by_shared_hard_deadline(tmp_path: Path) -> None:
+    """A stuck filesystem recovery cannot delay the block beyond the launcher's 30-second budget."""
+    launcher, vendor_log, environment, journal, value = _staged_journal_fixture(
+        tmp_path, recovery_fault_injection=True,
+    )
+    journal.write_text(json.dumps(value), encoding="utf-8")
+    environment["FOUNDATION_RECOVERY_FAULT_DELAY_MS"] = "60000"
+    started = time.monotonic()
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=35)
+    elapsed = time.monotonic() - started
+    assert invocation.returncode == 70, invocation.stdout + invocation.stderr
+    assert "BLOCKED_SESSION_RECOVERY" in invocation.stderr
+    assert 29 <= elapsed < 32
+    assert journal.exists()
+    assert not vendor_log.exists()
 
 
 def test_reparse_staging_path_blocks_and_preserves_neighbor(tmp_path: Path) -> None:
