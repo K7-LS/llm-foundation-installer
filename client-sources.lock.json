@@ -133,6 +133,34 @@
       "store_identity": null,
       "store_publisher": null,
       "store_signature_kind": null
+    },
+    {
+      "id": "officecli",
+      "target": "shared",
+      "display_name": "OfficeCLI",
+      "role": "shared-tool",
+      "required_for_base": true,
+      "required_for_employee": true,
+      "version": "1.0.143",
+      "source_kind": "download",
+      "url": "https://github.com/iOfficeAI/OfficeCLI/releases/download/v1.0.143/officecli-win-x64.exe",
+      "sha256": "d4d4c10fced307e209744cf98a56b003a6e613424fd651b08469274704afd2c6",
+      "artifact_kind": "portable-exe",
+      "archive_entry": null,
+      "publisher": null,
+      "signature_required": false,
+      "install_mode": "foundation-shared",
+      "detect_commands": [
+        "officecli.exe"
+      ],
+      "version_arguments": [
+        "--version"
+      ],
+      "store_identity": null,
+      "store_publisher": null,
+      "store_signature_kind": null,
+      "version_pattern": "\\A(?:officecli[ \\t]+)?v?(?<version>(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*))\\z",
+      "license": "Apache-2.0"
     }
   ]
 }
