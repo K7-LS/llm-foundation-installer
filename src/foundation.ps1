@@ -4,6 +4,8 @@ param(
     [ValidateSet('plan', 'install', 'doctor', 'inventory', 'rollback')]
     [string]$Command,
     [string]$Package,
+    [string]$ReleaseManifest,
+    [string]$ReleaseManifestSha256,
     [Parameter(Mandatory = $true)]
     [Alias('Home')]
     [string]$TargetHome,
@@ -120,6 +122,13 @@ function Read-JsonFile {
     $Bytes = [IO.File]::ReadAllBytes($Item.FullName)
     try {
         $Text = (New-Object Text.UTF8Encoding($false, $true)).GetString($Bytes)
+        $JsonCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
+        if ($JsonCommand.Parameters.ContainsKey('DateKind')) {
+            return ConvertFrom-Json `
+                -InputObject $Text `
+                -DateKind String `
+                -ErrorAction Stop
+        }
         return ConvertFrom-Json -InputObject $Text -ErrorAction Stop
     } catch {
         Throw-Foundation 'INVALID_PACKAGE' "Invalid JSON content: $Path"
@@ -291,10 +300,17 @@ function Assert-SafeDirectory {
 function Resolve-HomePath {
     param(
         [Parameter(Mandatory = $true)][string]$Relative,
-        [Parameter(Mandatory = $true)][string]$HomeRoot
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [switch]$AllowSessionState
     )
+    $IsAllowedSessionState = $AllowSessionState -and
+        $Relative -cmatch (
+            '^\.llm-foundation/state/session-tools/' +
+            '[a-z][a-z0-9-]{1,31}/state\.json$'
+        )
     if (-not (Test-PortablePath $Relative) -or
-        (Test-ProtectedPath $Relative)) {
+        ((Test-ProtectedPath $Relative) -and
+            -not $IsAllowedSessionState)) {
         Throw-Foundation 'UNSAFE_PATH' "Unsafe managed path: $Relative"
     }
     $Root = [IO.Path]::GetFullPath($HomeRoot)
@@ -389,7 +405,10 @@ function Get-MergeTomlFiles {
 }
 
 function Assert-ManagedSurface {
-    param([Parameter(Mandatory = $true)]$Surface)
+    param(
+        [Parameter(Mandatory = $true)]$Surface,
+        [switch]$AllowSessionState
+    )
     if ($null -eq $Surface -or
         $Surface -isnot [Management.Automation.PSCustomObject]) {
         Throw-Foundation 'INVALID_PACKAGE' 'managed surface must be an object'
@@ -407,7 +426,8 @@ function Assert-ManagedSurface {
         }
     }
     Assert-StringArray @($Surface.exact_directories) 'exact directories'
-    Assert-StringArray @($Surface.replace_files) 'replace files'
+    Assert-StringArray @($Surface.replace_files) 'replace files' `
+        -AllowSessionState:$AllowSessionState
     Assert-StringArray @($Surface.preserved_paths) 'preserved paths' -AllowProtected
     $MergeFiles = @(Get-MergeTomlFiles $Surface)
     Assert-StringArray $MergeFiles 'merge TOML files'
@@ -424,6 +444,7 @@ function Assert-StringArray {
         [AllowEmptyCollection()][object[]]$Values,
         [Parameter(Mandatory = $true)][string]$Label,
         [switch]$AllowProtected,
+        [switch]$AllowSessionState,
         [switch]$AllowUnsorted
     )
     $Seen = New-Object 'Collections.Generic.HashSet[string]' (
@@ -444,8 +465,14 @@ function Assert-StringArray {
             ) -ge 0) {
             Throw-Foundation 'INVALID_PACKAGE' "$Label is not sorted"
         }
+        $IsAllowedSessionState = $AllowSessionState -and
+            [string]$Value -cmatch (
+                '^\.llm-foundation/state/session-tools/' +
+                '[a-z][a-z0-9-]{1,31}/state\.json$'
+            )
         if (-not $AllowProtected -and
-            (Test-ProtectedPath ([string]$Value))) {
+            (Test-ProtectedPath ([string]$Value)) -and
+            -not $IsAllowedSessionState) {
             Throw-Foundation 'UNSAFE_PATH' "$Label contains a protected path"
         }
         $Previous = [string]$Value
@@ -483,12 +510,9 @@ function Read-ZipEntryBytes {
     }
 }
 
-function Assert-Manifest {
-    param(
-        [Parameter(Mandatory = $true)]$Manifest,
-        [Parameter(Mandatory = $true)]$EntriesByName
-    )
-    Assert-ExactProperties $Manifest @(
+function Assert-ManifestProperties {
+    param([Parameter(Mandatory = $true)]$Manifest)
+    $Required = @(
         'schema_version',
         'target',
         'version',
@@ -498,7 +522,412 @@ function Assert-Manifest {
         'sync_policy',
         'environment',
         'files'
-    ) 'package manifest'
+    )
+    $Optional = @(
+        'retired_managed_paths',
+        'session_tools_baseline',
+        'shared_tools'
+    )
+    if ($null -eq $Manifest -or
+        $Manifest -isnot [Management.Automation.PSCustomObject]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'package manifest must be an object'
+    }
+    foreach ($Name in @($Manifest.PSObject.Properties.Name)) {
+        if ($Required -cnotcontains [string]$Name -and
+            $Optional -cnotcontains [string]$Name) {
+            Throw-Foundation 'INVALID_PACKAGE' 'package manifest properties differ'
+        }
+    }
+    foreach ($Name in $Required) {
+        if (-not (Test-ObjectProperty $Manifest $Name)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'package manifest properties differ'
+        }
+    }
+}
+
+function Assert-SessionToolRecords {
+    param(
+        [Parameter(Mandatory = $true)]$Tools,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if ($Tools -isnot [Array] -or @($Tools).Count -gt 32) {
+        Throw-Foundation 'INVALID_PACKAGE' "$Label tools are invalid"
+    }
+    $ToolIds = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $PreviousTool = $null
+    $Payloads = @{}
+    [int64]$ExpandedBytes = 0
+    [int]$FileCount = 0
+    $Lines = @()
+    foreach ($Tool in @($Tools)) {
+        Assert-ExactProperties $Tool @('id', 'files') "$Label tool"
+        $ToolId = [string]$Tool.id
+        if ($Tool.id -isnot [string] -or
+            $ToolId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$' -or
+            -not $ToolIds.Add($ToolId) -or
+            ($null -ne $PreviousTool -and
+                [StringComparer]::Ordinal.Compare(
+                    [string]$PreviousTool,
+                    $ToolId
+                ) -ge 0)) {
+            Throw-Foundation 'INVALID_PACKAGE' "$Label tool ids are invalid"
+        }
+        if ($Tool.files -isnot [Array] -or @($Tool.files).Count -eq 0) {
+            Throw-Foundation 'INVALID_PACKAGE' "$Label tool files are invalid"
+        }
+        $FilePaths = New-Object 'Collections.Generic.HashSet[string]' (
+            [StringComparer]::OrdinalIgnoreCase
+        )
+        $PreviousPath = $null
+        $Lines += $ToolId
+        foreach ($Row in @($Tool.files)) {
+            Assert-ExactProperties $Row @('path', 'sha256', 'bytes') (
+                "$Label tool file"
+            )
+            $Path = [string]$Row.path
+            $Extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+            if ($Row.path -isnot [string] -or
+                -not (Test-PortablePath $Path) -or
+                $Extension -cnotin @('.md', '.json', '.yaml', '.yml', '.toml', '.txt') -or
+                -not $FilePaths.Add($Path) -or
+                ($null -ne $PreviousPath -and
+                    [StringComparer]::Ordinal.Compare(
+                        [string]$PreviousPath,
+                        $Path
+                    ) -ge 0) -or
+                $Row.sha256 -isnot [string] -or
+                [string]$Row.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                ($Row.bytes -isnot [int] -and $Row.bytes -isnot [long]) -or
+                [int64]$Row.bytes -lt 0 -or
+                [int64]$Row.bytes -gt 1048576) {
+                Throw-Foundation 'INVALID_PACKAGE' "$Label tool file is invalid"
+            }
+            $FileCount++
+            $ExpandedBytes += [int64]$Row.bytes
+            if ($FileCount -gt 256 -or $ExpandedBytes -gt 8388608) {
+                Throw-Foundation 'INVALID_PACKAGE' "$Label limits are exceeded"
+            }
+            $PayloadPath = (
+                'session-tools-baseline/tools/' + $ToolId + '/' + $Path
+            )
+            $Payloads[$PayloadPath] = [pscustomobject]@{
+                sha256 = [string]$Row.sha256
+                bytes = [int64]$Row.bytes
+            }
+            $Lines += ($Path + "`0" + [string]$Row.sha256 + "`0" +
+                [string][int64]$Row.bytes)
+            $PreviousPath = $Path
+        }
+        $PreviousTool = $ToolId
+    }
+    $Digest = Get-BytesSha256 (
+        (New-Object Text.UTF8Encoding($false)).GetBytes(
+            (($Lines -join "`n") + "`n")
+        )
+    )
+    return [pscustomobject]@{
+        digest = $Digest
+        payloads = $Payloads
+    }
+}
+
+function Assert-SessionToolsBaseline {
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$EntriesByName
+    )
+    $Baseline = $Manifest.session_tools_baseline
+    Assert-ExactProperties $Baseline @(
+        'manifest_path',
+        'manifest_sha256',
+        'tools',
+        'retired_tool_ids'
+    ) 'session tools baseline'
+    if ($Baseline.manifest_path -isnot [string] -or
+        [string]$Baseline.manifest_path -cne
+            'session-tools-baseline/session-tools-manifest.json' -or
+        $Baseline.manifest_sha256 -isnot [string] -or
+        [string]$Baseline.manifest_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        -not $EntriesByName.ContainsKey([string]$Baseline.manifest_path)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline manifest is invalid'
+    }
+    $ManifestBytes = Read-ZipEntryBytes (
+        $EntriesByName[[string]$Baseline.manifest_path]
+    ) 8388608
+    if ((Get-BytesSha256 $ManifestBytes) -cne
+        [string]$Baseline.manifest_sha256) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline manifest hash differs'
+    }
+    try {
+        $Text = (New-Object Text.UTF8Encoding($false, $true)).GetString(
+            $ManifestBytes
+        )
+        $Internal = ConvertFrom-Json -InputObject $Text -ErrorAction Stop
+    } catch {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline manifest JSON is invalid'
+    }
+    Assert-ExactProperties $Internal @(
+        'schema_version',
+        'target',
+        'release_tag',
+        'base_version',
+        'tools'
+    ) 'session tools manifest'
+    if ($Internal.schema_version -ne 1 -or
+        $Internal.target -isnot [string] -or
+        [string]$Internal.target -cne [string]$Manifest.target -or
+        $Internal.base_version -isnot [string] -or
+        [string]$Internal.base_version -cne [string]$Manifest.version -or
+        $Internal.release_tag -isnot [string] -or
+        [string]$Internal.release_tag -cne (
+            [string]$Manifest.target + '-v' + [string]$Manifest.version
+        )) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline identity differs'
+    }
+    $Declared = Assert-SessionToolRecords $Baseline.tools 'baseline'
+    $Embedded = Assert-SessionToolRecords $Internal.tools 'session manifest'
+    if ([string]$Declared.digest -cne [string]$Embedded.digest) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline tools differ'
+    }
+    if ($Baseline.retired_tool_ids -isnot [Array]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Retired session tool ids are invalid'
+    }
+    $Retired = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $PreviousRetired = $null
+    foreach ($ToolIdValue in @($Baseline.retired_tool_ids)) {
+        $ToolId = [string]$ToolIdValue
+        if ($ToolIdValue -isnot [string] -or
+            $ToolId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$' -or
+            -not $Retired.Add($ToolId) -or
+            ($null -ne $PreviousRetired -and
+                [StringComparer]::Ordinal.Compare(
+                    [string]$PreviousRetired,
+                    $ToolId
+                ) -ge 0)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Retired session tool ids are invalid'
+        }
+        $PreviousRetired = $ToolId
+    }
+    foreach ($Tool in @($Baseline.tools)) {
+        if ($Retired.Contains([string]$Tool.id)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Active and retired session tools overlap'
+        }
+    }
+    $Payloads = @{}
+    $Payloads[[string]$Baseline.manifest_path] = [pscustomobject]@{
+        sha256 = [string]$Baseline.manifest_sha256
+        bytes = [int64]$ManifestBytes.Length
+    }
+    foreach ($Path in $Declared.payloads.Keys) {
+        $Payloads[[string]$Path] = $Declared.payloads[$Path]
+    }
+    return [pscustomobject]@{
+        manifest = $Internal
+        manifest_bytes = $ManifestBytes
+        payloads = $Payloads
+    }
+}
+
+function Assert-ProcessEnvironmentRows {
+    param([Parameter(Mandatory = $true)]$Rows)
+    if ($Rows -isnot [Array]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Process environment is invalid'
+    }
+    $Contract = [pscustomobject][ordered]@{
+        scope = 'current-user'
+        set = $Rows
+    }
+    Assert-EnvironmentContract $Contract
+    return $Contract
+}
+
+function Assert-SharedTools {
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$EntriesByName
+    )
+    if ($Manifest.shared_tools -isnot [Array]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Shared tools must be an array'
+    }
+    $Ids = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $PreviousId = $null
+    $Payloads = @{}
+    foreach ($Tool in @($Manifest.shared_tools)) {
+        Assert-ExactProperties $Tool @(
+            'id',
+            'version',
+            'bundle_version',
+            'compatibility_epoch',
+            'minimum_compatible_version',
+            'maximum_exclusive_version',
+            'payload_path',
+            'sha256',
+            'bytes',
+            'install_path',
+            'version_arguments',
+            'version_pattern',
+            'timeout_seconds',
+            'path_entry',
+            'environment',
+            'shim'
+        ) 'shared tool'
+        $Id = [string]$Tool.id
+        if ($Tool.id -isnot [string] -or
+            $Id -cnotmatch '^[a-z][a-z0-9-]{1,63}$' -or
+            -not $Ids.Add($Id) -or
+            ($null -ne $PreviousId -and
+                [StringComparer]::Ordinal.Compare(
+                    [string]$PreviousId,
+                    $Id
+                ) -ge 0)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Shared tool ids are invalid'
+        }
+        foreach ($VersionField in @(
+            'version',
+            'bundle_version',
+            'minimum_compatible_version',
+            'maximum_exclusive_version'
+        )) {
+            if ($Tool.$VersionField -isnot [string] -or
+                [string]$Tool.$VersionField -cnotmatch
+                    '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+                Throw-Foundation 'INVALID_PACKAGE' 'Shared tool version is invalid'
+            }
+        }
+        try {
+            $Version = [version][string]$Tool.version
+            $Minimum = [version][string]$Tool.minimum_compatible_version
+            $Maximum = [version][string]$Tool.maximum_exclusive_version
+        } catch {
+            Throw-Foundation 'INVALID_PACKAGE' 'Shared tool version is invalid'
+        }
+        if ($Version -lt $Minimum -or $Version -ge $Maximum -or
+            $Tool.compatibility_epoch -isnot [string] -or
+            [string]$Tool.compatibility_epoch -cnotmatch
+                '^[a-z][a-z0-9-]{1,63}$' -or
+            $Tool.payload_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Tool.payload_path)) -or
+            $Tool.install_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Tool.install_path)) -or
+            -not ([string]$Tool.install_path).StartsWith(
+                '.llm-foundation/libexec/',
+                [StringComparison]::Ordinal
+            ) -or
+            $Tool.path_entry -isnot [string] -or
+            -not (Test-PortablePath ([string]$Tool.path_entry)) -or
+            [string]$Tool.path_entry -cne '.llm-foundation/bin' -or
+            $Tool.sha256 -isnot [string] -or
+            [string]$Tool.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            ($Tool.bytes -isnot [int] -and $Tool.bytes -isnot [long]) -or
+            [int64]$Tool.bytes -le 0 -or
+            ($Tool.timeout_seconds -isnot [int] -and
+                $Tool.timeout_seconds -isnot [long]) -or
+            [int]$Tool.timeout_seconds -lt 1 -or
+            [int]$Tool.timeout_seconds -gt 60 -or
+            $Tool.version_pattern -isnot [string] -or
+            [string]$Tool.version_pattern -notmatch '\(\?<version>') {
+            Throw-Foundation 'INVALID_PACKAGE' 'Shared tool contract is invalid'
+        }
+        if ($Tool.version_arguments -isnot [Array] -or
+            @($Tool.version_arguments).Count -eq 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Shared tool version arguments are invalid'
+        }
+        foreach ($Argument in @($Tool.version_arguments)) {
+            if ($Argument -isnot [string] -or
+                [string]::IsNullOrWhiteSpace([string]$Argument) -or
+                [string]$Argument -match '[\x00-\x1f\x7f]') {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    'Shared tool version arguments are invalid'
+                )
+            }
+        }
+        Assert-EnvironmentContract $Tool.environment
+        $Shim = $Tool.shim
+        Assert-ExactProperties $Shim @(
+            'schema_version',
+            'payload_path',
+            'sha256',
+            'bytes',
+            'command_path',
+            'policy_payload_path',
+            'policy_install_path',
+            'policy_sha256',
+            'policy_bytes',
+            'process_environment'
+        ) 'shared tool shim'
+        $ProcessEnvironment = Assert-ProcessEnvironmentRows (
+            $Shim.process_environment
+        )
+        if ((Get-EnvironmentContractDigest $Tool.environment) -cne
+            (Get-EnvironmentContractDigest $ProcessEnvironment) -or
+            $Shim.schema_version -ne 1 -or
+            $Shim.payload_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Shim.payload_path)) -or
+            $Shim.command_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Shim.command_path)) -or
+            -not ([string]$Shim.command_path).StartsWith(
+                '.llm-foundation/bin/',
+                [StringComparison]::Ordinal
+            ) -or
+            $Shim.policy_payload_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Shim.policy_payload_path)) -or
+            $Shim.policy_install_path -isnot [string] -or
+            -not (Test-PortablePath ([string]$Shim.policy_install_path)) -or
+            -not ([string]$Shim.policy_install_path).StartsWith(
+                '.llm-foundation/libexec/',
+                [StringComparison]::Ordinal
+            ) -or
+            $Shim.sha256 -isnot [string] -or
+            [string]$Shim.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            $Shim.policy_sha256 -isnot [string] -or
+            [string]$Shim.policy_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            ($Shim.bytes -isnot [int] -and $Shim.bytes -isnot [long]) -or
+            [int64]$Shim.bytes -le 0 -or
+            ($Shim.policy_bytes -isnot [int] -and
+                $Shim.policy_bytes -isnot [long]) -or
+            [int64]$Shim.policy_bytes -le 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Shared tool shim is invalid'
+        }
+        foreach ($Payload in @(
+            [pscustomobject]@{
+                path = [string]$Tool.payload_path
+                sha256 = [string]$Tool.sha256
+                bytes = [int64]$Tool.bytes
+            },
+            [pscustomobject]@{
+                path = [string]$Shim.payload_path
+                sha256 = [string]$Shim.sha256
+                bytes = [int64]$Shim.bytes
+            },
+            [pscustomobject]@{
+                path = [string]$Shim.policy_payload_path
+                sha256 = [string]$Shim.policy_sha256
+                bytes = [int64]$Shim.policy_bytes
+            }
+        )) {
+            if ($Payloads.ContainsKey([string]$Payload.path) -or
+                -not $EntriesByName.ContainsKey([string]$Payload.path)) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Shared tool payload is invalid'
+            }
+            $Payloads[[string]$Payload.path] = $Payload
+        }
+        $PreviousId = $Id
+    }
+    return $Payloads
+}
+
+function Assert-Manifest {
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$EntriesByName
+    )
+    Assert-ManifestProperties $Manifest
     if ($Manifest.schema_version -ne 1 -or
         $Manifest.target -cnotmatch '^[a-z][a-z0-9-]{1,31}$' -or
         $Manifest.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
@@ -590,9 +1019,67 @@ function Assert-Manifest {
     }
     Assert-EnvironmentContract $Manifest.environment
 
+    if (Test-ObjectProperty $Manifest 'retired_managed_paths') {
+        if ($Manifest.retired_managed_paths -isnot [Array]) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Retired managed paths are invalid'
+        }
+        Assert-StringArray @($Manifest.retired_managed_paths) (
+            'retired managed paths'
+        )
+        foreach ($RetiredPath in @($Manifest.retired_managed_paths)) {
+            if (Test-DeclaredPreservedPath (
+                [string]$RetiredPath
+            ) @($Manifest.managed_surface.preserved_paths)) {
+                Throw-Foundation 'UNSAFE_PATH' (
+                    "Retired managed path overlaps preserved path: $RetiredPath"
+                )
+            }
+            foreach ($ManagedPath in $ManagedRoots) {
+                if (([string]$RetiredPath).Equals(
+                        [string]$ManagedPath,
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    ([string]$RetiredPath).StartsWith(
+                        [string]$ManagedPath + '/',
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    ([string]$ManagedPath).StartsWith(
+                        [string]$RetiredPath + '/',
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        "Retired and active managed paths overlap: $RetiredPath"
+                    )
+                }
+            }
+        }
+    }
+
+    $BaselineContract = $null
+    $SupplementalRows = @{}
+    if (Test-ObjectProperty $Manifest 'session_tools_baseline') {
+        $BaselineContract = Assert-SessionToolsBaseline $Manifest $EntriesByName
+        foreach ($Path in $BaselineContract.payloads.Keys) {
+            $SupplementalRows[[string]$Path] = $BaselineContract.payloads[$Path]
+        }
+    }
+    if (Test-ObjectProperty $Manifest 'shared_tools') {
+        $SharedPayloads = Assert-SharedTools $Manifest $EntriesByName
+        foreach ($Path in $SharedPayloads.Keys) {
+            if ($SupplementalRows.ContainsKey([string]$Path)) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Supplemental payload paths overlap'
+            }
+            $SupplementalRows[[string]$Path] = $SharedPayloads[$Path]
+        }
+    }
+
     $FilePaths = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::OrdinalIgnoreCase
     )
+    $BaseFilePaths = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $BaseFileRows = @()
     $Previous = $null
     foreach ($Row in @($Manifest.files)) {
         Assert-ExactProperties $Row @('path', 'sha256', 'bytes') 'file row'
@@ -627,8 +1114,27 @@ function Assert-Manifest {
                 }
             }
         }
-        if (-not $Managed) {
+        $Supplemental = $SupplementalRows.ContainsKey($Path)
+        if (-not $Managed -and -not $Supplemental) {
             Throw-Foundation 'UNSAFE_PATH' "File is outside managed surface: $Path"
+        }
+        if ($Managed -and $Supplemental) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "File cannot be both package and supplemental payload: $Path"
+            )
+        }
+        if ($Supplemental) {
+            $ExpectedSupplemental = $SupplementalRows[$Path]
+            if ([string]$Row.sha256 -cne
+                    [string]$ExpectedSupplemental.sha256 -or
+                [int64]$Row.bytes -ne [int64]$ExpectedSupplemental.bytes) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Supplemental payload row differs: $Path"
+                )
+            }
+        } else {
+            $null = $BaseFilePaths.Add($Path)
+            $BaseFileRows += $Row
         }
         if (-not $EntriesByName.ContainsKey($Path)) {
             Throw-Foundation 'INVALID_PACKAGE' "ZIP entry is missing: $Path"
@@ -648,6 +1154,13 @@ function Assert-Manifest {
         }
         $Previous = $Path
     }
+    foreach ($Path in $SupplementalRows.Keys) {
+        if (-not $FilePaths.Contains([string]$Path)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Supplemental payload has no file row: $Path"
+            )
+        }
+    }
     foreach ($Replace in @($Manifest.managed_surface.replace_files)) {
         if (-not $FilePaths.Contains([string]$Replace)) {
             Throw-Foundation 'INVALID_PACKAGE' (
@@ -664,7 +1177,7 @@ function Assert-Manifest {
     }
     foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
         $Covered = $false
-        foreach ($Path in $FilePaths) {
+        foreach ($Path in $BaseFilePaths) {
             if (([string]$Path).StartsWith(
                 [string]$Root + '/',
                 [StringComparison]::OrdinalIgnoreCase
@@ -693,10 +1206,172 @@ function Assert-Manifest {
             Throw-Foundation 'INVALID_PACKAGE' "Unexpected ZIP entry: $Path"
         }
     }
+    return [pscustomobject]@{
+        base_file_rows = @($BaseFileRows)
+        session_tools_baseline = $BaselineContract
+        supplemental_rows = $SupplementalRows
+    }
+}
+
+function Read-StreamBytesExact {
+    param(
+        [Parameter(Mandatory = $true)][IO.Stream]$Stream,
+        [int64]$MaximumBytes = 8388608
+    )
+    if (-not $Stream.CanRead -or $Stream.Length -le 0 -or
+        $Stream.Length -gt $MaximumBytes -or
+        $Stream.Length -gt [int]::MaxValue) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Release manifest is outside limits'
+    }
+    $Bytes = New-Object byte[] ([int]$Stream.Length)
+    [int]$Offset = 0
+    while ($Offset -lt $Bytes.Length) {
+        $Read = $Stream.Read($Bytes, $Offset, $Bytes.Length - $Offset)
+        if ($Read -le 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Release manifest read is incomplete'
+        }
+        $Offset += $Read
+    }
+    return ,$Bytes
+}
+
+function Assert-ReleaseManifestBinding {
+    param(
+        [Parameter(Mandatory = $true)]$Release,
+        [Parameter(Mandatory = $true)]$PackageManifest,
+        [Parameter(Mandatory = $true)][byte[]]$PackageManifestBytes,
+        [Parameter(Mandatory = $true)][string]$PackageName,
+        [Parameter(Mandatory = $true)][string]$PackageSha256,
+        [Parameter(Mandatory = $true)][int64]$PackageBytes
+    )
+    $Properties = @(
+        'schema_version',
+        'target',
+        'version',
+        'tag',
+        'channel',
+        'client',
+        'foundation_engine_version',
+        'foundation_engine_manifest_sha256',
+        'source',
+        'asset',
+        'package_manifest_sha256',
+        'components_lock_sha256',
+        'requires'
+    )
+    if (Test-ObjectProperty $Release 'session_tools_asset') {
+        $Properties += 'session_tools_asset'
+    }
+    Assert-ExactProperties $Release $Properties 'release manifest'
+    Assert-ExactProperties $Release.client @(
+        'id',
+        'supported_version'
+    ) 'release client'
+    Assert-ExactProperties $Release.asset @(
+        'name',
+        'sha256',
+        'bytes'
+    ) 'release asset'
+    Assert-ExactProperties $Release.source @(
+        'repository',
+        'commit',
+        'tree',
+        'transformation'
+    ) 'release source'
+    Assert-ExactProperties $Release.requires @(
+        'immutable_release',
+        'release_attestation'
+    ) 'release requirements'
+    $ExpectedTag = (
+        [string]$PackageManifest.target + '-v' +
+        [string]$PackageManifest.version
+    )
+    if (($Release.schema_version -isnot [int] -and
+            $Release.schema_version -isnot [long]) -or
+        [int64]$Release.schema_version -ne 1 -or
+        $Release.target -isnot [string] -or
+        [string]$Release.target -cne [string]$PackageManifest.target -or
+        $Release.version -isnot [string] -or
+        [string]$Release.version -cne [string]$PackageManifest.version -or
+        $Release.tag -isnot [string] -or
+        [string]$Release.tag -cne $ExpectedTag -or
+        $Release.channel -isnot [string] -or
+        [string]$Release.channel -cne 'stable' -or
+        $Release.client.id -isnot [string] -or
+        [string]$Release.client.id -cne [string]$PackageManifest.client.id -or
+        $Release.client.supported_version -isnot [string] -or
+        [string]$Release.client.supported_version -cne
+            [string]$PackageManifest.client.supported_version -or
+        $Release.foundation_engine_version -isnot [string] -or
+        [string]$Release.foundation_engine_version -cne
+            [string]$PackageManifest.foundation_engine_version -or
+        $Release.foundation_engine_manifest_sha256 -isnot [string] -or
+        [string]$Release.foundation_engine_manifest_sha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        $Release.package_manifest_sha256 -isnot [string] -or
+        [string]$Release.package_manifest_sha256 -cne
+            (Get-BytesSha256 $PackageManifestBytes) -or
+        $Release.components_lock_sha256 -isnot [string] -or
+        [string]$Release.components_lock_sha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        $Release.asset.name -isnot [string] -or
+        [string]$Release.asset.name -cne $PackageName -or
+        $Release.asset.sha256 -isnot [string] -or
+        [string]$Release.asset.sha256 -cne $PackageSha256 -or
+        ($Release.asset.bytes -isnot [int] -and
+            $Release.asset.bytes -isnot [long]) -or
+        [int64]$Release.asset.bytes -ne $PackageBytes -or
+        $Release.requires.immutable_release -isnot [bool] -or
+        -not [bool]$Release.requires.immutable_release -or
+        $Release.requires.release_attestation -isnot [bool] -or
+        -not [bool]$Release.requires.release_attestation) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Release manifest binding differs'
+    }
+    foreach ($Property in $Release.source.PSObject.Properties) {
+        if ($Property.Value -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$Property.Value)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Release source is invalid'
+        }
+    }
+    if (Test-ObjectProperty $Release 'session_tools_asset') {
+        Assert-ExactProperties $Release.session_tools_asset @(
+            'name',
+            'sha256',
+            'bytes',
+            'manifest_sha256',
+            'tool_count',
+            'file_count'
+        ) 'release session tools asset'
+        $SessionAsset = $Release.session_tools_asset
+        if ($SessionAsset.name -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$SessionAsset.name) -or
+            $SessionAsset.sha256 -isnot [string] -or
+            [string]$SessionAsset.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            $SessionAsset.manifest_sha256 -isnot [string] -or
+            [string]$SessionAsset.manifest_sha256 -cnotmatch
+                '^[0-9a-f]{64}$' -or
+            ($SessionAsset.bytes -isnot [int] -and
+                $SessionAsset.bytes -isnot [long]) -or
+            [int64]$SessionAsset.bytes -le 0 -or
+            ($SessionAsset.tool_count -isnot [int] -and
+                $SessionAsset.tool_count -isnot [long]) -or
+            [int64]$SessionAsset.tool_count -le 0 -or
+            ($SessionAsset.file_count -isnot [int] -and
+                $SessionAsset.file_count -isnot [long]) -or
+            [int64]$SessionAsset.file_count -le 0) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Release session tools asset is invalid'
+            )
+        }
+    }
 }
 
 function Open-ValidatedPackage {
-    param([Parameter(Mandatory = $true)][string]$PackagePath)
+    param(
+        [Parameter(Mandatory = $true)][string]$PackagePath,
+        [string]$ReleaseManifestPath,
+        [string]$ExpectedReleaseManifestSha256
+    )
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Package ZIP is missing'
     }
@@ -712,8 +1387,11 @@ function Open-ValidatedPackage {
             $Item.FullName,
             [IO.FileMode]::Open,
             [IO.FileAccess]::Read,
-            [IO.FileShare]::Read
+            [IO.FileShare]::None
         )
+        $PackageBytes = [int64]$Stream.Length
+        $PackageSha256 = Get-StreamSha256 $Stream
+        $Stream.Position = 0
         $Archive = New-Object IO.Compression.ZipArchive(
             $Stream,
             [IO.Compression.ZipArchiveMode]::Read,
@@ -722,6 +1400,14 @@ function Open-ValidatedPackage {
     } catch {
         if ($null -ne $Archive) { $Archive.Dispose() }
         if ($null -ne $Stream) { $Stream.Dispose() }
+        $Cursor = $_.Exception
+        while ($null -ne $Cursor.InnerException) {
+            $Cursor = $Cursor.InnerException
+        }
+        $NativeError = $Cursor.HResult -band 0xffff
+        if ($NativeError -in @(32, 33)) {
+            Throw-Foundation 'LOCKED' 'Package ZIP is locked by another operation'
+        }
         Throw-Foundation 'INVALID_PACKAGE' 'Package ZIP cannot be opened'
     }
     try {
@@ -760,7 +1446,83 @@ function Open-ValidatedPackage {
         } catch {
             Throw-Foundation 'INVALID_PACKAGE' 'Package manifest JSON is invalid'
         }
-        Assert-Manifest $Manifest $Entries
+        $Contract = Assert-Manifest $Manifest $Entries
+        $ReleaseStream = $null
+        $ReleaseBytes = $null
+        $ReleaseSha256 = $null
+        $HasExplicitRelease = -not [string]::IsNullOrWhiteSpace(
+            $ReleaseManifestPath
+        )
+        if ($null -ne $Contract.session_tools_baseline -or
+            $HasExplicitRelease) {
+            $BoundReleasePath = if ($HasExplicitRelease) {
+                [IO.Path]::GetFullPath($ReleaseManifestPath)
+            } else {
+                [IO.Path]::GetFullPath(
+                    (Join-Path $Item.DirectoryName 'release-manifest.json')
+                )
+            }
+            if ($BoundReleasePath.Equals(
+                    $Item.FullName,
+                    [StringComparison]::OrdinalIgnoreCase
+                ) -or
+                -not (Test-Path -LiteralPath $BoundReleasePath -PathType Leaf)) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    'Release manifest path is invalid'
+                )
+            }
+            $ReleaseItem = Get-Item -LiteralPath $BoundReleasePath -Force
+            if ($ReleaseItem.PSIsContainer -or
+                ($ReleaseItem.Attributes -band
+                    [IO.FileAttributes]::ReparsePoint) -or
+                $ReleaseItem.Length -le 0 -or
+                $ReleaseItem.Length -gt 8388608) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    'Release manifest is outside limits'
+                )
+            }
+            try {
+                $ReleaseStream = [IO.File]::Open(
+                    $ReleaseItem.FullName,
+                    [IO.FileMode]::Open,
+                    [IO.FileAccess]::Read,
+                    [IO.FileShare]::None
+                )
+                $ReleaseBytes = Read-StreamBytesExact $ReleaseStream
+                $ReleaseSha256 = Get-BytesSha256 $ReleaseBytes
+                if ($HasExplicitRelease -and
+                    $ReleaseSha256 -cne
+                        $ExpectedReleaseManifestSha256) {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        'Release manifest hash differs'
+                    )
+                }
+                try {
+                    $ReleaseText = (
+                        New-Object Text.UTF8Encoding($false, $true)
+                    ).GetString($ReleaseBytes)
+                    $ReleaseValue = ConvertFrom-Json -InputObject (
+                        $ReleaseText
+                    ) -ErrorAction Stop
+                } catch {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        'Release manifest JSON is invalid'
+                    )
+                }
+                Assert-ReleaseManifestBinding `
+                    $ReleaseValue `
+                    $Manifest `
+                    $Bytes `
+                    $Item.Name `
+                    $PackageSha256 `
+                    $PackageBytes
+            } catch {
+                if ($null -ne $ReleaseStream) {
+                    $ReleaseStream.Dispose()
+                }
+                throw
+            }
+        }
         return [pscustomobject]@{
             stream = $Stream
             archive = $Archive
@@ -768,8 +1530,16 @@ function Open-ValidatedPackage {
             manifest = $Manifest
             manifest_bytes = $Bytes
             package_path = $Item.FullName
+            package_sha256 = $PackageSha256
+            release_manifest_stream = $ReleaseStream
+            release_manifest_bytes = $ReleaseBytes
+            release_manifest_sha256 = $ReleaseSha256
+            base_file_rows = @($Contract.base_file_rows)
+            session_tools_baseline = $Contract.session_tools_baseline
+            supplemental_rows = $Contract.supplemental_rows
         }
     } catch {
+        if ($null -ne $ReleaseStream) { $ReleaseStream.Dispose() }
         $Archive.Dispose()
         $Stream.Dispose()
         throw
@@ -778,6 +1548,9 @@ function Open-ValidatedPackage {
 
 function Close-ValidatedPackage {
     param($Validated)
+    if ($null -ne $Validated.release_manifest_stream) {
+        $Validated.release_manifest_stream.Dispose()
+    }
     if ($null -ne $Validated.archive) { $Validated.archive.Dispose() }
     if ($null -ne $Validated.stream) { $Validated.stream.Dispose() }
 }
@@ -1158,7 +1931,8 @@ function Assert-RollbackJournal {
         [string]::IsNullOrWhiteSpace([string]$State.snapshot_path)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Rollback journal is invalid'
     }
-    $null = Get-ManagedSurfaceDigest $State.managed_surface
+    $null = Get-ManagedSurfaceDigest `
+        $State.managed_surface -AllowSessionState
     Assert-EnvironmentContract $State.environment
 }
 
@@ -1516,6 +2290,506 @@ function Merge-TomlFileAtomic {
     }
 }
 
+function Get-SessionToolsPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [Parameter(Mandatory = $true)][string]$TargetName,
+        [Parameter(Mandatory = $true)]$ManagedSurface
+    )
+    $ManagedPaths = @(
+        @($ManagedSurface.exact_directories) +
+        @($ManagedSurface.replace_files) +
+        @(Get-MergeTomlFiles $ManagedSurface)
+    )
+    $SkillRoots = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $BaseRoots = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($ManagedPath in $ManagedPaths) {
+        $Normalized = [string]$ManagedPath
+        $SkillMatch = [regex]::Match(
+            $Normalized,
+            '^(.+/skills)(?:/.*)?$',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+        if ($SkillMatch.Success) {
+            $null = $SkillRoots.Add([string]$SkillMatch.Groups[1].Value)
+        }
+        $BaseMatch = [regex]::Match(
+            $Normalized,
+            '^(.+/base)/(?:VERSION|runtime(?:/.*)?)$',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+        if ($BaseMatch.Success) {
+            $null = $BaseRoots.Add([string]$BaseMatch.Groups[1].Value)
+        }
+    }
+    if ($SkillRoots.Count -ne 1 -or $BaseRoots.Count -ne 1) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Session tools roots are missing or ambiguous'
+        )
+    }
+    $TargetRoot = [string]@($SkillRoots)[0]
+    $TargetBase = [string]@($BaseRoots)[0]
+    $RuntimePath = $TargetBase + '/runtime/session-tools-baseline.json'
+    $StateRelative = (
+        '.llm-foundation/state/session-tools/' + $TargetName + '/state.json'
+    )
+    return [pscustomobject]@{
+        target = $TargetName
+        skills_root_relative = $TargetRoot
+        skills_root = Resolve-HomePath $TargetRoot $HomeRoot
+        runtime_relative = $RuntimePath
+        runtime_path = Resolve-HomePath $RuntimePath $HomeRoot
+        state_relative = $StateRelative
+        state_path = Resolve-HomePath `
+            $StateRelative $HomeRoot -AllowSessionState
+    }
+}
+
+function Get-SessionToolDestinationRelative {
+    param(
+        [Parameter(Mandatory = $true)]$Paths,
+        [Parameter(Mandatory = $true)][string]$ToolId
+    )
+    return [string]$Paths.skills_root_relative + '/' + $ToolId
+}
+
+function Assert-SessionToolDestinationFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)]$Files,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [Parameter(Mandatory = $true)][string]$FailureCode
+    )
+    Assert-SafeAncestors $Destination $HomeRoot
+    if (-not (Test-Path -LiteralPath $Destination -PathType Container)) {
+        Throw-Foundation $FailureCode 'Session tool destination is missing'
+    }
+    Assert-SafeDirectory $Destination
+    $Expected = @{}
+    foreach ($Row in @($Files)) {
+        $Relative = [string]$Row.path
+        $Expected[$Relative] = $Row
+        $Path = Join-Path $Destination ($Relative.Replace('/', '\'))
+        Assert-SafeAncestors $Path $HomeRoot
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+            (Get-Item -LiteralPath $Path -Force).Length -ne
+                [int64]$Row.bytes -or
+            (Get-FileSha256 $Path) -cne [string]$Row.sha256) {
+            Throw-Foundation $FailureCode (
+                "Session tool file differs: $Relative"
+            )
+        }
+    }
+    $Actual = @(Get-SafeTreeFiles $Destination)
+    if ($Actual.Count -ne $Expected.Count) {
+        Throw-Foundation $FailureCode 'Session tool destination has extra files'
+    }
+    $Root = [IO.Path]::GetFullPath($Destination)
+    foreach ($File in $Actual) {
+        $Relative = $File.FullName.Substring($Root.Length).
+            TrimStart('\').Replace('\', '/')
+        if (-not $Expected.ContainsKey($Relative)) {
+            Throw-Foundation $FailureCode (
+                "Session tool destination has an extra file: $Relative"
+            )
+        }
+    }
+}
+
+function Assert-SessionToolsState {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [Parameter(Mandatory = $true)][string]$TargetName,
+        [Parameter(Mandatory = $true)]$Paths,
+        [switch]$CheckDestination
+    )
+    Assert-ExactProperties $State @(
+        'schema_version',
+        'target',
+        'release_tag',
+        'release_version',
+        'release_manifest_sha256',
+        'session_manifest_sha256',
+        'verified_at',
+        'tools'
+    ) 'session tools state'
+    if (($State.schema_version -isnot [int] -and
+            $State.schema_version -isnot [long]) -or
+        [int64]$State.schema_version -ne 1 -or
+        $State.target -isnot [string] -or
+        [string]$State.target -cne $TargetName -or
+        $State.release_tag -isnot [string] -or
+        [string]$State.release_tag -cne
+            ($TargetName + '-v' + [string]$State.release_version) -or
+        $State.release_version -isnot [string] -or
+        [string]$State.release_version -cnotmatch
+            '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
+        $State.release_manifest_sha256 -isnot [string] -or
+        [string]$State.release_manifest_sha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        $State.session_manifest_sha256 -isnot [string] -or
+        [string]$State.session_manifest_sha256 -cnotmatch
+            '^[0-9a-f]{64}$' -or
+        $State.verified_at -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$State.verified_at) -or
+        $State.tools -isnot [Array] -or
+        @($State.tools).Count -eq 0) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools state is invalid'
+    }
+    try {
+        $null = [DateTimeOffset]::Parse(
+            [string]$State.verified_at,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        )
+    } catch {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools state time is invalid'
+    }
+    $PreviousTool = $null
+    $Ids = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($Tool in @($State.tools)) {
+        Assert-ExactProperties $Tool @(
+            'id',
+            'destination',
+            'ownership_marker',
+            'files'
+        ) 'session tools state tool'
+        $ToolId = [string]$Tool.id
+        $ExpectedDestination = [IO.Path]::GetFullPath(
+            (Join-Path $Paths.skills_root $ToolId)
+        )
+        if ($Tool.id -isnot [string] -or
+            $ToolId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$' -or
+            -not $Ids.Add($ToolId) -or
+            ($null -ne $PreviousTool -and
+                [StringComparer]::Ordinal.Compare(
+                    [string]$PreviousTool,
+                    $ToolId
+                ) -ge 0) -or
+            $Tool.destination -isnot [string] -or
+            -not ([string]$Tool.destination).Equals(
+                $ExpectedDestination,
+                [StringComparison]::Ordinal
+            ) -or
+            $Tool.ownership_marker -isnot [string] -or
+            [string]$Tool.ownership_marker -cne
+                ('session-tools-v1:' + $TargetName + ':' + $ToolId)) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Session tools state ownership is invalid'
+            )
+        }
+        $StateToolContract = [pscustomobject]@{
+            id = [string]$Tool.id
+            files = @($Tool.files)
+        }
+        $null = Assert-SessionToolRecords (, $StateToolContract) 'state'
+        if ($CheckDestination) {
+            Assert-SessionToolDestinationFiles `
+                $ExpectedDestination `
+                $Tool.files `
+                $HomeRoot `
+                'ACTIVE_DRIFT'
+        }
+        $PreviousTool = $ToolId
+    }
+    return $State
+}
+
+function Get-SessionToolsBaselinePlan {
+    param(
+        [Parameter(Mandatory = $true)]$Validated,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    if ($null -eq $Validated.session_tools_baseline) { return $null }
+    $TargetName = [string]$Validated.manifest.target
+    $Paths = Get-SessionToolsPaths `
+        $HomeRoot $TargetName $Validated.manifest.managed_surface
+    foreach ($Path in @(
+        $Paths.skills_root,
+        $Paths.runtime_path,
+        $Paths.state_path
+    )) {
+        Assert-SafeAncestors $Path $HomeRoot
+    }
+    if (Test-Path -LiteralPath $Paths.state_path -PathType Leaf) {
+        $State = Read-JsonFile $Paths.state_path
+        $null = Assert-SessionToolsState `
+            $State $HomeRoot $TargetName $Paths -CheckDestination
+        return [pscustomobject]@{
+            action = 'PRESERVE'
+            paths = $Paths
+            state = $State
+        }
+    }
+    if (Test-Path -LiteralPath $Paths.state_path) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Session tools state path conflicts'
+    }
+    $Actions = @()
+    foreach ($Tool in @($Validated.session_tools_baseline.manifest.tools)) {
+        $Destination = [IO.Path]::GetFullPath(
+            (Join-Path $Paths.skills_root ([string]$Tool.id))
+        )
+        $Action = 'INSTALL'
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Unmanaged session tool collision: $($Tool.id)"
+            )
+        }
+        if (Test-Path -LiteralPath $Destination -PathType Container) {
+            try {
+                Assert-SessionToolDestinationFiles `
+                    $Destination `
+                    $Tool.files `
+                    $HomeRoot `
+                    'INVALID_PACKAGE'
+                $Action = 'ADOPT'
+            } catch {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Unmanaged session tool collision: $($Tool.id)"
+                )
+            }
+        }
+        $Actions += [pscustomobject]@{
+            id = [string]$Tool.id
+            destination = $Destination
+            action = $Action
+        }
+    }
+    return [pscustomobject]@{
+        action = 'INITIALIZE'
+        paths = $Paths
+        tools = $Actions
+    }
+}
+
+function New-BaselineSessionToolsState {
+    param(
+        [Parameter(Mandatory = $true)]$Validated,
+        [Parameter(Mandatory = $true)]$BaselinePlan
+    )
+    $TargetName = [string]$Validated.manifest.target
+    $Tools = @(
+        foreach ($Tool in @(
+            $Validated.session_tools_baseline.manifest.tools
+        )) {
+            [pscustomobject][ordered]@{
+                id = [string]$Tool.id
+                destination = [IO.Path]::GetFullPath(
+                    (Join-Path $BaselinePlan.paths.skills_root (
+                        [string]$Tool.id
+                    ))
+                )
+                ownership_marker = (
+                    'session-tools-v1:' + $TargetName + ':' +
+                    [string]$Tool.id
+                )
+                files = @($Tool.files)
+            }
+        }
+    )
+    return [pscustomobject][ordered]@{
+        schema_version = 1
+        target = $TargetName
+        release_tag = [string](
+            $Validated.session_tools_baseline.manifest.release_tag
+        )
+        release_version = [string]$Validated.manifest.version
+        release_manifest_sha256 = [string](
+            $Validated.release_manifest_sha256
+        )
+        session_manifest_sha256 = [string](
+            $Validated.manifest.session_tools_baseline.manifest_sha256
+        )
+        verified_at = [DateTimeOffset]::UtcNow.ToString('o')
+        tools = $Tools
+    }
+}
+
+function Install-SessionToolsBaseline {
+    param(
+        [Parameter(Mandatory = $true)]$Validated,
+        [Parameter(Mandatory = $true)]$BaselinePlan,
+        [Parameter(Mandatory = $true)][string]$StagingRoot,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    $ManifestSource = Join-Path $StagingRoot (
+        ([string]$Validated.manifest.session_tools_baseline.manifest_path).
+            Replace('/', '\')
+    )
+    Copy-Atomic `
+        $ManifestSource `
+        $BaselinePlan.paths.runtime_path `
+        $HomeRoot
+    Invoke-MutationCheckpoint
+    if ([string]$BaselinePlan.action -ceq 'INITIALIZE') {
+        foreach ($Action in @($BaselinePlan.tools)) {
+            $Tool = @(
+                $Validated.session_tools_baseline.manifest.tools |
+                    Where-Object { [string]$_.id -ceq [string]$Action.id }
+            )[0]
+            if ([string]$Action.action -ceq 'INSTALL') {
+                New-SafeDirectory $Action.destination $HomeRoot
+                foreach ($Row in @($Tool.files)) {
+                    $PayloadPath = (
+                        'session-tools-baseline/tools/' +
+                        [string]$Tool.id + '/' + [string]$Row.path
+                    )
+                    $Source = Join-Path $StagingRoot (
+                        $PayloadPath.Replace('/', '\')
+                    )
+                    $Destination = Join-Path $Action.destination (
+                        ([string]$Row.path).Replace('/', '\')
+                    )
+                    Copy-Atomic $Source $Destination $HomeRoot
+                    Invoke-MutationCheckpoint
+                }
+            }
+        }
+        $State = New-BaselineSessionToolsState $Validated $BaselinePlan
+        $null = Assert-SessionToolsState `
+            $State `
+            $HomeRoot `
+            ([string]$Validated.manifest.target) `
+            $BaselinePlan.paths `
+            -CheckDestination
+        Write-JsonFile $State $BaselinePlan.paths.state_path
+        Invoke-MutationCheckpoint
+    }
+    return [pscustomobject][ordered]@{
+        path = [string]$BaselinePlan.paths.runtime_relative
+        sha256 = [string](
+            $Validated.manifest.session_tools_baseline.manifest_sha256
+        )
+        bytes = [int64](
+            $Validated.session_tools_baseline.manifest_bytes.Length
+        )
+    }
+}
+
+function Get-RetiredManagedPlan {
+    param(
+        [Parameter(Mandatory = $true)]$Validated,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        $ActiveState
+    )
+    if (-not (Test-ObjectProperty (
+            $Validated.manifest
+        ) 'retired_managed_paths')) {
+        return @()
+    }
+    $Actions = @()
+    foreach ($RetiredValue in @(
+        $Validated.manifest.retired_managed_paths
+    )) {
+        $Retired = [string]$RetiredValue
+        $Destination = Resolve-HomePath $Retired $HomeRoot
+        Assert-SafeAncestors $Destination $HomeRoot
+        if ($null -eq $ActiveState -or
+            -not (Test-Path -LiteralPath $Destination)) {
+            continue
+        }
+        $PreviouslyOwned = [bool](
+            @($ActiveState.managed_surface.replace_files) -ccontains $Retired
+        )
+        if (-not $PreviouslyOwned) {
+            foreach ($Root in @(
+                $ActiveState.managed_surface.exact_directories
+            )) {
+                if ($Retired.Equals(
+                        [string]$Root,
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    $Retired.StartsWith(
+                        [string]$Root + '/',
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                    $PreviouslyOwned = $true
+                    break
+                }
+            }
+        }
+        if (-not $PreviouslyOwned) { continue }
+        $Rows = @(
+            $ActiveState.installed_files | Where-Object {
+                [string]$_.path -ceq $Retired -or
+                ([string]$_.path).StartsWith(
+                    $Retired + '/',
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            }
+        )
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            if ($Rows.Count -ne 1 -or
+                [string]$Rows[0].path -cne $Retired -or
+                (Get-Item -LiteralPath $Destination -Force).Length -ne
+                    [int64]$Rows[0].bytes -or
+                (Get-FileSha256 $Destination) -cne
+                    [string]$Rows[0].sha256) {
+                continue
+            }
+            $Actions += [pscustomobject]@{
+                path = $Retired
+                destination = $Destination
+                kind = 'file'
+            }
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $Destination -PathType Container) -or
+            $Rows.Count -eq 0) {
+            continue
+        }
+        Assert-SafeDirectory $Destination
+        $Expected = @{}
+        $Unchanged = $true
+        foreach ($Row in $Rows) {
+            $Relative = ([string]$Row.path).Substring(
+                $Retired.Length
+            ).TrimStart('/')
+            if ([string]::IsNullOrWhiteSpace($Relative) -or
+                $Expected.ContainsKey($Relative)) {
+                $Unchanged = $false
+                break
+            }
+            $Expected[$Relative] = $Row
+            $FilePath = Join-Path $Destination ($Relative.Replace('/', '\'))
+            if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf) -or
+                (Get-Item -LiteralPath $FilePath -Force).Length -ne
+                    [int64]$Row.bytes -or
+                (Get-FileSha256 $FilePath) -cne [string]$Row.sha256) {
+                $Unchanged = $false
+                break
+            }
+        }
+        if (-not $Unchanged) { continue }
+        $Actual = @(Get-SafeTreeFiles $Destination)
+        if ($Actual.Count -ne $Expected.Count) { continue }
+        $RootPath = [IO.Path]::GetFullPath($Destination)
+        foreach ($File in $Actual) {
+            $Relative = $File.FullName.Substring($RootPath.Length).
+                TrimStart('\').Replace('\', '/')
+            if (-not $Expected.ContainsKey($Relative)) {
+                $Unchanged = $false
+                break
+            }
+        }
+        if ($Unchanged) {
+            $Actions += [pscustomobject]@{
+                path = $Retired
+                destination = $Destination
+                kind = 'directory'
+            }
+        }
+    }
+    return @($Actions)
+}
+
 function New-FoundationPlan {
     param(
         [Parameter(Mandatory = $true)]$Validated,
@@ -1544,6 +2818,8 @@ function New-FoundationPlan {
             )
         }
     }
+    $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
+    $RetiredPlan = @(Get-RetiredManagedPlan $Validated $HomeRoot $Active)
     foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
         $Destination = Resolve-HomePath ([string]$Root) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
@@ -1566,7 +2842,7 @@ function New-FoundationPlan {
         }
     }
     $Rows = @()
-    foreach ($Row in @($Manifest.files)) {
+    foreach ($Row in @($Validated.base_file_rows)) {
         $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
         $Action = 'CREATE'
         if (Test-Path -LiteralPath $Destination -PathType Leaf) {
@@ -1592,6 +2868,14 @@ function New-FoundationPlan {
             bytes = [int64]$Row.bytes
         }
     }
+    $UnknownEntries = @(Get-UnknownEntries $Manifest $HomeRoot)
+    if ($null -ne $BaselinePlan) {
+        $UnknownEntries = @(
+            $UnknownEntries | Where-Object {
+                [string]$_ -cne [string]$BaselinePlan.paths.runtime_relative
+            }
+        )
+    }
     return [pscustomobject][ordered]@{
         status = 'READY'
         target = [string]$Manifest.target
@@ -1601,9 +2885,7 @@ function New-FoundationPlan {
         environment_actions = @(
             Get-EnvironmentActions $Manifest.environment $HomeRoot
         )
-        quarantined_unknown = @(
-            Get-UnknownEntries $Manifest $HomeRoot
-        )
+        quarantined_unknown = $UnknownEntries
     }
 }
 
@@ -1768,8 +3050,11 @@ function Expand-ValidatedPackage {
 }
 
 function Get-ManagedSurfaceDigest {
-    param([Parameter(Mandatory = $true)]$Surface)
-    Assert-ManagedSurface $Surface
+    param(
+        [Parameter(Mandatory = $true)]$Surface,
+        [switch]$AllowSessionState
+    )
+    Assert-ManagedSurface $Surface -AllowSessionState:$AllowSessionState
     $Lines = @()
     foreach ($Section in @(
         'exact_directories',
@@ -1822,7 +3107,9 @@ function New-Snapshot {
         [Parameter(Mandatory = $true)]$Validated,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)]$Paths,
-        [Parameter(Mandatory = $true)]$Plan
+        [Parameter(Mandatory = $true)]$Plan,
+        $BaselinePlan,
+        [AllowEmptyCollection()][object[]]$RetiredPlan = @()
     )
     New-SafeDirectory (Split-Path -Parent $Paths.state_root) $HomeRoot
     New-SafeDirectory $Paths.state_root $HomeRoot
@@ -1835,9 +3122,57 @@ function New-Snapshot {
     New-SafeDirectory $SnapshotRoot $HomeRoot
     $ManagedRoot = Join-Path $SnapshotRoot 'managed'
     [IO.Directory]::CreateDirectory($ManagedRoot) | Out-Null
+    $BaseManagedSurface = $Validated.manifest.managed_surface
+    $SnapshotManagedSurface = $BaseManagedSurface
+    if ($null -ne $BaselinePlan -or @($RetiredPlan).Count -gt 0) {
+        $AdditionalExactDirectories = @(
+            if ($null -ne $BaselinePlan) {
+                foreach ($Tool in @(
+                    $Validated.session_tools_baseline.manifest.tools
+                )) {
+                    Get-SessionToolDestinationRelative `
+                        $BaselinePlan.paths `
+                        ([string]$Tool.id)
+                }
+            }
+            foreach ($Action in @($RetiredPlan)) {
+                if ([string]$Action.kind -ceq 'directory') {
+                    [string]$Action.path
+                }
+            }
+        )
+        $AdditionalReplaceFiles = @(
+            if ($null -ne $BaselinePlan) {
+                [string]$BaselinePlan.paths.state_relative
+            }
+            foreach ($Action in @($RetiredPlan)) {
+                if ([string]$Action.kind -ceq 'file') {
+                    [string]$Action.path
+                }
+            }
+        )
+        $ExactDirectories = @(Sort-OrdinalStrings @(
+            @($BaseManagedSurface.exact_directories) +
+            $AdditionalExactDirectories
+        ))
+        $ReplaceFiles = @(Sort-OrdinalStrings @(
+            @($BaseManagedSurface.replace_files) +
+            $AdditionalReplaceFiles
+        ))
+        $SnapshotManagedSurface = [pscustomobject][ordered]@{
+            exact_directories = $ExactDirectories
+            replace_files = $ReplaceFiles
+            preserved_paths = @($BaseManagedSurface.preserved_paths)
+        }
+        if (Test-ObjectProperty $BaseManagedSurface 'merge_toml_files') {
+            $SnapshotManagedSurface | Add-Member -NotePropertyName (
+                'merge_toml_files'
+            ) -NotePropertyValue @($BaseManagedSurface.merge_toml_files)
+        }
+    }
     $Existed = @()
     foreach ($Root in @(
-        $Validated.manifest.managed_surface.exact_directories
+        $SnapshotManagedSurface.exact_directories
     )) {
         $Source = Resolve-HomePath ([string]$Root) $HomeRoot
         if (Test-Path -LiteralPath $Source -PathType Container) {
@@ -1849,10 +3184,11 @@ function New-Snapshot {
         }
     }
     foreach ($Relative in @(
-        @($Validated.manifest.managed_surface.replace_files) +
-        @(Get-MergeTomlFiles $Validated.manifest.managed_surface)
+        @($SnapshotManagedSurface.replace_files) +
+        @(Get-MergeTomlFiles $SnapshotManagedSurface)
     )) {
-        $Source = Resolve-HomePath ([string]$Relative) $HomeRoot
+        $Source = Resolve-HomePath `
+            ([string]$Relative) $HomeRoot -AllowSessionState
         if (Test-Path -LiteralPath $Source -PathType Leaf) {
             $Destination = Join-Path $ManagedRoot (
                 ([string]$Relative).Replace('/', '\')
@@ -1903,11 +3239,12 @@ function New-Snapshot {
         }
     )
     $Snapshot = [pscustomobject][ordered]@{
-        schema_version = 3
+        schema_version = 4
         snapshot_id = $SnapshotId
         target = [string]$Validated.manifest.target
         release_version = [string]$Validated.manifest.version
-        managed_surface = $Validated.manifest.managed_surface
+        managed_surface = $SnapshotManagedSurface
+        base_managed_surface = $BaseManagedSurface
         environment = $Validated.manifest.environment
         environment_before = $EnvironmentBefore
         existed = @(Sort-OrdinalStrings $Existed)
@@ -1947,7 +3284,7 @@ function Get-ValidatedSnapshot {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot metadata hash differs'
     }
     $Snapshot = Read-JsonFile $SnapshotPath
-    Assert-ExactProperties $Snapshot @(
+    $SnapshotProperties = @(
         'schema_version',
         'snapshot_id',
         'target',
@@ -1959,14 +3296,33 @@ function Get-ValidatedSnapshot {
         'backup_files',
         'prior_active',
         'quarantined_unknown'
-    ) 'snapshot'
-    if ($Snapshot.schema_version -ne 3 -or
+    )
+    if ($Snapshot.schema_version -eq 4) {
+        $SnapshotProperties += 'base_managed_surface'
+    }
+    Assert-ExactProperties $Snapshot $SnapshotProperties 'snapshot'
+    $AllowSessionState = $Snapshot.schema_version -eq 4
+    $ExpectedSurfaceDigest = Get-ManagedSurfaceDigest `
+        $Expected.managed_surface `
+        -AllowSessionState:$AllowSessionState
+    $SnapshotSurfaceMatches = (
+        (Get-ManagedSurfaceDigest `
+            $Snapshot.managed_surface `
+            -AllowSessionState:$AllowSessionState) -ceq
+            $ExpectedSurfaceDigest
+    )
+    if ($Snapshot.schema_version -eq 4) {
+        $SnapshotSurfaceMatches = $SnapshotSurfaceMatches -or (
+            (Get-ManagedSurfaceDigest $Snapshot.base_managed_surface) -ceq
+                $ExpectedSurfaceDigest
+        )
+    }
+    if ($Snapshot.schema_version -notin @(3, 4) -or
         $Snapshot.snapshot_id -notmatch
             '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$' -or
         [string]$Snapshot.target -cne [string]$Paths.target -or
         $Snapshot.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
-        (Get-ManagedSurfaceDigest $Snapshot.managed_surface) -cne
-            (Get-ManagedSurfaceDigest $Expected.managed_surface) -or
+        -not $SnapshotSurfaceMatches -or
         (Get-EnvironmentContractDigest $Snapshot.environment) -cne
             (Get-EnvironmentContractDigest $Expected.environment)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Snapshot metadata is invalid'
@@ -2131,7 +3487,8 @@ function Get-ValidatedSnapshot {
         @($Snapshot.managed_surface.replace_files) +
         @(Get-MergeTomlFiles $Snapshot.managed_surface)
     )) {
-        $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
+        $Destination = Resolve-HomePath `
+            ([string]$Relative) $HomeRoot -AllowSessionState
         Assert-SafeAncestors $Destination $HomeRoot
         if (Test-Path -LiteralPath $Destination -PathType Container) {
             Throw-Foundation 'INVALID_PACKAGE' (
@@ -2222,7 +3579,8 @@ function Restore-Snapshot {
             @($Snapshot.managed_surface.replace_files) +
             @(Get-MergeTomlFiles $Snapshot.managed_surface)
         )) {
-            $Destination = Resolve-HomePath ([string]$Relative) $HomeRoot
+            $Destination = Resolve-HomePath `
+                ([string]$Relative) $HomeRoot -AllowSessionState
             Assert-SafeAncestors $Destination $HomeRoot
             if (Test-Path -LiteralPath $Destination -PathType Leaf) {
                 Remove-Item -LiteralPath $Destination -Force
@@ -2366,23 +3724,35 @@ function Invoke-Install {
     )
     $Plan = New-FoundationPlan $Validated $HomeRoot $ActualClientId `
         $ActualClientVersion
+    $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Validated.manifest.target)
+    $ActiveBeforeInstall = Read-ActiveState $Paths -AllowMissing
+    $RetiredPlan = @(
+        Get-RetiredManagedPlan $Validated $HomeRoot $ActiveBeforeInstall
+    )
     $Staging = $null
     $Snapshot = $null
     $Pending = $null
     try {
         $Staging = Expand-ValidatedPackage $Validated
-        $Snapshot = New-Snapshot $Validated $HomeRoot $Paths $Plan
+        $Snapshot = New-Snapshot `
+            $Validated $HomeRoot $Paths $Plan $BaselinePlan $RetiredPlan
         $Pending = [pscustomobject][ordered]@{
             schema_version = 1
             target = [string]$Validated.manifest.target
             snapshot_path = [string]$Snapshot.metadata_path
             snapshot_sha256 = [string]$Snapshot.metadata_sha256
             release_version = [string]$Validated.manifest.version
-            managed_surface = $Validated.manifest.managed_surface
+            managed_surface = $Snapshot.metadata.managed_surface
             environment = $Validated.manifest.environment
         }
         Write-JsonFile $Pending $Paths.pending
+        if ($env:FOUNDATION_ACCEPTANCE_MODE -ceq '1' -and
+            $env:FOUNDATION_HOLD_AFTER_SNAPSHOT_MS -match '^[0-9]+$') {
+            Start-Sleep -Milliseconds (
+                [int]$env:FOUNDATION_HOLD_AFTER_SNAPSHOT_MS
+            )
+        }
         foreach ($Root in @(
             $Validated.manifest.managed_surface.exact_directories
         )) {
@@ -2391,7 +3761,7 @@ function Invoke-Install {
             New-SafeDirectory $Destination $HomeRoot
             Invoke-MutationCheckpoint
         }
-        foreach ($Row in @($Validated.manifest.files)) {
+        foreach ($Row in @($Validated.base_file_rows)) {
             $Source = Join-Path $Staging (
                 ([string]$Row.path).Replace('/', '\')
             )
@@ -2405,9 +3775,25 @@ function Invoke-Install {
             }
             Invoke-MutationCheckpoint
         }
+        foreach ($Action in $RetiredPlan) {
+            if ([string]$Action.kind -ceq 'directory') {
+                Remove-TreeSafe $Action.destination $HomeRoot
+            } elseif (Test-Path -LiteralPath $Action.destination -PathType Leaf) {
+                Remove-Item -LiteralPath $Action.destination -Force
+            }
+            Invoke-MutationCheckpoint
+        }
+        $BaselineInstalledRow = $null
+        if ($null -ne $BaselinePlan) {
+            $BaselineInstalledRow = Install-SessionToolsBaseline `
+                $Validated `
+                $BaselinePlan `
+                $Staging `
+                $HomeRoot
+        }
         Apply-EnvironmentContract $Validated.manifest.environment $HomeRoot
         $Installed = @(
-            foreach ($Row in @($Validated.manifest.files)) {
+            foreach ($Row in @($Validated.base_file_rows)) {
                 $InstalledPath = Resolve-HomePath ([string]$Row.path) $HomeRoot
                 $IsMerge = @(Get-MergeTomlFiles (
                     $Validated.manifest.managed_surface
@@ -2426,6 +3812,9 @@ function Invoke-Install {
                     }
                 }
             }
+            if ($null -ne $BaselineInstalledRow) {
+                $BaselineInstalledRow
+            }
         )
         $State = [pscustomobject][ordered]@{
             schema_version = 1
@@ -2433,7 +3822,7 @@ function Invoke-Install {
             release_version = [string]$Validated.manifest.version
             client = $Validated.manifest.client
             foundation_engine_version = [string]$Validated.manifest.foundation_engine_version
-            package_sha256 = Get-FileSha256 $Validated.package_path
+            package_sha256 = [string]$Validated.package_sha256
             managed_surface = $Validated.manifest.managed_surface
             environment = $Validated.manifest.environment
             installed_files = $Installed
@@ -2488,8 +3877,25 @@ function Invoke-Doctor {
         )
     }
     $State = Read-ActiveState $Paths
-    return Test-InstalledState $State $HomeRoot $ActualClientId `
+    $Health = Test-InstalledState $State $HomeRoot $ActualClientId `
         $ActualClientVersion
+    $SessionPaths = Get-SessionToolsPaths `
+        $HomeRoot $TargetName $State.managed_surface
+    $SessionStateExists = Test-Path -LiteralPath (
+        $SessionPaths.state_path
+    ) -PathType Leaf
+    $SessionStateRequired = @($State.installed_files).path -ccontains (
+        [string]$SessionPaths.runtime_relative
+    )
+    if ($SessionStateRequired -and -not $SessionStateExists) {
+        Throw-Foundation 'ACTIVE_DRIFT' 'Session tools state is missing'
+    }
+    if ($SessionStateExists) {
+        $SessionState = Read-JsonFile $SessionPaths.state_path
+        $null = Assert-SessionToolsState `
+            $SessionState $HomeRoot $TargetName $SessionPaths -CheckDestination
+    }
+    return $Health
 }
 
 function Invoke-Inventory {
@@ -2544,6 +3950,17 @@ $OperationLock = $null
 try {
     $TargetHome = [IO.Path]::GetFullPath($TargetHome)
     Assert-SafeDirectory $TargetHome
+    $HasReleaseManifest = -not [string]::IsNullOrWhiteSpace($ReleaseManifest)
+    $HasReleaseManifestSha256 = -not [string]::IsNullOrWhiteSpace(
+        $ReleaseManifestSha256
+    )
+    if ($HasReleaseManifest -ne $HasReleaseManifestSha256 -or
+        ($HasReleaseManifestSha256 -and
+            $ReleaseManifestSha256 -cnotmatch '^[0-9a-f]{64}$')) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Release manifest arguments must be an exact pair'
+        )
+    }
     if ($Command -in @('plan', 'install') -and
         [string]::IsNullOrWhiteSpace($Package)) {
         Throw-Foundation 'INVALID_ARGUMENT' 'Package is required'
@@ -2553,7 +3970,10 @@ try {
         Throw-Foundation 'INVALID_ARGUMENT' 'Target is required'
     }
     if (-not [string]::IsNullOrWhiteSpace($Package)) {
-        $Validated = Open-ValidatedPackage $Package
+        $Validated = Open-ValidatedPackage `
+            $Package `
+            $ReleaseManifest `
+            $ReleaseManifestSha256
         if (-not [string]::IsNullOrWhiteSpace($Target) -and
             $Target -cne [string]$Validated.manifest.target) {
             Throw-Foundation 'INVALID_ARGUMENT' 'Target differs from package'
