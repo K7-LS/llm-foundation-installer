@@ -521,9 +521,22 @@ Foundation проверяет bytes и SHA-256 до записи.
 `offline` и существующие пять команд. Старый `$sync-base`:
 
 1. проверяет immutable target release;
-2. извлекает из ZIP новый Foundation engine;
-3. передаёт этому engine весь ZIP;
-4. новый engine читает optional `shared_tools` и встроенный OfficeCLI payload.
+2. сохраняет проверенный `release-manifest.json` рядом с target ZIP во временном
+   каталоге;
+3. извлекает из ZIP новый Foundation engine;
+4. передаёт этому engine весь ZIP;
+5. новый engine читает optional `shared_tools` и встроенный OfficeCLI payload.
+
+Foundation vNext принимает optional `-ReleaseManifest` и
+`-ReleaseManifestSha256`. Новый `$sync-base` передаёт оба значения явно. Для
+первого bootstrap старым `$sync-base`, когда параметры отсутствуют, Foundation
+читает только exact sibling `release-manifest.json` рядом с `-Package`.
+Foundation строго проверяет schema, target/tag/version/client binding,
+asset name/size/SHA против фактического ZIP и `package_manifest_sha256` против
+встроенного package manifest. В session-tools state записывать SHA-256 exact
+release-manifest bytes. Отсутствующий, неоднозначный или несвязанный sibling
+manifest блокирует создание baseline state; не подменять его package-manifest
+hash.
 
 Не выполнять сетевое скачивание из Foundation. Это сохраняет один-command
 bootstrap для уже установленной native base без обновления старого sync script.
