@@ -395,6 +395,81 @@ def test_unknown_recovery_phase_blocks_without_deleting_transaction_data(tmp_pat
     assert not vendor_log.exists()
 
 
+def test_created_journal_recovers_before_staging_directory_exists(tmp_path: Path) -> None:
+    """Created binds the future verified hash before any transaction-owned directory exists."""
+    launcher, vendor_log, environment, journal, value = _staged_journal_fixture(tmp_path)
+    staging = Path(value["staging_path"])
+    future_staging_hash = value["expected_staging_sha256"]
+    shutil.rmtree(staging)
+    value["phase"] = "created"
+    assert future_staging_hash == value["expected_destination_sha256"]
+    assert not staging.exists()
+    journal.write_text(json.dumps(value), encoding="utf-8")
+
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 41, invocation.stdout + invocation.stderr
+    assert not journal.exists()
+    assert not staging.exists()
+    assert not Path(value["previous_path"]).exists()
+    assert not Path(value["destination_path"]).exists()
+    assert vendor_log.exists()
+
+
+def test_created_journal_discards_partial_transaction_staging(tmp_path: Path) -> None:
+    """Created may own a partial staging tree whose fingerprint is not final yet."""
+    launcher, vendor_log, environment, journal, value = _staged_journal_fixture(tmp_path)
+    staging = Path(value["staging_path"])
+    shutil.rmtree(staging)
+    staging.mkdir()
+    (staging / "partial.tmp").write_text("interrupted population", encoding="utf-8")
+    value["phase"] = "created"
+    assert _fingerprint(staging) not in {"absent", value["expected_staging_sha256"]}
+    journal.write_text(json.dumps(value), encoding="utf-8")
+
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 41, invocation.stdout + invocation.stderr
+    assert not journal.exists()
+    assert not staging.exists()
+    assert not Path(value["previous_path"]).exists()
+    assert not Path(value["destination_path"]).exists()
+    assert vendor_log.exists()
+
+
+def test_created_partial_staging_with_nested_reparse_blocks_and_preserves_neighbor(
+    tmp_path: Path,
+) -> None:
+    """Created cleanup must not traverse a reparse point nested in partial staging."""
+    launcher, vendor_log, environment, journal, value = _staged_journal_fixture(tmp_path)
+    staging = Path(value["staging_path"])
+    shutil.rmtree(staging)
+    staging.mkdir()
+    neighbor = tmp_path / "created-neighbor"
+    neighbor.mkdir()
+    nested = staging / "redirect"
+    try:
+        os.symlink(neighbor, nested, target_is_directory=True)
+    except OSError:
+        junction = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(nested), str(neighbor)],
+            check=False, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert junction.returncode == 0, junction.stdout + junction.stderr
+    value["phase"] = "created"
+    journal.write_text(json.dumps(value), encoding="utf-8")
+
+    invocation = subprocess.run([str(launcher)], check=False, capture_output=True, text=True,
+                                encoding="utf-8", env=environment, timeout=10)
+    assert invocation.returncode == 70, invocation.stdout + invocation.stderr
+    assert "BLOCKED_SESSION_RECOVERY" in invocation.stderr
+    assert neighbor.is_dir()
+    assert list(neighbor.iterdir()) == []
+    assert journal.exists()
+    assert staging.exists()
+    assert not vendor_log.exists()
+
+
 def test_transaction_staging_cannot_alias_an_existing_managed_skill(tmp_path: Path) -> None:
     """A journal may not delete a managed skill by naming it as transaction staging."""
     launcher, vendor_log, environment = _install_runtime(tmp_path, "codex")

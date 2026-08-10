@@ -105,7 +105,7 @@ namespace Foundation.ManagedLauncher
             int actualStep = -1;
             for (int candidate = maximumStep; candidate >= durableStep; candidate--)
             {
-                if (LayoutMatches(candidate, actualDestinationHash, actualPreviousHash,
+                if (LayoutMatches(candidate, phase, actualDestinationHash, actualPreviousHash,
                     actualStagingHash, actualStateHash, previousDestinationHash,
                     expectedStagingHash, expectedDestinationHash, previousStateHash,
                     expectedStateHash))
@@ -142,7 +142,7 @@ namespace Foundation.ManagedLauncher
             return true;
         }
 
-        private static bool LayoutMatches(int step, string actualDestinationHash,
+        private static bool LayoutMatches(int step, string phase, string actualDestinationHash,
             string actualPreviousHash, string actualStagingHash, string actualStateHash,
             string previousDestinationHash, string expectedStagingHash,
             string expectedDestinationHash, string previousStateHash, string expectedStateHash)
@@ -151,10 +151,13 @@ namespace Foundation.ManagedLauncher
                 step >= 1 ? "absent" : previousDestinationHash;
             string previousHash = step >= 1 ? previousDestinationHash : "absent";
             string stagingHash = step >= 2 ? "absent" : expectedStagingHash;
+            bool stagingMatches = (step == 0 &&
+                String.Equals(phase, "created", StringComparison.Ordinal)) ||
+                String.Equals(actualStagingHash, stagingHash, StringComparison.Ordinal);
             string stateHash = step >= 3 ? expectedStateHash : previousStateHash;
             return String.Equals(actualDestinationHash, destinationHash, StringComparison.Ordinal) &&
                 String.Equals(actualPreviousHash, previousHash, StringComparison.Ordinal) &&
-                String.Equals(actualStagingHash, stagingHash, StringComparison.Ordinal) &&
+                stagingMatches &&
                 String.Equals(actualStateHash, stateHash, StringComparison.Ordinal);
         }
 
@@ -289,8 +292,9 @@ namespace Foundation.ManagedLauncher
 
         private static string Fingerprint(string path)
         {
+            if (HasReparseAtOrAbove(path) || HasReparseInTree(path))
+                throw new InvalidOperationException("reparse path");
             if (!File.Exists(path) && !Directory.Exists(path)) { return "absent"; }
-            if (HasReparseAtOrAbove(path)) { throw new InvalidOperationException("reparse path"); }
             if (File.Exists(path)) { return LaunchReceipt.Sha256(path); }
             StringBuilder canonical = new StringBuilder();
             foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories)
@@ -326,6 +330,8 @@ namespace Foundation.ManagedLauncher
         private static void DeleteEntry(string path, long deadline)
         {
             CheckDeadline(deadline);
+            if (HasReparseAtOrAbove(path) || HasReparseInTree(path))
+                throw new InvalidOperationException("reparse path");
             if (Directory.Exists(path)) Directory.Delete(path, true);
             else if (File.Exists(path)) File.Delete(path);
             CheckDeadline(deadline);
@@ -384,6 +390,30 @@ namespace Foundation.ManagedLauncher
                 if (current.Exists && (current.Attributes & FileAttributes.ReparsePoint) != 0) return true;
                 DirectoryInfo directory = current as DirectoryInfo;
                 current = directory != null ? directory.Parent : ((FileInfo)current).Directory;
+            }
+            return false;
+        }
+
+        private static bool HasReparseInTree(string candidate)
+        {
+            FileAttributes candidateAttributes;
+            try { candidateAttributes = File.GetAttributes(candidate); }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
+            if ((candidateAttributes & FileAttributes.ReparsePoint) != 0) return true;
+            if ((candidateAttributes & FileAttributes.Directory) == 0) return false;
+
+            Stack<string> pending = new Stack<string>();
+            pending.Push(candidate);
+            while (pending.Count > 0)
+            {
+                string directory = pending.Pop();
+                foreach (string entry in Directory.GetFileSystemEntries(directory))
+                {
+                    FileAttributes attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) return true;
+                    if ((attributes & FileAttributes.Directory) != 0) pending.Push(entry);
+                }
             }
             return false;
         }
