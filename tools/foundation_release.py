@@ -219,7 +219,7 @@ def prepare_foundation_release(
     evidence_path.write_bytes(evidence_source.read_bytes())
     engine_records = {
         name: _record(engine_root / name)
-        for name in ENGINE_FILES
+        for name in CORE_ENGINE_FILES
     }
     manifest: dict[str, Any] = {
         "schema_version": 1,
