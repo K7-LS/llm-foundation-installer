@@ -1,0 +1,33 @@
+name: Attest release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attest
+        required: true
+        type: string
+
+jobs:
+  attest-release-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download immutable release assets
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+      - name: Require at least one release asset
+        run: test -n "$(find release-assets -maxdepth 1 -type f -print -quit)"
+      - name: Generate build provenance attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: release-assets/*
