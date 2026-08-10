@@ -17,7 +17,7 @@ REPOSITORY_URL = (
     "https://github.com/daniileliseev1337/llm-foundation-installer"
 )
 REPOSITORY = "daniileliseev1337/llm-foundation-installer"
-ENGINE_FILES = (
+CORE_ENGINE_FILES = (
     "VERSION",
     "engine-manifest.json",
     "foundation.ps1",
@@ -71,13 +71,16 @@ def _valid_hex(value: object, length: int) -> bool:
 def _engine_tree(engine_root: Path) -> dict[str, str]:
     if not engine_root.is_dir() or engine_root.is_symlink():
         raise ValueError("Foundation engine root is unsafe")
-    children = sorted(engine_root.iterdir(), key=lambda item: item.name)
-    if (
-        tuple(path.name for path in children) != ENGINE_FILES
-        or any(not path.is_file() or path.is_symlink() for path in children)
+    paths = sorted(engine_root.rglob("*"), key=lambda item: item.as_posix())
+    files = [path for path in paths if path.is_file()]
+    if any(path.is_symlink() for path in paths) or not all(
+        (engine_root / name).is_file() for name in CORE_ENGINE_FILES
     ):
         raise ValueError("Foundation engine inventory differs")
-    return {path.name: _sha256(path.read_bytes()) for path in children}
+    return {
+        path.relative_to(engine_root).as_posix(): _sha256(path.read_bytes())
+        for path in files
+    }
 
 
 def _validate_engine_contract(engine_root: Path) -> None:
@@ -171,7 +174,7 @@ def _zip_engine(engine_root: Path, destination: Path) -> None:
         compression=zipfile.ZIP_DEFLATED,
         compresslevel=9,
     ) as archive:
-        for name in ENGINE_FILES:
+        for name in sorted(_engine_tree(engine_root)):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3

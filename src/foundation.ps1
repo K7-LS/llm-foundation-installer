@@ -545,6 +545,61 @@ function Assert-ManifestProperties {
     }
 }
 
+function Get-SessionToolsRelativePaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetName,
+        [Parameter(Mandatory = $true)]$ManagedSurface
+    )
+    $ManagedPaths = @(
+        @($ManagedSurface.exact_directories) +
+        @($ManagedSurface.replace_files) +
+        @(Get-MergeTomlFiles $ManagedSurface)
+    )
+    $SkillRoots = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $BaseRoots = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($ManagedPath in $ManagedPaths) {
+        $Normalized = [string]$ManagedPath
+        $SkillMatch = [regex]::Match(
+            $Normalized,
+            '^(.+/skills)(?:/.*)?$',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+        if ($SkillMatch.Success) {
+            $null = $SkillRoots.Add([string]$SkillMatch.Groups[1].Value)
+        }
+        $BaseMatch = [regex]::Match(
+            $Normalized,
+            '^(.+/base)/(?:VERSION|runtime(?:/.*)?)$',
+            [Text.RegularExpressions.RegexOptions]::CultureInvariant
+        )
+        if ($BaseMatch.Success) {
+            $null = $BaseRoots.Add([string]$BaseMatch.Groups[1].Value)
+        }
+    }
+    if ($SkillRoots.Count -ne 1 -or $BaseRoots.Count -ne 1) {
+        Throw-Foundation 'INVALID_PACKAGE' (
+            'Session tools roots are missing or ambiguous'
+        )
+    }
+    $TargetRoot = [string]@($SkillRoots)[0]
+    $TargetBase = [string]@($BaseRoots)[0]
+    return [pscustomobject]@{
+        target = $TargetName
+        skills_root_relative = $TargetRoot
+        runtime_relative = (
+            $TargetBase + '/runtime/session-tools-baseline.json'
+        )
+        state_relative = (
+            '.llm-foundation/state/session-tools/' +
+            $TargetName + '/state.json'
+        )
+    }
+}
+
 function Assert-SessionToolRecords {
     param(
         [Parameter(Mandatory = $true)]$Tools,
@@ -1059,6 +1114,34 @@ function Assert-Manifest {
     $SupplementalRows = @{}
     if (Test-ObjectProperty $Manifest 'session_tools_baseline') {
         $BaselineContract = Assert-SessionToolsBaseline $Manifest $EntriesByName
+        $SessionPaths = Get-SessionToolsRelativePaths `
+            ([string]$Manifest.target) `
+            $Manifest.managed_surface
+        foreach ($Tool in @($BaselineContract.manifest.tools)) {
+            $SessionDestination = (
+                [string]$SessionPaths.skills_root_relative + '/' +
+                [string]$Tool.id
+            )
+            foreach ($ManagedPathValue in $ManagedRoots) {
+                $ManagedPath = [string]$ManagedPathValue
+                if ($SessionDestination.Equals(
+                        $ManagedPath,
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    $SessionDestination.StartsWith(
+                        $ManagedPath + '/',
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    $ManagedPath.StartsWith(
+                        $SessionDestination + '/',
+                        [StringComparison]::OrdinalIgnoreCase
+                    )) {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        'Session and package managed destinations overlap'
+                    )
+                }
+            }
+        }
         foreach ($Path in $BaselineContract.payloads.Keys) {
             $SupplementalRows[[string]$Path] = $BaselineContract.payloads[$Path]
         }
@@ -1210,6 +1293,10 @@ function Assert-Manifest {
         base_file_rows = @($BaseFileRows)
         session_tools_baseline = $BaselineContract
         supplemental_rows = $SupplementalRows
+        requires_release_manifest = [bool](
+            $null -ne $BaselineContract -or
+            (Test-ObjectProperty $Manifest 'shared_tools')
+        )
     }
 }
 
@@ -1453,7 +1540,7 @@ function Open-ValidatedPackage {
         $HasExplicitRelease = -not [string]::IsNullOrWhiteSpace(
             $ReleaseManifestPath
         )
-        if ($null -ne $Contract.session_tools_baseline -or
+        if ([bool]$Contract.requires_release_manifest -or
             $HasExplicitRelease) {
             $BoundReleasePath = if ($HasExplicitRelease) {
                 [IO.Path]::GetFullPath($ReleaseManifestPath)
@@ -2296,56 +2383,18 @@ function Get-SessionToolsPaths {
         [Parameter(Mandatory = $true)][string]$TargetName,
         [Parameter(Mandatory = $true)]$ManagedSurface
     )
-    $ManagedPaths = @(
-        @($ManagedSurface.exact_directories) +
-        @($ManagedSurface.replace_files) +
-        @(Get-MergeTomlFiles $ManagedSurface)
-    )
-    $SkillRoots = New-Object 'Collections.Generic.HashSet[string]' (
-        [StringComparer]::OrdinalIgnoreCase
-    )
-    $BaseRoots = New-Object 'Collections.Generic.HashSet[string]' (
-        [StringComparer]::OrdinalIgnoreCase
-    )
-    foreach ($ManagedPath in $ManagedPaths) {
-        $Normalized = [string]$ManagedPath
-        $SkillMatch = [regex]::Match(
-            $Normalized,
-            '^(.+/skills)(?:/.*)?$',
-            [Text.RegularExpressions.RegexOptions]::CultureInvariant
-        )
-        if ($SkillMatch.Success) {
-            $null = $SkillRoots.Add([string]$SkillMatch.Groups[1].Value)
-        }
-        $BaseMatch = [regex]::Match(
-            $Normalized,
-            '^(.+/base)/(?:VERSION|runtime(?:/.*)?)$',
-            [Text.RegularExpressions.RegexOptions]::CultureInvariant
-        )
-        if ($BaseMatch.Success) {
-            $null = $BaseRoots.Add([string]$BaseMatch.Groups[1].Value)
-        }
-    }
-    if ($SkillRoots.Count -ne 1 -or $BaseRoots.Count -ne 1) {
-        Throw-Foundation 'INVALID_PACKAGE' (
-            'Session tools roots are missing or ambiguous'
-        )
-    }
-    $TargetRoot = [string]@($SkillRoots)[0]
-    $TargetBase = [string]@($BaseRoots)[0]
-    $RuntimePath = $TargetBase + '/runtime/session-tools-baseline.json'
-    $StateRelative = (
-        '.llm-foundation/state/session-tools/' + $TargetName + '/state.json'
-    )
+    $Relative = Get-SessionToolsRelativePaths $TargetName $ManagedSurface
     return [pscustomobject]@{
         target = $TargetName
-        skills_root_relative = $TargetRoot
-        skills_root = Resolve-HomePath $TargetRoot $HomeRoot
-        runtime_relative = $RuntimePath
-        runtime_path = Resolve-HomePath $RuntimePath $HomeRoot
-        state_relative = $StateRelative
+        skills_root_relative = [string]$Relative.skills_root_relative
+        skills_root = Resolve-HomePath `
+            ([string]$Relative.skills_root_relative) $HomeRoot
+        runtime_relative = [string]$Relative.runtime_relative
+        runtime_path = Resolve-HomePath `
+            ([string]$Relative.runtime_relative) $HomeRoot
+        state_relative = [string]$Relative.state_relative
         state_path = Resolve-HomePath `
-            $StateRelative $HomeRoot -AllowSessionState
+            ([string]$Relative.state_relative) $HomeRoot -AllowSessionState
     }
 }
 
@@ -3715,6 +3764,176 @@ function Test-InstalledState {
     }
 }
 
+function Get-BundledOfficeCliContract {
+    $LockPath = Join-Path $PSScriptRoot 'shared-tools.lock.json'
+    if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) { return $null }
+    try {
+        $Lock = Get-Content -LiteralPath $LockPath -Raw -Encoding UTF8 |
+            ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Throw-Foundation 'INVALID_PACKAGE' 'Shared tools lock is invalid'
+    }
+    $Tools = @($Lock.tools)
+    if ([int]$Lock.schema_version -ne 1 -or $Tools.Count -ne 1 -or
+        [string]$Tools[0].id -cne 'officecli' -or
+        [string]$Tools[0].version -notmatch '^\d+\.\d+\.\d+$') {
+        Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI bundle contract differs'
+    }
+    foreach ($Record in @(
+        $Tools[0].private_exe,
+        $Tools[0].shim,
+        $Tools[0].policy
+    )) {
+        if ([string]$Record.path -notmatch '^shared-tools/officecli/[A-Za-z0-9._-]+$' -or
+            [string]$Record.sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [int64]$Record.bytes -le 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI bundle record differs'
+        }
+        $Source = Join-Path $PSScriptRoot (
+            ([string]$Record.path).Replace('/', '\')
+        )
+        if (-not (Test-Path -LiteralPath $Source -PathType Leaf) -or
+            (Get-FileSha256 $Source) -cne [string]$Record.sha256 -or
+            (Get-Item -LiteralPath $Source).Length -ne [int64]$Record.bytes) {
+            Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI bundle bytes differ'
+        }
+    }
+    return $Tools[0]
+}
+
+function Add-FoundationUserPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    Assert-SafeAncestors $Directory $HomeRoot
+    $UserPath = [Environment]::GetEnvironmentVariable(
+        'Path', [EnvironmentVariableTarget]::User
+    )
+    $Parts = @(
+        ([string]$UserPath).Split(';') |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if (-not @($Parts | Where-Object {
+        ([IO.Path]::GetFullPath($_)).Equals(
+            [IO.Path]::GetFullPath($Directory),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    })) {
+        $NewPath = (@($Parts) + $Directory) -join ';'
+        [Environment]::SetEnvironmentVariable(
+            'Path', $NewPath, [EnvironmentVariableTarget]::User
+        )
+    }
+    $ProcessParts = @(
+        ([string]$env:Path).Split(';') |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if (-not @($ProcessParts | Where-Object {
+        ([IO.Path]::GetFullPath($_)).Equals(
+            [IO.Path]::GetFullPath($Directory),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    })) {
+        $env:Path = (@($ProcessParts) + $Directory) -join ';'
+    }
+}
+
+function Install-BundledOfficeCli {
+    param([Parameter(Mandatory = $true)][string]$HomeRoot)
+    $Tool = Get-BundledOfficeCliContract
+    if ($null -eq $Tool) { return }
+    $PrivateDestination = Resolve-HomePath (
+        '.llm-foundation/libexec/officecli/officecli.exe'
+    ) $HomeRoot
+    $ShimDestination = Resolve-HomePath (
+        '.llm-foundation/bin/officecli.exe'
+    ) $HomeRoot
+    $PolicyDestination = Resolve-HomePath (
+        '.llm-foundation/libexec/officecli/officecli-command-policy.json'
+    ) $HomeRoot
+    $Pairs = @(
+        @($Tool.private_exe, $PrivateDestination),
+        @($Tool.shim, $ShimDestination),
+        @($Tool.policy, $PolicyDestination)
+    )
+    foreach ($Pair in $Pairs) {
+        $Source = Join-Path $PSScriptRoot (
+            ([string]$Pair[0].path).Replace('/', '\')
+        )
+        Copy-Atomic $Source ([string]$Pair[1]) $HomeRoot
+    }
+    foreach ($Property in @($Tool.environment.psobject.Properties)) {
+        [Environment]::SetEnvironmentVariable(
+            [string]$Property.Name,
+            [string]$Property.Value,
+            [EnvironmentVariableTarget]::User
+        )
+        [Environment]::SetEnvironmentVariable(
+            [string]$Property.Name,
+            [string]$Property.Value,
+            [EnvironmentVariableTarget]::Process
+        )
+    }
+    Add-FoundationUserPath (
+        Resolve-HomePath '.llm-foundation/bin' $HomeRoot
+    ) $HomeRoot
+    $ReceiptPath = Resolve-HomePath (
+        '.llm-foundation/state/shared-tools/officecli/current.json'
+    ) $HomeRoot
+    New-SafeDirectory (Split-Path -Parent $ReceiptPath) $HomeRoot
+    $Receipt = [pscustomobject][ordered]@{
+        schema_version = 1
+        id = 'officecli'
+        version = [string]$Tool.version
+        compatibility_epoch = [string]$Tool.compatibility_epoch
+        files = @(
+            [pscustomobject][ordered]@{
+                path = '.llm-foundation/libexec/officecli/officecli.exe'
+                sha256 = [string]$Tool.private_exe.sha256
+                bytes = [int64]$Tool.private_exe.bytes
+            },
+            [pscustomobject][ordered]@{
+                path = '.llm-foundation/bin/officecli.exe'
+                sha256 = [string]$Tool.shim.sha256
+                bytes = [int64]$Tool.shim.bytes
+            },
+            [pscustomobject][ordered]@{
+                path = '.llm-foundation/libexec/officecli/officecli-command-policy.json'
+                sha256 = [string]$Tool.policy.sha256
+                bytes = [int64]$Tool.policy.bytes
+            }
+        )
+    }
+    Write-JsonFile $Receipt $ReceiptPath
+}
+
+function Test-BundledOfficeCliState {
+    param([Parameter(Mandatory = $true)][string]$HomeRoot)
+    $Tool = Get-BundledOfficeCliContract
+    if ($null -eq $Tool) { return }
+    $ReceiptPath = Resolve-HomePath (
+        '.llm-foundation/state/shared-tools/officecli/current.json'
+    ) $HomeRoot
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt is missing'
+    }
+    $Receipt = Read-JsonFile $ReceiptPath
+    if ([int]$Receipt.schema_version -ne 1 -or
+        [string]$Receipt.id -cne 'officecli' -or
+        [string]$Receipt.version -cne [string]$Tool.version) {
+        Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt differs'
+    }
+    foreach ($Row in @($Receipt.files)) {
+        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
+        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or
+            (Get-FileSha256 $Destination) -cne [string]$Row.sha256 -or
+            (Get-Item -LiteralPath $Destination).Length -ne [int64]$Row.bytes) {
+            Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI managed bytes differ'
+        }
+    }
+}
+
 function Invoke-Install {
     param(
         [Parameter(Mandatory = $true)]$Validated,
@@ -3792,6 +4011,7 @@ function Invoke-Install {
                 $HomeRoot
         }
         Apply-EnvironmentContract $Validated.manifest.environment $HomeRoot
+        Install-BundledOfficeCli $HomeRoot
         $Installed = @(
             foreach ($Row in @($Validated.base_file_rows)) {
                 $InstalledPath = Resolve-HomePath ([string]$Row.path) $HomeRoot
@@ -3895,6 +4115,7 @@ function Invoke-Doctor {
         $null = Assert-SessionToolsState `
             $SessionState $HomeRoot $TargetName $SessionPaths -CheckDestination
     }
+    Test-BundledOfficeCliState $HomeRoot
     return $Health
 }
 

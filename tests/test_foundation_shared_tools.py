@@ -237,6 +237,78 @@ def _legacy_package_with_retired_skill(path: Path) -> Path:
     return package
 
 
+def _rewrite_package(
+    package: Path,
+    mutate,
+) -> Path:
+    with zipfile.ZipFile(package) as archive:
+        entries = {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if name != "package-manifest.json"
+        }
+        manifest = json.loads(archive.read("package-manifest.json"))
+    mutate(manifest, entries)
+    manifest["files"] = [
+        {"path": name, "sha256": _sha256(payload), "bytes": len(payload)}
+        for name, payload in sorted(entries.items())
+    ]
+    with zipfile.ZipFile(package, "w") as archive:
+        for name, payload in entries.items():
+            archive.writestr(name, payload)
+        archive.writestr("package-manifest.json", _json_bytes(manifest))
+    _write_release_manifest(package)
+    return package
+
+
+def _overlap_session_with_package_skill(
+    manifest: dict[str, object],
+    entries: dict[str, bytes],
+) -> None:
+    for name in list(entries):
+        if name.startswith("session-tools-baseline/"):
+            del entries[name]
+    payload = entries[".agents/skills/alpha/SKILL.md"]
+    tool = {
+        "id": "alpha",
+        "files": [
+            {
+                "path": "SKILL.md",
+                "sha256": _sha256(payload),
+                "bytes": len(payload),
+            }
+        ],
+    }
+    internal = {
+        "schema_version": 1,
+        "target": manifest["target"],
+        "release_tag": f"{manifest['target']}-v{manifest['version']}",
+        "base_version": manifest["version"],
+        "tools": [tool],
+    }
+    internal_bytes = _json_bytes(internal)
+    manifest_path = "session-tools-baseline/session-tools-manifest.json"
+    entries[manifest_path] = internal_bytes
+    entries["session-tools-baseline/tools/alpha/SKILL.md"] = payload
+    manifest["session_tools_baseline"] = {
+        "manifest_path": manifest_path,
+        "manifest_sha256": _sha256(internal_bytes),
+        "tools": [tool],
+        "retired_tool_ids": [],
+    }
+
+
+def _remove_session_baseline(
+    manifest: dict[str, object],
+    entries: dict[str, bytes],
+) -> None:
+    manifest.pop("session_tools_baseline")
+    manifest.pop("retired_managed_paths")
+    for name in list(entries):
+        if name.startswith("session-tools-baseline/"):
+            del entries[name]
+
+
 @pytest.mark.parametrize("executable", POWERSHELLS)
 def test_schema_one_accepts_legacy_and_strict_optional_contracts(
     engine_root: Path, tmp_path: Path, executable: str
@@ -702,4 +774,48 @@ def test_optional_contracts_reject_unknown_unsafe_or_unbound_values(
 
     assert result.returncode == 30
     assert _json(result)["code"] in {"INVALID_PACKAGE", "UNSAFE_PATH"}
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_session_destination_cannot_also_be_package_owned(
+    engine_root: Path,
+    tmp_path: Path,
+    executable: str,
+):
+    suffix = Path(executable).stem
+    home = tmp_path / f"overlapping-session-destination-{suffix}"
+    home.mkdir()
+    package = _modern_package(tmp_path / f"overlap-{suffix}.zip")
+    _rewrite_package(package, _overlap_session_with_package_skill)
+
+    result = _run(executable, engine_root, "plan", home, package=package)
+
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INVALID_PACKAGE"
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_shared_tools_require_bound_release_manifest_without_baseline(
+    engine_root: Path,
+    tmp_path: Path,
+    executable: str,
+):
+    suffix = Path(executable).stem
+    home = tmp_path / f"shared-release-binding-{suffix}"
+    home.mkdir()
+    package = _modern_package(
+        tmp_path / f"shared-only-{suffix}.zip",
+        include_shared_tool=True,
+    )
+    _rewrite_package(package, _remove_session_baseline)
+    ready = _run(executable, engine_root, "plan", home, package=package)
+    assert ready.returncode == 0, ready.stderr
+    package.with_name("release-manifest.json").unlink()
+
+    result = _run(executable, engine_root, "plan", home, package=package)
+
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INVALID_PACKAGE"
     assert list(home.iterdir()) == []

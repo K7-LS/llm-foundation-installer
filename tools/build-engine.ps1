@@ -11,12 +11,18 @@ $OutputEncoding = $Utf8NoBom
 $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $VersionPath = Join-Path $RepositoryRoot 'VERSION'
 $SourcePath = Join-Path $RepositoryRoot 'src\foundation.ps1'
+$SourceLockPath = Join-Path $RepositoryRoot 'client-sources.lock.json'
+$ShimBuildPath = Join-Path $RepositoryRoot 'tools\build-officecli-shim.ps1'
+$PolicySourcePath = Join-Path $RepositoryRoot 'support\officecli-command-policy.json'
 
 if (Test-Path -LiteralPath $OutputRoot) {
     throw 'OutputRoot must not exist'
 }
 if (-not (Test-Path -LiteralPath $VersionPath -PathType Leaf) -or
-    -not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+    -not (Test-Path -LiteralPath $SourcePath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $SourceLockPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $ShimBuildPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $PolicySourcePath -PathType Leaf)) {
     throw 'Foundation source is incomplete'
 }
 
@@ -78,6 +84,65 @@ $Manifest = @"
 [IO.File]::WriteAllText(
     (Join-Path $OutputRoot 'engine-manifest.json'),
     $Manifest,
+    $Encoding
+)
+
+$SourceLock = Get-Content -LiteralPath $SourceLockPath -Raw -Encoding UTF8 |
+    ConvertFrom-Json -ErrorAction Stop
+$OfficeCli = @($SourceLock.clients | Where-Object {
+    [string]$_.id -ceq 'officecli'
+})
+if ($OfficeCli.Count -ne 1 -or
+    [string]$OfficeCli[0].sha256 -notmatch '^[0-9a-f]{64}$' -or
+    [string]$OfficeCli[0].version -notmatch '^\d+\.\d+\.\d+$') {
+    throw 'OfficeCLI source record is invalid'
+}
+$SharedRoot = Join-Path $OutputRoot 'shared-tools\officecli'
+[IO.Directory]::CreateDirectory($SharedRoot) | Out-Null
+$PrivatePath = Join-Path $SharedRoot 'officecli.exe'
+Invoke-WebRequest -UseBasicParsing -Uri ([string]$OfficeCli[0].url) -OutFile $PrivatePath
+if ((Get-Sha256 $PrivatePath) -cne [string]$OfficeCli[0].sha256) {
+    throw 'OfficeCLI source hash differs'
+}
+$ShimPath = Join-Path $SharedRoot 'officecli-shim.exe'
+& $ShimBuildPath -OutputPath $ShimPath
+if ($LASTEXITCODE -ne 0) { throw 'OfficeCLI shim build failed' }
+$PolicyPath = Join-Path $SharedRoot 'officecli-command-policy.json'
+[IO.File]::Copy($PolicySourcePath, $PolicyPath, $false)
+
+$SharedLock = [ordered]@{
+    schema_version = 1
+    tools = @(
+        [ordered]@{
+            id = 'officecli'
+            version = [string]$OfficeCli[0].version
+            compatibility_epoch = 'officecli-managed-v1'
+            source_url = [string]$OfficeCli[0].url
+            private_exe = [ordered]@{
+                path = 'shared-tools/officecli/officecli.exe'
+                sha256 = Get-Sha256 $PrivatePath
+                bytes = (Get-Item -LiteralPath $PrivatePath).Length
+            }
+            shim = [ordered]@{
+                path = 'shared-tools/officecli/officecli-shim.exe'
+                sha256 = Get-Sha256 $ShimPath
+                bytes = (Get-Item -LiteralPath $ShimPath).Length
+            }
+            policy = [ordered]@{
+                path = 'shared-tools/officecli/officecli-command-policy.json'
+                sha256 = Get-Sha256 $PolicyPath
+                bytes = (Get-Item -LiteralPath $PolicyPath).Length
+            }
+            environment = [ordered]@{
+                OFFICECLI_NO_AUTO_INSTALL = '1'
+                OFFICECLI_SKIP_UPDATE = '1'
+            }
+        }
+    )
+}
+[IO.File]::WriteAllText(
+    (Join-Path $OutputRoot 'shared-tools.lock.json'),
+    (($SharedLock | ConvertTo-Json -Depth 10) + "`n"),
     $Encoding
 )
 Write-Output "Foundation engine $Version built."
