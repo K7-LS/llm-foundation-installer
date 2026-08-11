@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.5'
+$script:EngineVersion = '0.3.6'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -2688,7 +2688,7 @@ function Get-SessionToolsBaselinePlan {
             $OwnedById[[string]$Owned.id] = $Owned
         }
     }
-    if (Test-Path -LiteralPath $Paths.state_path) {
+    if ($null -eq $State -and (Test-Path -LiteralPath $Paths.state_path)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Session tools state path conflicts'
     }
     $Actions = @()
