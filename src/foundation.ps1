@@ -615,7 +615,7 @@ function Assert-SessionToolRecords {
         [Parameter(Mandatory = $true)]$Tools,
         [Parameter(Mandatory = $true)][string]$Label
     )
-    if ($Tools -isnot [Array] -or @($Tools).Count -gt 32) {
+    if ($Tools -isnot [Array] -or @($Tools).Count -gt 64) {
         Throw-Foundation 'INVALID_PACKAGE' "$Label tools are invalid"
     }
     $ToolIds = New-Object 'Collections.Generic.HashSet[string]' (
@@ -653,9 +653,16 @@ function Assert-SessionToolRecords {
             )
             $Path = [string]$Row.path
             $Extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+            $LeafName = [IO.Path]::GetFileName($Path)
+            $AllowedExtensions = @(
+                '.docx', '.js', '.json', '.lsp', '.md', '.patch', '.ps1',
+                '.py', '.tmpl', '.toml', '.txt', '.xlsx', '.yaml', '.yml'
+            )
+            $AllowedSpecialNames = @('.gitkeep', '.graphify_version')
             if ($Row.path -isnot [string] -or
                 -not (Test-PortablePath $Path) -or
-                $Extension -cnotin @('.md', '.json', '.yaml', '.yml', '.toml', '.txt') -or
+                ($Extension -cnotin $AllowedExtensions -and
+                    $LeafName -cnotin $AllowedSpecialNames) -or
                 -not $FilePaths.Add($Path) -or
                 ($null -ne $PreviousPath -and
                     [StringComparer]::Ordinal.Compare(
@@ -671,7 +678,7 @@ function Assert-SessionToolRecords {
             }
             $FileCount++
             $ExpandedBytes += [int64]$Row.bytes
-            if ($FileCount -gt 256 -or $ExpandedBytes -gt 8388608) {
+            if ($FileCount -gt 512 -or $ExpandedBytes -gt 8388608) {
                 Throw-Foundation 'INVALID_PACKAGE' "$Label limits are exceeded"
             }
             $PayloadPath = (
@@ -2474,7 +2481,7 @@ function Assert-SessionToolsState {
         [Parameter(Mandatory = $true)]$Paths,
         [switch]$CheckDestination
     )
-    Assert-ExactProperties $State @(
+    $StateFields = @(
         'schema_version',
         'target',
         'release_tag',
@@ -2483,10 +2490,16 @@ function Assert-SessionToolsState {
         'session_manifest_sha256',
         'verified_at',
         'tools'
-    ) 'session tools state'
+    )
+    if (($State.schema_version -is [int] -or
+            $State.schema_version -is [long]) -and
+        [int64]$State.schema_version -eq 2) {
+        $StateFields += 'complete'
+    }
+    Assert-ExactProperties $State $StateFields 'session tools state'
     if (($State.schema_version -isnot [int] -and
             $State.schema_version -isnot [long]) -or
-        [int64]$State.schema_version -ne 1 -or
+        [int64]$State.schema_version -notin @(1, 2) -or
         $State.target -isnot [string] -or
         [string]$State.target -cne $TargetName -or
         $State.release_tag -isnot [string] -or
@@ -2503,6 +2516,8 @@ function Assert-SessionToolsState {
             '^[0-9a-f]{64}$' -or
         $State.verified_at -isnot [string] -or
         [string]::IsNullOrWhiteSpace([string]$State.verified_at) -or
+        ([int64]$State.schema_version -eq 2 -and
+            $State.complete -isnot [bool]) -or
         $State.tools -isnot [Array] -or
         @($State.tools).Count -eq 0) {
         Throw-Foundation 'INVALID_PACKAGE' 'Session tools state is invalid'
@@ -2568,10 +2583,58 @@ function Assert-SessionToolsState {
     return $State
 }
 
+function Test-ActiveManagedDirectoryUnchanged {
+    param(
+        [Parameter(Mandatory = $true)][string]$Relative,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        $ActiveState
+    )
+    if ($null -eq $ActiveState -or
+        -not (Test-Path -LiteralPath $Destination -PathType Container) -or
+        @($ActiveState.managed_surface.exact_directories) -cnotcontains
+            $Relative) {
+        return $false
+    }
+    $Rows = @(
+        $ActiveState.installed_files | Where-Object {
+            ([string]$_.path).StartsWith(
+                $Relative + '/',
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        }
+    )
+    if ($Rows.Count -eq 0) { return $false }
+    $Expected = @{}
+    foreach ($Row in $Rows) {
+        $Child = ([string]$Row.path).Substring($Relative.Length).
+            TrimStart('/')
+        if ([string]::IsNullOrWhiteSpace($Child) -or
+            $Expected.ContainsKey($Child)) { return $false }
+        $Expected[$Child] = $Row
+        $FilePath = Join-Path $Destination ($Child.Replace('/', '\'))
+        if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf) -or
+            (Get-Item -LiteralPath $FilePath -Force).Length -ne
+                [int64]$Row.bytes -or
+            (Get-FileSha256 $FilePath) -cne [string]$Row.sha256) {
+            return $false
+        }
+    }
+    $Actual = @(Get-SafeTreeFiles $Destination)
+    if ($Actual.Count -ne $Expected.Count) { return $false }
+    $Root = [IO.Path]::GetFullPath($Destination)
+    foreach ($File in $Actual) {
+        $Child = $File.FullName.Substring($Root.Length).
+            TrimStart('\').Replace('\', '/')
+        if (-not $Expected.ContainsKey($Child)) { return $false }
+    }
+    return $true
+}
+
 function Get-SessionToolsBaselinePlan {
     param(
         [Parameter(Mandatory = $true)]$Validated,
-        [Parameter(Mandatory = $true)][string]$HomeRoot
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        $ActiveState
     )
     if ($null -eq $Validated.session_tools_baseline) { return $null }
     $TargetName = [string]$Validated.manifest.target
@@ -2584,14 +2647,23 @@ function Get-SessionToolsBaselinePlan {
     )) {
         Assert-SafeAncestors $Path $HomeRoot
     }
+    $State = $null
+    $OwnedById = @{}
     if (Test-Path -LiteralPath $Paths.state_path -PathType Leaf) {
         $State = Read-JsonFile $Paths.state_path
         $null = Assert-SessionToolsState `
             $State $HomeRoot $TargetName $Paths -CheckDestination
-        return [pscustomobject]@{
-            action = 'PRESERVE'
-            paths = $Paths
-            state = $State
+        if ([version]([string]$State.release_version) -gt
+            [version]([string]$Validated.manifest.version)) {
+            return [pscustomobject]@{
+                action = 'PRESERVE'
+                paths = $Paths
+                state = $State
+                tools = @()
+            }
+        }
+        foreach ($Owned in @($State.tools)) {
+            $OwnedById[[string]$Owned.id] = $Owned
         }
     }
     if (Test-Path -LiteralPath $Paths.state_path) {
@@ -2602,13 +2674,16 @@ function Get-SessionToolsBaselinePlan {
         $Destination = [IO.Path]::GetFullPath(
             (Join-Path $Paths.skills_root ([string]$Tool.id))
         )
-        $Action = 'INSTALL'
+        $Action = if ($OwnedById.ContainsKey([string]$Tool.id)) {
+            'UPDATE'
+        } else { 'INSTALL' }
         if (Test-Path -LiteralPath $Destination -PathType Leaf) {
             Throw-Foundation 'INVALID_PACKAGE' (
                 "Unmanaged session tool collision: $($Tool.id)"
             )
         }
-        if (Test-Path -LiteralPath $Destination -PathType Container) {
+        if ((Test-Path -LiteralPath $Destination -PathType Container) -and
+            -not $OwnedById.ContainsKey([string]$Tool.id)) {
             try {
                 Assert-SessionToolDestinationFiles `
                     $Destination `
@@ -2617,9 +2692,15 @@ function Get-SessionToolsBaselinePlan {
                     'INVALID_PACKAGE'
                 $Action = 'ADOPT'
             } catch {
-                Throw-Foundation 'INVALID_PACKAGE' (
-                    "Unmanaged session tool collision: $($Tool.id)"
-                )
+                $RelativeDestination = Get-SessionToolDestinationRelative `
+                    $Paths ([string]$Tool.id)
+                if (-not (Test-ActiveManagedDirectoryUnchanged `
+                        $RelativeDestination $Destination $ActiveState)) {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        "Unmanaged session tool collision: $($Tool.id)"
+                    )
+                }
+                $Action = 'UPDATE'
             }
         }
         $Actions += [pscustomobject]@{
@@ -2629,9 +2710,10 @@ function Get-SessionToolsBaselinePlan {
         }
     }
     return [pscustomobject]@{
-        action = 'INITIALIZE'
+        action = if ($null -eq $State) { 'INITIALIZE' } else { 'MIGRATE' }
         paths = $Paths
         tools = $Actions
+        state = $State
     }
 }
 
@@ -2694,13 +2776,18 @@ function Install-SessionToolsBaseline {
         $BaselinePlan.paths.runtime_path `
         $HomeRoot
     Invoke-MutationCheckpoint
-    if ([string]$BaselinePlan.action -ceq 'INITIALIZE') {
+    if ([string]$BaselinePlan.action -cin @('INITIALIZE', 'MIGRATE')) {
         foreach ($Action in @($BaselinePlan.tools)) {
             $Tool = @(
                 $Validated.session_tools_baseline.manifest.tools |
                     Where-Object { [string]$_.id -ceq [string]$Action.id }
             )[0]
-            if ([string]$Action.action -ceq 'INSTALL') {
+            if ([string]$Action.action -cin @('INSTALL', 'UPDATE')) {
+                if ([string]$Action.action -ceq 'UPDATE' -and
+                    (Test-Path -LiteralPath $Action.destination)) {
+                    Remove-TreeSafe $Action.destination $HomeRoot
+                    Invoke-MutationCheckpoint
+                }
                 New-SafeDirectory $Action.destination $HomeRoot
                 foreach ($Row in @($Tool.files)) {
                     $PayloadPath = (
@@ -2884,7 +2971,8 @@ function New-FoundationPlan {
             )
         }
     }
-    $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
+    $BaselinePlan = Get-SessionToolsBaselinePlan `
+        $Validated $HomeRoot $Active
     $RetiredPlan = @(Get-RetiredManagedPlan $Validated $HomeRoot $Active)
     foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
         $Destination = Resolve-HomePath ([string]$Root) $HomeRoot
@@ -3961,9 +4049,10 @@ function Invoke-Install {
     )
     $Plan = New-FoundationPlan $Validated $HomeRoot $ActualClientId `
         $ActualClientVersion
-    $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Validated.manifest.target)
     $ActiveBeforeInstall = Read-ActiveState $Paths -AllowMissing
+    $BaselinePlan = Get-SessionToolsBaselinePlan `
+        $Validated $HomeRoot $ActiveBeforeInstall
     $RetiredPlan = @(
         Get-RetiredManagedPlan $Validated $HomeRoot $ActiveBeforeInstall
     )
