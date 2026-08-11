@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.4'
+$script:EngineVersion = '0.3.5'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -1369,6 +1369,9 @@ function Assert-ReleaseManifestBinding {
     if (Test-ObjectProperty $Release 'acceptance_evidence_sha256') {
         $Properties += 'acceptance_evidence_sha256'
     }
+    if (Test-ObjectProperty $Release 'promoted_from_candidate_manifest_sha256') {
+        $Properties += 'promoted_from_candidate_manifest_sha256'
+    }
     Assert-ExactProperties $Release $Properties 'release manifest'
     Assert-ExactProperties $Release.client @(
         'id',
@@ -1385,10 +1388,14 @@ function Assert-ReleaseManifestBinding {
         'tree',
         'transformation'
     ) 'release source'
-    Assert-ExactProperties $Release.requires @(
+    $RequirementProperties = @(
         'immutable_release',
         'release_attestation'
-    ) 'release requirements'
+    )
+    if (Test-ObjectProperty $Release.requires 'verification_commands') {
+        $RequirementProperties += 'verification_commands'
+    }
+    Assert-ExactProperties $Release.requires $RequirementProperties 'release requirements'
     $ExpectedTag = (
         [string]$PackageManifest.target + '-v' +
         [string]$PackageManifest.version
@@ -1425,6 +1432,10 @@ function Assert-ReleaseManifestBinding {
             ($Release.acceptance_evidence_sha256 -isnot [string] -or
                 [string]$Release.acceptance_evidence_sha256 -cnotmatch
                     '^[0-9a-f]{64}$')) -or
+        ((Test-ObjectProperty $Release 'promoted_from_candidate_manifest_sha256') -and
+            ($Release.promoted_from_candidate_manifest_sha256 -isnot [string] -or
+                [string]$Release.promoted_from_candidate_manifest_sha256 -cnotmatch
+                    '^[0-9a-f]{64}$')) -or
         $Release.asset.name -isnot [string] -or
         [string]$Release.asset.name -cne $PackageName -or
         $Release.asset.sha256 -isnot [string] -or
@@ -1437,6 +1448,17 @@ function Assert-ReleaseManifestBinding {
         $Release.requires.release_attestation -isnot [bool] -or
         -not [bool]$Release.requires.release_attestation) {
         Throw-Foundation 'INVALID_PACKAGE' 'Release manifest binding differs'
+    }
+    if (Test-ObjectProperty $Release.requires 'verification_commands') {
+        $Commands = @($Release.requires.verification_commands)
+        if ($Release.requires.verification_commands -isnot [Array] -or
+            $Commands.Count -ne 2 -or
+            $Commands[0] -isnot [string] -or
+            $Commands[1] -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$Commands[0]) -or
+            [string]::IsNullOrWhiteSpace([string]$Commands[1])) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Release verification commands differ'
+        }
     }
     foreach ($Property in $Release.source.PSObject.Properties) {
         if ($Property.Value -isnot [string] -or
