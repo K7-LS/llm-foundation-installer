@@ -51,6 +51,46 @@ function Get-Sha256 {
     }
 }
 
+function Format-CanonicalJson {
+    param([Parameter(Mandatory = $true)][string]$Json)
+
+    $Builder = New-Object Text.StringBuilder
+    $Indent = 0
+    $InString = $false
+    $Escaped = $false
+    foreach ($Character in $Json.ToCharArray()) {
+        if ($InString) {
+            [void]$Builder.Append($Character)
+            if ($Escaped) {
+                $Escaped = $false
+            } elseif ($Character -eq '\') {
+                $Escaped = $true
+            } elseif ($Character -eq '"') {
+                $InString = $false
+            }
+            continue
+        }
+        if ($Character -eq '"') {
+            $InString = $true
+            [void]$Builder.Append($Character)
+        } elseif ($Character -eq '{' -or $Character -eq '[') {
+            [void]$Builder.Append($Character)
+            $Indent++
+            [void]$Builder.Append("`n" + ('  ' * $Indent))
+        } elseif ($Character -eq '}' -or $Character -eq ']') {
+            $Indent--
+            [void]$Builder.Append("`n" + ('  ' * $Indent) + $Character)
+        } elseif ($Character -eq ',') {
+            [void]$Builder.Append(",`n" + ('  ' * $Indent))
+        } elseif ($Character -eq ':') {
+            [void]$Builder.Append(': ')
+        } elseif (-not [char]::IsWhiteSpace($Character)) {
+            [void]$Builder.Append($Character)
+        }
+    }
+    return $Builder.ToString()
+}
+
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $BundledScript = Join-Path $OutputRoot 'foundation.ps1'
 [IO.File]::Copy($SourcePath, $BundledScript, $false)
@@ -142,7 +182,7 @@ $SharedLock = [ordered]@{
 }
 [IO.File]::WriteAllText(
     (Join-Path $OutputRoot 'shared-tools.lock.json'),
-    (($SharedLock | ConvertTo-Json -Depth 10) + "`n"),
+    ((Format-CanonicalJson ($SharedLock | ConvertTo-Json -Depth 10 -Compress)) + "`n"),
     $Encoding
 )
 Write-Output "Foundation engine $Version built."
