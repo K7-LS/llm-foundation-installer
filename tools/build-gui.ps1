@@ -1326,6 +1326,7 @@ if ($ClientSourcesOfficialOnly) {
         'claude-code',
         'codex-cli',
         'codex-desktop',
+        'officecli',
         'opencode-cli',
         'opencode-desktop'
     )

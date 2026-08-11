@@ -416,6 +416,10 @@ namespace LlmFoundationInstaller
                 start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
                 start.EnvironmentVariables["http_proxy"] = localProxy;
                 start.EnvironmentVariables["https_proxy"] = localProxy;
+                start.EnvironmentVariables["NO_PROXY"] =
+                    "localhost,127.0.0.1,::1";
+                start.EnvironmentVariables["no_proxy"] =
+                    "localhost,127.0.0.1,::1";
                 start.EnvironmentVariables[
                     "LLM_FOUNDATION_CONNECTION_MODE"
                 ] = route;
@@ -444,7 +448,29 @@ namespace LlmFoundationInstaller
                     }
                     else
                     {
-                        client = StartExactTarget(target, start);
+                        if (String.Equals(
+                                target.launch_mode,
+                                "appx",
+                                StringComparison.Ordinal))
+                        {
+                            if (!File.Exists(target.executable_path) ||
+                                !String.Equals(
+                                    BundleIntegrity.Sha256(
+                                        target.executable_path
+                                    ),
+                                    target.sha256,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidOperationException(
+                                    "TARGET_INTEGRITY_CHANGED"
+                                );
+                            }
+                            client = Process.Start(start);
+                        }
+                        else
+                        {
+                            client = StartExactTarget(target, start);
+                        }
                     }
                 }
                 if (client == null)
