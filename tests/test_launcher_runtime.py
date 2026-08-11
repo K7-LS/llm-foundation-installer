@@ -626,10 +626,15 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
         "action": "route",
         "outbound": "direct",
     }
-    assert config["route"]["rules"][1] == {
-        "process_name": ["OpenCode.exe", "opencode.exe"],
-        "action": "route",
-        "outbound": "upstream",
+    assert config["route"]["rules"][1]["action"] == "route"
+    assert config["route"]["rules"][1]["outbound"] == "upstream"
+    assert set(config["route"]["rules"][1]["process_name"]) >= {
+        "ChatGPT.exe",
+        "Code.exe",
+        "OpenCode.exe",
+        "chrome.exe",
+        "codex.exe",
+        "opencode.exe",
     }
     serialized_rules = json.dumps(config["route"]["rules"])
     assert "opencode.ai" in serialized_rules

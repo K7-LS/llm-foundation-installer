@@ -135,16 +135,18 @@ namespace LlmFoundationInstaller
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToList();
-            List<string> processNames;
+            List<string> targetProcessNames;
             if (!routing.process_names.TryGetValue(
                     targetId,
-                    out processNames))
+                    out targetProcessNames) ||
+                targetProcessNames == null)
             {
                 throw new ArgumentException(
                     "Launch target has no reviewed process name set"
                 );
             }
-            processNames = processNames
+            List<string> processNames = routing.process_names
+                .SelectMany(pair => pair.Value)
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToList();

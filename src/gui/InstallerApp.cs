@@ -4730,6 +4730,24 @@ namespace LlmFoundationInstaller
                     Background = EditionTheme.WindowBackground(edition),
                     Content = InstallerView.Create(bundleRoot)
                 };
+                if (edition.product_role == "LaunchCenter")
+                {
+                    string normalTitle = window.Title;
+                    window.Closing += delegate(
+                        object sender,
+                        System.ComponentModel.CancelEventArgs closing
+                    )
+                    {
+                        if (!ClientLauncher.HasActiveRoute())
+                        {
+                            return;
+                        }
+                        closing.Cancel = true;
+                        window.Title = normalTitle +
+                            " — маршрут работает; сначала закройте клиент";
+                        window.WindowState = WindowState.Minimized;
+                    };
+                }
                 application.Run(window);
                 return 0;
             }
