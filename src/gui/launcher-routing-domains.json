@@ -59,6 +59,45 @@
       "oaiusercontent.com",
       "claude.ai",
       "anthropic.com"
+    ],
+    "vscode-codex": [
+      "chatgpt.com",
+      "openai.com",
+      "oaistatic.com",
+      "oaiusercontent.com",
+      "oaistatsig.com",
+      "openaimerge.com"
+    ]
+  },
+  "process_names": {
+    "chrome-browser": [
+      "chrome.exe"
+    ],
+    "codex-cli": [
+      "codex.exe",
+      "node.exe"
+    ],
+    "codex-desktop": [
+      "ChatGPT.exe",
+      "OpenAI.exe",
+      "codex.exe",
+      "codex-code-mode-host.exe"
+    ],
+    "claude-code": [
+      "claude.exe",
+      "node.exe"
+    ],
+    "opencode-cli": [
+      "OpenCode.exe",
+      "node.exe",
+      "opencode.exe"
+    ],
+    "opencode-desktop": [
+      "OpenCode.exe",
+      "opencode.exe"
+    ],
+    "vscode-codex": [
+      "Code.exe"
     ]
   }
 }

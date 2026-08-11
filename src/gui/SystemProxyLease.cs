@@ -567,7 +567,9 @@ namespace LlmFoundationInstaller
             return new List<ProxyRegistryValue>
             {
                 ReadValue(registrySubkey, "ProxyEnable"),
-                ReadValue(registrySubkey, "ProxyServer")
+                ReadValue(registrySubkey, "ProxyServer"),
+                ReadValue(registrySubkey, "ProxyOverride"),
+                ReadValue(registrySubkey, "AutoConfigURL")
             };
         }
 
@@ -591,7 +593,21 @@ namespace LlmFoundationInstaller
                     value = "127.0.0.1:" +
                         localPort.ToString(
                             System.Globalization.CultureInfo.InvariantCulture
-                        ),
+                    ),
+                    kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "ProxyOverride",
+                    exists = true,
+                    value = "localhost;127.*;[::1];<local>",
+                    kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "AutoConfigURL",
+                    exists = false,
+                    value = null,
                     kind = (int)RegistryValueKind.String
                 }
             };

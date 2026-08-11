@@ -621,6 +621,16 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
     }
     assert config["outbounds"][1] == {"tag": "direct", "type": "direct"}
     assert config["route"]["final"] == "direct"
+    assert config["route"]["rules"][0] == {
+        "ip_is_private": True,
+        "action": "route",
+        "outbound": "direct",
+    }
+    assert config["route"]["rules"][1] == {
+        "process_name": ["OpenCode.exe", "opencode.exe"],
+        "action": "route",
+        "outbound": "upstream",
+    }
     serialized_rules = json.dumps(config["route"]["rules"])
     assert "opencode.ai" in serialized_rules
     assert "openai.com" in serialized_rules

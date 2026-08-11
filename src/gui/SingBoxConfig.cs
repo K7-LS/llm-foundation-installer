@@ -14,6 +14,7 @@ namespace LlmFoundationInstaller
         public List<string> exact_domains { get; set; }
         public List<string> common_suffixes { get; set; }
         public Dictionary<string, List<string>> targets { get; set; }
+        public Dictionary<string, List<string>> process_names { get; set; }
     }
 
     internal sealed class SingBoxConfigSummary
@@ -134,6 +135,19 @@ namespace LlmFoundationInstaller
                 .Distinct(StringComparer.Ordinal)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToList();
+            List<string> processNames;
+            if (!routing.process_names.TryGetValue(
+                    targetId,
+                    out processNames))
+            {
+                throw new ArgumentException(
+                    "Launch target has no reviewed process name set"
+                );
+            }
+            processNames = processNames
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToList();
 
             Dictionary<string, object> upstream =
                 new Dictionary<string, object>();
@@ -164,20 +178,33 @@ namespace LlmFoundationInstaller
                     { "ip_is_private", true },
                     { "action", "route" },
                     { "outbound", "direct" }
-                },
+                }
+            };
+            if (processNames.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object>
+                {
+                    { "process_name", processNames },
+                    { "action", "route" },
+                    { "outbound", "upstream" }
+                });
+            }
+            rules.Add(
                 new Dictionary<string, object>
                 {
                     { "domain_suffix", suffixes },
                     { "action", "route" },
                     { "outbound", "upstream" }
-                },
+                }
+            );
+            rules.Add(
                 new Dictionary<string, object>
                 {
                     { "domain", routing.exact_domains },
                     { "action", "route" },
                     { "outbound", "upstream" }
                 }
-            };
+            );
             string finalOutbound = String.Equals(
                     targetId,
                     "chrome-browser",
@@ -282,6 +309,7 @@ namespace LlmFoundationInstaller
                     if (value == null ||
                         value.schema_version != 1 ||
                         value.targets == null ||
+                        value.process_names == null ||
                         value.exact_domains == null ||
                         value.common_suffixes == null)
                     {
