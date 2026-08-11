@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.3'
+$script:EngineVersion = '0.3.4'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
