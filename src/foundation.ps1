@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.2'
+$script:EngineVersion = '0.3.3'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -1359,6 +1359,9 @@ function Assert-ReleaseManifestBinding {
     if (Test-ObjectProperty $Release 'session_tools_asset') {
         $Properties += 'session_tools_asset'
     }
+    if (Test-ObjectProperty $Release 'acceptance_evidence_sha256') {
+        $Properties += 'acceptance_evidence_sha256'
+    }
     Assert-ExactProperties $Release $Properties 'release manifest'
     Assert-ExactProperties $Release.client @(
         'id',
@@ -1411,6 +1414,10 @@ function Assert-ReleaseManifestBinding {
         $Release.components_lock_sha256 -isnot [string] -or
         [string]$Release.components_lock_sha256 -cnotmatch
             '^[0-9a-f]{64}$' -or
+        ((Test-ObjectProperty $Release 'acceptance_evidence_sha256') -and
+            ($Release.acceptance_evidence_sha256 -isnot [string] -or
+                [string]$Release.acceptance_evidence_sha256 -cnotmatch
+                    '^[0-9a-f]{64}$')) -or
         $Release.asset.name -isnot [string] -or
         [string]$Release.asset.name -cne $PackageName -or
         $Release.asset.sha256 -isnot [string] -or
