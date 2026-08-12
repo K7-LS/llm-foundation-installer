@@ -4733,16 +4733,27 @@ function Invoke-Inventory {
             'opencode' { @('.config/opencode/skills', '.config/opencode/agents', '.config/opencode/plugins') }
             default { @() }
         }
+        $TomlRules = if ($TargetName -ceq 'codex') {
+            @([pscustomobject]@{
+                path = '.codex/config.toml'
+                exact_tables = @('mcp_servers', 'plugins', 'plugin_marketplaces')
+                allowed_entries = @()
+                protected_tables = @('auth', 'sessions', 'projects', 'memories', 'credentials')
+            })
+        } else { @() }
         $Synthetic = [pscustomobject]@{
             managed_surface = [pscustomobject]@{ exact_directories = @() }
             files = @()
             desired_state = [pscustomobject]@{
                 inventory_roots = $InventoryRoots
                 platform_owned = @()
-                toml_reconcile = @()
+                toml_reconcile = $TomlRules
             }
         }
-        $Unknown = @(Get-UnknownEntries $Synthetic $HomeRoot)
+        $Unknown = @(Sort-OrdinalStrings @(
+            @(Get-UnknownEntries $Synthetic $HomeRoot) +
+            @(Get-TomlUnknownEntries $Synthetic $HomeRoot)
+        ))
         return [pscustomobject][ordered]@{
             status = 'UNMANAGED_PROFILE'
             target = $TargetName
