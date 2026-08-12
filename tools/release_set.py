@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import os
 from pathlib import Path
 
 REQUIRED = (
@@ -29,7 +30,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate(payload: dict, *, verify_files: bool = True) -> None:
+def validate(payload: dict, *, verify_files: bool = True, base_dir: Path | None = None) -> None:
     if payload.get("schema_version") != 1:
         raise ValueError("release-set schema differs")
     if payload.get("release_set_id") != "K-7":
@@ -51,6 +52,8 @@ def validate(payload: dict, *, verify_files: bool = True) -> None:
         if not isinstance(row.get("bytes"), int) or row["bytes"] <= 0:
             raise ValueError("invalid component size: {}".format(row.get("id")))
         path = Path(str(row.get("path", "")))
+        if not path.is_absolute() and base_dir is not None:
+            path = base_dir / path
         if verify_files and (
             not path.is_file()
             or path.stat().st_size != row["bytes"]
@@ -117,9 +120,16 @@ def main() -> int:
     if args.command == "build":
         payload = build(args.channel, args.component, args.gate)
         args.output.parent.mkdir(parents=True, exist_ok=True)
+        output_root = args.output.resolve().parent
+        for row in payload["components"]:
+            row["path"] = Path(os.path.relpath(row["path"], output_root)).as_posix()
+        validate(payload, base_dir=output_root)
         args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     else:
-        validate(json.loads(args.manifest.read_text(encoding="utf-8")))
+        validate(
+            json.loads(args.manifest.read_text(encoding="utf-8")),
+            base_dir=args.manifest.resolve().parent,
+        )
     return 0
 
 
