@@ -13,6 +13,7 @@ param(
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
     [string]$RuntimeArchive,
+    [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
@@ -149,6 +150,7 @@ function Invoke-ProductBuild {
         @('ProviderEligibilityEvidence', $ProviderEligibilityEvidence),
         @('ClientSourcesLock', $ClientSourcesLock),
         @('RuntimeSourcesLock', $RuntimeSourcesLock),
+        @('OfficeCliBinaryPath', $OfficeCliBinaryPath),
         @('SigningCertificateThumbprint', $SigningCertificateThumbprint),
         @('TimestampServer', $TimestampServer)
     )) {
