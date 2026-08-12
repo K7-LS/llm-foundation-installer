@@ -171,7 +171,7 @@ $SharedLock = [ordered]@{
 }
 [IO.File]::WriteAllText(
     (Join-Path $OutputRoot 'shared-tools.lock.json'),
-    (($SharedLock | ConvertTo-Json -Depth 10) + "`n"),
+    (($SharedLock | ConvertTo-Json -Depth 10 -Compress) + "`n"),
     $Encoding
 )
 Write-Output "Foundation engine $Version built."

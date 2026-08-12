@@ -233,7 +233,7 @@ def test_employee_views_use_exact_k7_visual_contract(view_name: str) -> None:
         "7.62-7.06",
     ):
         assert token in value
-    assert "Claude" not in value
+    assert "Claude" in value
 
 
 @pytest.mark.parametrize(
@@ -263,14 +263,14 @@ def test_owner_views_use_signal_console_contract(view_name: str) -> None:
     assert "Cyberpunk" not in value
 
 
-def test_owner_launch_center_labels_claude_as_owner_only_candidate() -> None:
+def test_owner_launch_center_separates_claude_technical_and_provider_state() -> None:
     value = (
         REPOSITORY / "src" / "gui" / "LaunchCenterOwnerView.xaml"
     ).read_text(encoding="utf-8")
 
-    assert "CLAUDE / ВЛАДЕЛЕЦ" in value
-    assert 'Text="ТОЛЬКО ВЛАДЕЛЬЦУ"' in value
-    assert "Готовность провайдера остаётся NOT_PASS" in value
+    assert "CLAUDE CODE" in value
+    assert 'Text="TECHNICAL READY"' in value
+    assert "PROVIDER_LIVE не подменяется" in value
     assert 'Text="BLOCKED"' not in value
 
 
@@ -308,7 +308,6 @@ def test_all_products_expose_embedded_interactive_operator_dashboard() -> None:
         "03 / БЕЗОПАСНОСТЬ",
         "04 / ВОССТАНОВЛЕНИЕ",
         "distribution_allowed=false",
-        "Codex + OpenCode",
         "Codex + Claude + OpenCode",
     ):
         assert marker in source
@@ -504,7 +503,7 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
         "Инструкция",
     ):
         assert marker in employee
-    assert "Claude" not in employee
+    assert "Claude" in employee
     assert (
         "транспорт не подтверждает право использования сервиса"
         in employee_normalized
@@ -515,9 +514,8 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
         "Claude",
         "OpenCode",
         "distribution_allowed=false",
-        "OWNER_CANDIDATE",
-        "PROVIDER_READY",
-        "FULL_RELEASE_CLAUDE: NOT_PASS",
+        "TECHNICAL_READY",
+        "PROVIDER_LIVE",
         "перераспространение запрещено",
         "build-edition.ps1",
         "RuntimeArchive",
@@ -597,7 +595,7 @@ def test_deterministic_edition_bundle_binds_both_products(
     assert manifest["theme_id"] == "K7Signal"
     assert manifest["distribution_mode"] == "Preview"
     assert manifest["version"] == "0.3.0"
-    assert manifest["targets"] == ["codex", "opencode"]
+    assert manifest["targets"] == ["claude", "codex", "opencode"]
     assert {
         role: value["file"]
         for role, value in manifest["products"].items()

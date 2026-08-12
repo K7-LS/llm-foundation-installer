@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace K7.OfficeCliPdfExporter
 {
@@ -66,6 +67,11 @@ namespace K7.OfficeCliPdfExporter
                 "." + Path.GetFileNameWithoutExtension(target) + ".k7-" +
                 Guid.NewGuid().ToString("N") + ".pdf");
             Dictionary<string, HashSet<int>> officeBefore = SnapshotOffice();
+            Timer watchdog = new Timer(delegate(object state)
+            {
+                try { CleanupOwnedOffice(officeBefore); } catch { }
+                try { Process.GetCurrentProcess().Kill(); } catch { Environment.FailFast("office_export_timeout"); }
+            }, null, TimeSpan.FromSeconds(120), Timeout.InfiniteTimeSpan);
             try
             {
                 Console.Error.WriteLine("heartbeat: office export started");
@@ -99,6 +105,7 @@ namespace K7.OfficeCliPdfExporter
             }
             finally
             {
+                watchdog.Dispose();
                 if (File.Exists(temporary)) File.Delete(temporary);
                 CleanupOwnedOffice(officeBefore);
             }
