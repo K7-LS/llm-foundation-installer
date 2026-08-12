@@ -3950,7 +3950,7 @@ def test_gui_build_rejects_codex_evidence_bound_to_another_release(
     ).lower()
 
 
-def test_owner_preview_marks_claude_candidate_without_provider_evidence(
+def test_owner_preview_keeps_claude_technical_package_without_provider_evidence(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
@@ -3970,11 +3970,11 @@ def test_owner_preview_marks_claude_candidate_without_provider_evidence(
     assert result.returncode == 0, result.stdout + result.stderr
     value = json.loads(result.stdout)
     states = {row["id"]: row["package_state"] for row in value["targets"]}
-    assert states["claude"] == "owner_candidate"
+    assert states["claude"] == "accepted"
     assert value["provider_eligibility"] == "NOT_PROVIDED"
 
 
-def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
+def test_runtime_separates_claude_package_from_tampered_provider_evidence(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
@@ -4024,7 +4024,7 @@ def test_runtime_blocks_claude_when_provider_evidence_is_tampered(
         row["id"]: row["package_state"]
         for row in blocked_payload["targets"]
     }
-    assert blocked_states["claude"] == "owner_candidate"
+    assert blocked_states["claude"] == "accepted"
     assert blocked_payload["provider_eligibility"] == "INVALID_OR_EXPIRED"
     assert blocked_payload["install_enabled"] is False
     assert blocked_payload["reason"] == (
@@ -4066,11 +4066,11 @@ def test_owner_distribution_requires_all_targets(
     ).lower()
 
 
-def test_employee_edition_has_exact_two_target_contract(
+def test_employee_edition_has_exact_three_target_contract(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("codex", "opencode"):
+    for target in ("claude", "codex", "opencode"):
         _accepted_package(package_source, target)
 
     bundle = _build_gui_bundle(
@@ -4086,13 +4086,16 @@ def test_employee_edition_has_exact_two_target_contract(
         (bundle / "client-sources.lock.json").read_text(encoding="utf-8")
     )
     assert manifest["edition_id"] == "Employee"
-    assert manifest["targets"] == ["codex", "opencode"]
+    assert manifest["targets"] == ["claude", "codex", "opencode"]
     assert manifest["employee_distribution_allowed"] is True
     assert manifest["owner_controlled"] is False
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
-    assert manifest["verdicts"]["EMPLOYEE_INSTALLER_INTERNAL"] == "PASS"
-    assert "claude" not in json.dumps(manifest, sort_keys=True).lower()
-    assert "claude" not in json.dumps(source_lock, sort_keys=True).lower()
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["TECHNICAL_READY"] == "PASS"
+    assert manifest["verdicts"]["PROVIDER_LIVE"] == (
+        "BLOCKED_PROVIDER_ELIGIBILITY"
+    )
+    assert manifest["verdicts"]["INTERNAL_UNSIGNED_RELEASE"] == "PASS"
+    assert "claude-code" in json.dumps(source_lock, sort_keys=True).lower()
 
     catalog = subprocess.run(
         [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
@@ -4105,16 +4108,17 @@ def test_employee_edition_has_exact_two_target_contract(
     catalog_value = json.loads(catalog.stdout)
     assert [row["id"] for row in catalog_value["targets"]] == [
         "codex",
+        "claude",
         "opencode",
     ]
     assert catalog_value["install_enabled"] is True
 
 
-def test_employee_edition_rejects_extra_claude_target(
+def test_employee_edition_rejects_missing_claude_target(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "opencode"):
         _accepted_package(package_source, target)
     result = subprocess.run(
         [
@@ -4129,7 +4133,7 @@ def test_employee_edition_rejects_extra_claude_target(
             "-ProductRole",
             "Installer",
             "-OutputRoot",
-            str(tmp_path / "employee-extra"),
+            str(tmp_path / "employee-missing"),
             "-PackageRoot",
             str(package_source),
             "-DistributionMode",
@@ -4164,10 +4168,15 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
     assert manifest["edition_id"] == "Owner"
     assert manifest["targets"] == ["claude", "codex", "opencode"]
     assert manifest["employee_distribution_allowed"] is False
+    assert manifest["internal_distribution_allowed"] is True
     assert manifest["owner_controlled"] is True
-    assert manifest["owner_claude_state"] == "OWNER_CANDIDATE"
-    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "NOT_PASS"
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/3"
+    assert "owner_claude_state" not in manifest
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
+    assert manifest["verdicts"]["TECHNICAL_READY"] == "PASS"
+    assert manifest["verdicts"]["PROVIDER_LIVE"] == (
+        "BLOCKED_PROVIDER_ELIGIBILITY"
+    )
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
 
     catalog = subprocess.run(
         [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
@@ -4184,7 +4193,7 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
     }
     assert states == {
         "codex": "accepted",
-        "claude": "owner_candidate",
+        "claude": "accepted",
         "opencode": "accepted",
     }
     assert catalog_value["install_enabled"] is True
@@ -4206,7 +4215,9 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     candidate_manifest = json.loads(
         (candidate / "bundle-manifest.json").read_text(encoding="utf-8")
     )
-    assert candidate_manifest["owner_claude_state"] == "OWNER_CANDIDATE"
+    assert candidate_manifest["verdicts"]["PROVIDER_LIVE"] == (
+        "BLOCKED_PROVIDER_ELIGIBILITY"
+    )
     assert candidate_manifest["employee_distribution_allowed"] is False
 
     evidence = _provider_eligibility_evidence(
@@ -4227,7 +4238,7 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     assert manifest["employee_distribution_allowed"] is False
     assert manifest["public_distribution_allowed"] is False
     assert manifest["distribution_allowed"] is False
-    assert manifest["owner_claude_state"] == "PROVIDER_READY"
+    assert manifest["verdicts"]["PROVIDER_LIVE"] == "PASS"
     assert manifest["windows_warning_expected"] is True
     assert manifest["foundation_release"]["package_acceptance"] == "PASS"
     assert manifest["foundation_release"]["engine_version"] == (
@@ -4244,12 +4255,14 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
         "engine/engine-manifest.json"
     ] == foundation_acceptance["engine_files"]["engine-manifest.json"]
     assert manifest["verdicts"] == {
-        "FULL_RELEASE_CODEX": "PASS",
         "FULL_RELEASE_CLAUDE": "PASS",
+        "FULL_RELEASE_CODEX": "PASS",
         "FULL_RELEASE_OPENCODE": "PASS",
+        "TECHNICAL_READY": "PASS",
+        "PROVIDER_LIVE": "PASS",
         "PROGRAM_RELEASE": "3/3",
-        "OWNER_INSTALLER_INTERNAL": "OWNER_CANDIDATE",
-        "PUBLIC_SIGNED_RELEASE": "NOT_APPLICABLE",
+        "INTERNAL_UNSIGNED_RELEASE": "PASS",
+        "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
     }
 
     public_signed = subprocess.run(
@@ -5466,30 +5479,27 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
     assert "winget install codex" not in source.lower()
 
 
-def test_owner_candidate_is_installable_only_in_owner_edition():
+def test_legacy_owner_candidate_runtime_path_is_removed():
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
 
     assert "IsInstallableTarget" in source
-    assert "edition.owner_controlled" in source
-    assert 'row.package_state == "owner_candidate"' in source
+    assert 'row.package_state == "owner_candidate"' not in source
+    assert "NON_RELEASABLE" not in source
 
 
-def test_owner_internal_build_carries_nonreleasable_claude_candidate(
+def test_owner_internal_build_carries_accepted_claude_package(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
     _accepted_package(package_source, "codex")
+    _accepted_package(package_source, "claude")
     _accepted_package(package_source, "opencode")
-    candidate = _owner_claude_candidate(
-        tmp_path / "owner-candidate-source"
-    )
 
     bundle = _build_gui_bundle(
         tmp_path / "owner-bundle",
         package_root=package_source,
-        owner_candidate_root=candidate,
         distribution_mode="InternalUnsigned",
         edition="Owner",
     )
@@ -5497,21 +5507,16 @@ def test_owner_internal_build_carries_nonreleasable_claude_candidate(
         (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["embedded_target_count"] == 3
-    assert manifest["owner_claude_state"] == "OWNER_CANDIDATE"
+    assert "owner_claude_state" not in manifest
     assert manifest["distribution_allowed"] is False
     assert manifest["employee_distribution_allowed"] is False
-    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "NOT_PASS"
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/3"
-    assert (
-        manifest["owner_candidate"]["target"] == "claude"
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["TECHNICAL_READY"] == "PASS"
+    assert manifest["verdicts"]["PROVIDER_LIVE"] == (
+        "BLOCKED_PROVIDER_ELIGIBILITY"
     )
-    assert (
-        manifest["owner_candidate"]["FULL_RELEASE_CLAUDE"]
-        == "NOT_PASS"
-    )
-    assert (
-        bundle / "packages" / "claude" / "NON_RELEASABLE.txt"
-    ).is_file()
+    assert not (bundle / "packages" / "claude" / "NON_RELEASABLE.txt").exists()
 
     catalog = subprocess.run(
         [
@@ -5531,12 +5536,12 @@ def test_owner_internal_build_carries_nonreleasable_claude_candidate(
     }
     assert states == {
         "codex": "accepted",
-        "claude": "owner_candidate",
+        "claude": "accepted",
         "opencode": "accepted",
     }
 
 
-def test_owner_candidate_input_is_owner_only_and_hash_bound(
+def test_retired_owner_candidate_parameter_is_rejected(
     tmp_path: Path,
 ) -> None:
     candidate = _owner_claude_candidate(tmp_path / "candidate-source")
@@ -5564,7 +5569,7 @@ def test_owner_candidate_input_is_owner_only_and_hash_bound(
         encoding="utf-8",
     )
     assert employee.returncode != 0
-    assert "only valid for Owner edition" in (
+    assert "OwnerCandidateRoot" in (
         employee.stdout + employee.stderr
     )
 
@@ -5593,7 +5598,7 @@ def test_owner_candidate_input_is_owner_only_and_hash_bound(
         encoding="utf-8",
     )
     assert owner.returncode != 0
-    assert "Owner candidate" in owner.stdout + owner.stderr
+    assert "OwnerCandidateRoot" in owner.stdout + owner.stderr
 
 
 def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():

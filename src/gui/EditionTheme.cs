@@ -11,7 +11,10 @@ namespace LlmFoundationInstaller
             {
                 throw new ArgumentNullException("edition");
             }
-            return edition.product_role + edition.edition_id + "View.xaml";
+            string viewEdition = edition.edition_id == "Simple"
+                ? "Employee"
+                : edition.edition_id;
+            return edition.product_role + viewEdition + "View.xaml";
         }
 
         public static string WindowTitle(EditionProfile edition)

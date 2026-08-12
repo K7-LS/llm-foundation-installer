@@ -3,13 +3,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner')]
+    [ValidateSet('Employee', 'Owner', 'Simple')]
     [string]$Edition,
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
-    [string]$OwnerCandidateRoot,
     [string]$ProviderEligibilityEvidence,
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
@@ -37,7 +36,9 @@ $KnownInternalArtifactNames = @(
     'K7-AI-Foundation-Employee-InternalUnsigned.exe',
     'K7-AI-Launch-Center-Employee-InternalUnsigned.exe',
     'K7-AI-Foundation-Owner-InternalUnsigned.exe',
-    'K7-AI-Launch-Center-Owner-InternalUnsigned.exe'
+    'K7-AI-Launch-Center-Owner-InternalUnsigned.exe',
+    'K7-AI-Foundation-Simple-InternalUnsigned.exe',
+    'K7-AI-Launch-Center-Simple-InternalUnsigned.exe'
 )
 $InstallerName = "K7-AI-Foundation-$Edition-$DistributionMode.exe"
 $LaunchCenterName = (
@@ -145,7 +146,6 @@ function Invoke-ProductBuild {
     foreach ($Pair in @(
         @('PackageRoot', $PackageRoot),
         @('FoundationPackageRoot', $FoundationPackageRoot),
-        @('OwnerCandidateRoot', $OwnerCandidateRoot),
         @('ProviderEligibilityEvidence', $ProviderEligibilityEvidence),
         @('ClientSourcesLock', $ClientSourcesLock),
         @('RuntimeSourcesLock', $RuntimeSourcesLock),

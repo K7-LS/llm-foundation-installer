@@ -3,14 +3,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner')]
+    [ValidateSet('Employee', 'Owner', 'Simple')]
     [string]$Edition,
     [Parameter(Mandatory = $true)]
     [ValidateSet('Installer', 'LaunchCenter')]
     [string]$ProductRole,
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
-    [string]$OwnerCandidateRoot,
     [string]$ProviderEligibilityEvidence,
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
@@ -792,190 +791,6 @@ function Read-AcceptedPackages {
     return $Rows
 }
 
-function Read-OwnerCandidate {
-    param([string]$Root)
-    if ([string]::IsNullOrWhiteSpace($Root)) {
-        return $null
-    }
-    $Directory = Get-Item -LiteralPath $Root -Force
-    if (-not $Directory.PSIsContainer -or
-        ($Directory.Attributes -band
-            [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw 'Owner candidate directory is unsafe'
-    }
-    $RequiredFiles = @(
-        'candidate-acceptance.json',
-        'claude-live-canary.json',
-        'components.lock.json',
-        'NON_RELEASABLE.txt',
-        'release-manifest.json'
-    )
-    $ActualFiles = @(
-        Get-ChildItem -LiteralPath $Directory.FullName -File |
-            Select-Object -ExpandProperty Name |
-            Sort-Object
-    )
-    $ZipFiles = @(
-        $ActualFiles | Where-Object {
-            $_ -match '^claude-base-[0-9]+\.[0-9]+\.[0-9]+\.zip$'
-        }
-    )
-    if ($ActualFiles.Count -ne 6 -or $ZipFiles.Count -ne 1 -or
-        @($RequiredFiles | Where-Object {
-            $ActualFiles -cnotcontains $_
-        }).Count -ne 0) {
-        throw 'Owner candidate file inventory differs'
-    }
-    foreach ($Name in $ActualFiles) {
-        $Path = Join-Path $Directory.FullName $Name
-        if (((Get-Item -LiteralPath $Path -Force).Attributes -band
-                [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw 'Owner candidate cannot contain reparse points'
-        }
-    }
-    $CandidatePath = Join-Path $Directory.FullName (
-        'candidate-acceptance.json'
-    )
-    $ReleasePath = Join-Path $Directory.FullName 'release-manifest.json'
-    $CanaryPath = Join-Path $Directory.FullName 'claude-live-canary.json'
-    $ComponentsPath = Join-Path $Directory.FullName 'components.lock.json'
-    $MarkerPath = Join-Path $Directory.FullName 'NON_RELEASABLE.txt'
-    try {
-        $Candidate = Get-Content -LiteralPath $CandidatePath -Raw |
-            ConvertFrom-Json
-        $Release = Get-Content -LiteralPath $ReleasePath -Raw |
-            ConvertFrom-Json
-        $Canary = Get-Content -LiteralPath $CanaryPath -Raw |
-            ConvertFrom-Json
-        $Components = Get-Content -LiteralPath $ComponentsPath -Raw |
-            ConvertFrom-Json
-    } catch {
-        throw 'Owner candidate JSON is invalid'
-    }
-    $AssetPath = Assert-FileBinding $Directory.FullName `
-        $Candidate.asset 'Owner candidate asset'
-    $MarkerText = [IO.File]::ReadAllText($MarkerPath)
-    $CandidateClient = if (
-        $null -ne $Candidate.PSObject.Properties['client']
-    ) {
-        $Candidate.client
-    } else {
-        $Candidate.release_binding.client
-    }
-    if ([int]$Candidate.schema_version -ne 1 -or
-        [string]$Candidate.target -cne 'claude' -or
-        [string]$Candidate.CANDIDATE_OFFLINE -cne 'PASS' -or
-        [string]$Candidate.CLIENT_BINARY_ACCEPTANCE -cne 'PASS' -or
-        [string]$Candidate.FULL_RELEASE_CLAUDE -cne 'NOT_PASS' -or
-        $Candidate.NON_RELEASABLE -isnot [bool] -or
-        [bool]$Candidate.NON_RELEASABLE -ne $true -or
-        [string]$CandidateClient.id -cne 'claude-code' -or
-        [string]::IsNullOrWhiteSpace(
-            [string]$CandidateClient.supported_version
-        ) -or
-        [string]$Candidate.evidence_body_sha256 -notmatch (
-            '^[a-f0-9]{64}$'
-        ) -or
-        [string]$Candidate.asset.name -cne $ZipFiles[0]) {
-        throw 'Owner candidate acceptance contract is invalid'
-    }
-    if ([int]$Release.schema_version -ne 1 -or
-        [string]$Release.target -cne 'claude' -or
-        [string]$Release.channel -cne 'candidate' -or
-        [string]$Release.client.id -cne 'claude-code' -or
-        [string]$Release.client.supported_version -cne (
-            [string]$CandidateClient.supported_version
-        ) -or
-        [string]$Release.asset.name -cne (
-            [string]$Candidate.asset.name
-        ) -or
-        [string]$Release.asset.sha256 -cne (
-            [string]$Candidate.asset.sha256
-        ) -or
-        [long]$Release.asset.bytes -ne (
-            [long]$Candidate.asset.bytes
-        ) -or
-        [string]$Release.acceptance_evidence_sha256 -cne (
-            Get-Sha256 $CandidatePath
-        ) -or
-        [string]$Release.components_lock_sha256 -cne (
-            Get-Sha256 $ComponentsPath
-        ) -or
-        [bool]$Release.requires.immutable_release -ne $true -or
-        [bool]$Release.requires.release_attestation -ne $true) {
-        throw 'Owner candidate release manifest is invalid'
-    }
-    Assert-ReleaseBinding $Candidate $Release
-    Assert-ReleaseBinding $Canary $Release
-    if ([int]$Canary.schema_version -ne 1 -or
-        [string]$Canary.target -cne 'claude' -or
-        [string]$Canary.CLAUDE_CANARY -cne 'PASS' -or
-        [long]$Canary.model_requests -ne 0 -or
-        $Canary.credentials_included -isnot [bool] -or
-        [bool]$Canary.credentials_included -ne $false -or
-        $Canary.personal_data_included -isnot [bool] -or
-        [bool]$Canary.personal_data_included -ne $false -or
-        [string]$Canary.evidence_body_sha256 -notmatch (
-            '^[a-f0-9]{64}$'
-        ) -or
-        [int]$Components.schema_version -ne 1 -or
-        [string]$Components.target -cne 'claude' -or
-        $MarkerText -notmatch 'NOT A STABLE RELEASE' -or
-        $MarkerText -notmatch 'employee distribution are forbidden') {
-        throw 'Owner candidate evidence is invalid'
-    }
-    return [ordered]@{
-        trust_level = 'owner_candidate'
-        target = 'claude'
-        client_id = 'claude-code'
-        supported_version = (
-            [string]$CandidateClient.supported_version
-        )
-        foundation_engine_manifest_sha256 = [string](
-            $Release.foundation_engine_manifest_sha256
-        )
-        asset = [ordered]@{
-            relative_path = 'packages/claude/' + (
-                [string]$Candidate.asset.name
-            )
-            resource_name = 'TargetPackage.claude.asset'
-            sha256 = [string]$Candidate.asset.sha256
-            bytes = [long]$Candidate.asset.bytes
-        }
-        release_manifest = [ordered]@{
-            relative_path = 'packages/claude/release-manifest.json'
-            resource_name = 'TargetPackage.claude.release_manifest'
-            sha256 = Get-Sha256 $ReleasePath
-            bytes = (Get-Item -LiteralPath $ReleasePath).Length
-        }
-        candidate_acceptance = [ordered]@{
-            relative_path = 'packages/claude/candidate-acceptance.json'
-            resource_name = 'TargetPackage.claude.candidate_acceptance'
-            sha256 = Get-Sha256 $CandidatePath
-            bytes = (Get-Item -LiteralPath $CandidatePath).Length
-        }
-        live_canary = [ordered]@{
-            relative_path = 'packages/claude/claude-live-canary.json'
-            resource_name = 'TargetPackage.claude.live_canary'
-            sha256 = Get-Sha256 $CanaryPath
-            bytes = (Get-Item -LiteralPath $CanaryPath).Length
-        }
-        components_lock = [ordered]@{
-            relative_path = 'packages/claude/components.lock.json'
-            resource_name = 'TargetPackage.claude.components_lock'
-            sha256 = Get-Sha256 $ComponentsPath
-            bytes = (Get-Item -LiteralPath $ComponentsPath).Length
-        }
-        non_releasable = [ordered]@{
-            relative_path = 'packages/claude/NON_RELEASABLE.txt'
-            resource_name = 'TargetPackage.claude.non_releasable'
-            sha256 = Get-Sha256 $MarkerPath
-            bytes = (Get-Item -LiteralPath $MarkerPath).Length
-        }
-        source_directory = $Directory.FullName
-    }
-}
-
 function Get-PackageRecords {
     param([Parameter(Mandatory = $true)]$Package)
     if ([string]$Package.trust_level -ceq 'accepted') {
@@ -985,16 +800,6 @@ function Get-PackageRecords {
             $Package.acceptance_evidence,
             $Package.release_verification,
             $Package.package_acceptance
-        )
-    }
-    if ([string]$Package.trust_level -ceq 'owner_candidate') {
-        return @(
-            $Package.asset,
-            $Package.release_manifest,
-            $Package.candidate_acceptance,
-            $Package.live_canary,
-            $Package.components_lock,
-            $Package.non_releasable
         )
     }
     throw 'Package trust level is invalid'
@@ -1160,25 +965,14 @@ $References = @(
 )
 
 $AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
-$OwnerCandidate = Read-OwnerCandidate $OwnerCandidateRoot
 $AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
 $ProviderEligibility = Read-ProviderEligibilityEvidence `
     $ProviderEligibilityEvidence
 $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
-$AllPackages = @(
-    $AcceptedPackages
-    if ($null -ne $OwnerCandidate) {
-        $OwnerCandidate
-    }
-)
+$AllPackages = @($AcceptedPackages)
 $AvailableTargets = @($AllPackages.target | Sort-Object)
-$IncludedTargets = if ($Edition -ceq 'Employee') {
-    @('codex', 'opencode')
-}
-else {
-    @('claude', 'codex', 'opencode')
-}
-$RequiredTargets = @('codex', 'opencode')
+$IncludedTargets = @('claude', 'codex', 'opencode')
+$RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
@@ -1326,6 +1120,7 @@ if ($ClientSourcesOfficialOnly) {
         'claude-code',
         'codex-cli',
         'codex-desktop',
+        'officecli',
         'opencode-cli',
         'opencode-desktop'
     )
@@ -1333,23 +1128,6 @@ if ($ClientSourcesOfficialOnly) {
     if (($ActualClients -join ',') -cne ($ExpectedClients -join ',')) {
         throw 'Official client source inventory is incomplete'
     }
-}
-if ($Edition -ceq 'Employee' -and
-    $null -ne $ProviderEligibility) {
-    throw 'Employee edition cannot include provider eligibility evidence'
-}
-if ($Edition -cne 'Owner' -and $null -ne $OwnerCandidate) {
-    throw 'OwnerCandidateRoot is only valid for Owner edition'
-}
-if ($null -ne $OwnerCandidate -and
-    $AcceptedTargets -ccontains 'claude') {
-    throw 'Owner candidate duplicates an accepted Claude package'
-}
-if ($Edition -ceq 'Employee' -and
-    @($AcceptedTargets | Where-Object {
-        $IncludedTargets -cnotcontains $_
-    }).Count -ne 0) {
-    throw 'Employee target set differs from the edition contract'
 }
 if ($IsPackagedRelease) {
     if (($AvailableTargets -join ',') -cne ($IncludedTargets -join ',')) {
@@ -1388,13 +1166,25 @@ if (-not $IsPublicSigned -and
     )
 }
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
-$EditionContract = if ($Edition -ceq 'Employee') {
+$EditionContract = if ($Edition -ceq 'Owner') {
+    [ordered]@{
+        edition_id = 'Owner'
+        display_name = 'K-7 AI Foundation Owner'
+        distribution_allowed = $false
+        included_target_ids = @('claude', 'codex', 'opencode')
+        required_target_ids = @('claude', 'codex', 'opencode')
+        theme_id = 'SignalConsole'
+        owner_controlled = $true
+        product_role = $ProductRole
+    }
+}
+elseif ($Edition -ceq 'Employee') {
     [ordered]@{
         edition_id = 'Employee'
         display_name = 'K-7 AI Foundation Employee'
         distribution_allowed = $true
-        included_target_ids = @('codex', 'opencode')
-        required_target_ids = @('codex', 'opencode')
+        included_target_ids = @('claude', 'codex', 'opencode')
+        required_target_ids = @('claude', 'codex', 'opencode')
         theme_id = 'K7Signal'
         owner_controlled = $false
         product_role = $ProductRole
@@ -1402,13 +1192,13 @@ $EditionContract = if ($Edition -ceq 'Employee') {
 }
 else {
     [ordered]@{
-        edition_id = 'Owner'
-        display_name = 'K-7 AI Foundation Owner'
-        distribution_allowed = $false
+        edition_id = 'Simple'
+        display_name = 'K-7 AI Foundation Simple'
+        distribution_allowed = $true
         included_target_ids = @('claude', 'codex', 'opencode')
-        required_target_ids = @('codex', 'opencode')
-        theme_id = 'SignalConsole'
-        owner_controlled = $true
+        required_target_ids = @('claude', 'codex', 'opencode')
+        theme_id = 'K7Signal'
+        owner_controlled = $false
         product_role = $ProductRole
     }
 }
@@ -1486,32 +1276,16 @@ $TrustedIndex = [ordered]@{
     provider_eligibility = $TrustedProviderEligibility
     packages = @(
         $AllPackages | ForEach-Object {
-            if ([string]$_.trust_level -ceq 'accepted') {
-                [ordered]@{
-                    trust_level = 'accepted'
-                    target = $_.target
-                    client_id = $_.client_id
-                    supported_version = $_.supported_version
-                    asset = $_.asset
-                    release_manifest = $_.release_manifest
-                    acceptance_evidence = $_.acceptance_evidence
-                    release_verification = $_.release_verification
-                    package_acceptance = $_.package_acceptance
-                }
-            }
-            else {
-                [ordered]@{
-                    trust_level = 'owner_candidate'
-                    target = $_.target
-                    client_id = $_.client_id
-                    supported_version = $_.supported_version
-                    asset = $_.asset
-                    release_manifest = $_.release_manifest
-                    candidate_acceptance = $_.candidate_acceptance
-                    live_canary = $_.live_canary
-                    components_lock = $_.components_lock
-                    non_releasable = $_.non_releasable
-                }
+            [ordered]@{
+                trust_level = 'accepted'
+                target = $_.target
+                client_id = $_.client_id
+                supported_version = $_.supported_version
+                asset = $_.asset
+                release_manifest = $_.release_manifest
+                acceptance_evidence = $_.acceptance_evidence
+                release_verification = $_.release_verification
+                package_acceptance = $_.package_acceptance
             }
         }
     )
@@ -1554,6 +1328,41 @@ $RuntimeSourcesBytes = (
     Get-Item -LiteralPath $EffectiveRuntimeSourcesPath
 ).Length
 $RuntimeSourcesHash = Get-Sha256 $EffectiveRuntimeSourcesPath
+$EngineCoreNames = @('foundation.ps1', 'engine-manifest.json', 'VERSION')
+$EngineExtraIndex = @()
+$EngineExtraCounter = 0
+$EngineRootPrefix = [IO.Path]::GetFullPath($EngineRoot).TrimEnd('\') + '\'
+foreach ($EngineFile in @(Get-ChildItem -LiteralPath $EngineRoot -Recurse -File | Sort-Object FullName)) {
+    $EngineFullPath = [IO.Path]::GetFullPath($EngineFile.FullName)
+    if (-not $EngineFullPath.StartsWith($EngineRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Foundation extra file escapes engine root'
+    }
+    $Relative = $EngineFullPath.Substring($EngineRootPrefix.Length).Replace('\', '/')
+    if ($EngineCoreNames -ccontains $Relative) { continue }
+    $ResourceName = 'FoundationEngine.extra.' + $EngineExtraCounter.ToString('D4')
+    $EngineExtraIndex += [ordered]@{
+        relative_path = $Relative
+        resource_name = $ResourceName
+        sha256 = Get-Sha256 $EngineFile.FullName
+        bytes = $EngineFile.Length
+        source_path = $EngineFile.FullName
+    }
+    $EngineExtraCounter++
+}
+$EngineExtraIndexPath = Join-Path $OutputRoot '.foundation-extra-files.json'
+$EngineExtraPublic = @($EngineExtraIndex | ForEach-Object {
+    [ordered]@{
+        relative_path = $_.relative_path
+        resource_name = $_.resource_name
+        sha256 = $_.sha256
+        bytes = $_.bytes
+    }
+})
+[IO.File]::WriteAllText(
+    $EngineExtraIndexPath,
+    (($EngineExtraPublic | ConvertTo-Json -Depth 5) + "`n"),
+    $Encoding
+)
 $Views = @(
     'InstallerEmployeeView.xaml',
     'InstallerOwnerView.xaml',
@@ -1589,8 +1398,12 @@ $CompilerArguments = @(
     "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
     "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
     "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
+    "/resource:$EngineExtraIndexPath,FoundationEngine.extra-files.json",
     "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
 )
+$CompilerArguments += @($EngineExtraIndex | ForEach-Object {
+    "/resource:$($_.source_path),$($_.resource_name)"
+})
 $CompilerArguments += @(
     foreach ($View in $Views) {
         "/resource:$View,$([IO.Path]::GetFileName($View))"
@@ -1637,6 +1450,7 @@ if ($LASTEXITCODE -ne 0 -or
 Remove-Item -LiteralPath @(
     $TrustedResource,
     $EditionResource,
+    $EngineExtraIndexPath,
     $ApplicationIcon
 ) -Force
 
@@ -1754,82 +1568,60 @@ $RequiredReady = @(
 $EditionTargetSetReady = (
     ($AvailableTargets -join ',') -ceq ($IncludedTargets -join ',')
 )
-$EmployeeInternalReady = (
-    $Edition -ceq 'Employee' -and
-    $DistributionMode -ceq 'InternalUnsigned' -and
+$TechnicalReady = (
     $EditionTargetSetReady -and
+    $RequiredReady -and
     $null -ne $AcceptedFoundation
 )
+$InternalReady = (
+    $DistributionMode -ceq 'InternalUnsigned' -and
+    $TechnicalReady
+)
 $PublicSignedReady = (
-    $Edition -ceq 'Employee' -and
     $DistributionMode -ceq 'PublicSigned' -and
     $SignatureState -ceq 'valid-authenticode' -and
-    $RequiredReady
+    $TechnicalReady -and
+    $ProviderReady
 )
-$Verdicts = if ($Edition -ceq 'Employee') {
-    [ordered]@{
-        FULL_RELEASE_CODEX = if (
-            $AcceptedTargets -ccontains 'codex'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        FULL_RELEASE_OPENCODE = if (
-            $AcceptedTargets -ccontains 'opencode'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        PROGRAM_RELEASE = if ($RequiredReady) {
-            '2/2'
-        } else {
-            "$(@(
-                $RequiredTargets | Where-Object {
-                    $AcceptedTargets -ccontains $_
-                }
-            ).Count)/2"
-        }
-        EMPLOYEE_INSTALLER_INTERNAL = if ($EmployeeInternalReady) {
-            'PASS'
-        } else {
-            'NOT_PASS'
-        }
-        PUBLIC_SIGNED_RELEASE = if (
-            $DistributionMode -ceq 'InternalUnsigned'
-        ) {
-            'DEFERRED_BY_OWNER'
-        } elseif ($PublicSignedReady) {
-            'PASS'
-        } else {
-            'NOT_PASS'
-        }
+$ReadyCount = @(
+    $RequiredTargets | Where-Object {
+        $AcceptedTargets -ccontains $_
     }
-}
-else {
-    [ordered]@{
-        FULL_RELEASE_CODEX = if (
-            $AcceptedTargets -ccontains 'codex'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        FULL_RELEASE_CLAUDE = if (
-            $AcceptedTargets -ccontains 'claude' -and
-            $ProviderReady
-        ) { 'PASS' } else { 'NOT_PASS' }
-        FULL_RELEASE_OPENCODE = if (
-            $AcceptedTargets -ccontains 'opencode'
-        ) { 'PASS' } else { 'NOT_PASS' }
-        PROGRAM_RELEASE = if (
-            $EditionTargetSetReady -and $ProviderReady
-        ) {
-            '3/3'
-        } elseif ($RequiredReady) {
-            '2/3'
+).Count
+$Verdicts = [ordered]@{
+    FULL_RELEASE_CLAUDE = if (
+        $AcceptedTargets -ccontains 'claude'
+    ) { 'PASS' } else { 'NOT_PASS' }
+    FULL_RELEASE_CODEX = if (
+        $AcceptedTargets -ccontains 'codex'
+    ) { 'PASS' } else { 'NOT_PASS' }
+    FULL_RELEASE_OPENCODE = if (
+        $AcceptedTargets -ccontains 'opencode'
+    ) { 'PASS' } else { 'NOT_PASS' }
+    TECHNICAL_READY = if ($TechnicalReady) { 'PASS' } else { 'NOT_PASS' }
+    PROVIDER_LIVE = if ($ProviderReady) {
+        'PASS'
+    } else {
+        'BLOCKED_PROVIDER_ELIGIBILITY'
+    }
+    PROGRAM_RELEASE = if ($TechnicalReady) { '3/3' } else { "$ReadyCount/3" }
+    INTERNAL_UNSIGNED_RELEASE = if ($InternalReady) {
+        'PASS'
+    } else {
+        'NOT_PASS'
+    }
+    PUBLIC_SIGNED_RELEASE = if (
+        $DistributionMode -ceq 'InternalUnsigned'
+    ) {
+        if ($ProviderReady) {
+            'DEFERRED_UNSIGNED'
         } else {
-            "$(@(
-                $RequiredTargets | Where-Object {
-                    $AcceptedTargets -ccontains $_
-                }
-            ).Count)/3"
+            'BLOCKED_PROVIDER_ELIGIBILITY'
         }
-        OWNER_INSTALLER_INTERNAL = if (
-            $DistributionMode -ceq 'InternalUnsigned' -and
-            $EditionTargetSetReady -and
-            $null -ne $AcceptedFoundation
-        ) { 'OWNER_CANDIDATE' } else { 'NOT_PASS' }
-        PUBLIC_SIGNED_RELEASE = 'NOT_APPLICABLE'
+    } elseif ($PublicSignedReady) {
+        'PASS'
+    } else {
+        'NOT_PASS'
     }
 }
 $Manifest = [ordered]@{
@@ -1854,10 +1646,11 @@ $Manifest = [ordered]@{
     embedded_foundation = $true
     embedded_target_count = $AllPackages.Count
     signature = $SignatureState
-    employee_release = (
-        $Edition -ceq 'Employee' -and $IsPackagedRelease
+    employee_release = ($Edition -ceq 'Employee' -and $IsPackagedRelease)
+    employee_distribution_allowed = [bool](
+        $Edition -ceq 'Employee' -and $InternalReady
     )
-    employee_distribution_allowed = [bool]$EmployeeInternalReady
+    internal_distribution_allowed = [bool]$InternalReady
     public_distribution_allowed = [bool]$PublicSignedReady
     windows_warning_expected = (
         $DistributionMode -ceq 'InternalUnsigned'
@@ -1921,31 +1714,6 @@ $Manifest = [ordered]@{
         'runtime-sources.lock.json' = [ordered]@{
             sha256 = $RuntimeSourcesHash
             bytes = $RuntimeSourcesBytes
-        }
-    }
-}
-if ($Edition -ceq 'Owner') {
-    $Manifest['owner_claude_state'] = if (
-        $null -ne $OwnerCandidate
-    ) {
-        'OWNER_CANDIDATE'
-    } elseif ($ProviderReady) {
-        'PROVIDER_READY'
-    } else {
-        'OWNER_CANDIDATE'
-    }
-    if ($null -ne $OwnerCandidate) {
-        $Manifest['owner_candidate'] = [ordered]@{
-            target = 'claude'
-            trust_level = 'owner_candidate'
-            NON_RELEASABLE = $true
-            FULL_RELEASE_CLAUDE = 'NOT_PASS'
-            asset = $OwnerCandidate.asset
-            candidate_acceptance = (
-                $OwnerCandidate.candidate_acceptance
-            )
-            live_canary = $OwnerCandidate.live_canary
-            non_releasable_record = $OwnerCandidate.non_releasable
         }
     }
 }

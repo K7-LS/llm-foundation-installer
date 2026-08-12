@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('plan', 'install', 'doctor', 'inventory', 'rollback')]
+    [ValidateSet('plan', 'apply', 'install', 'doctor', 'inventory', 'rollback')]
     [string]$Command,
     [string]$Package,
     [string]$ReleaseManifest,
@@ -12,6 +12,11 @@ param(
     [string]$Target,
     [string]$ClientId,
     [string]$ClientVersion,
+    [Alias('Plan')]
+    [string]$PlanFile,
+    [string]$LocalExceptionPath = '',
+    [switch]$ConfirmRemoveUnknown,
+    [switch]$Strict,
     [switch]$Json
 )
 
@@ -19,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.2'
+$script:EngineVersion = '0.4.0'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -44,6 +49,7 @@ $script:ExitCode = @{
     NOT_INSTALLED = 20
     RECOVERY_REQUIRED = 20
     LOCKED = 20
+    BLOCKED_USER_DECISION = 20
     INVALID_PACKAGE = 30
     INSTALL_FAILED = 30
     ACTIVE_DRIFT = 30
@@ -51,6 +57,11 @@ $script:ExitCode = @{
 }
 $script:MutationCount = 0
 $script:RollbackMutationCount = 0
+$script:ActiveLocalTomlExceptions = @()
+$script:RequestedLocalExceptionPaths = @(
+    ([string]$LocalExceptionPath).Split('|') |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+)
 
 function Throw-Foundation {
     param(
@@ -315,6 +326,8 @@ function Resolve-HomePath {
             '.llm-foundation/bin/officecli.exe',
             '.llm-foundation/libexec/officecli/officecli.exe',
             '.llm-foundation/libexec/officecli/officecli-command-policy.json',
+            '.llm-foundation/libexec/officecli/officecli_csv_batch.py',
+            '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe',
             '.llm-foundation/state/shared-tools/officecli/current.json'
         )
     if (-not (Test-PortablePath $Relative) -or
@@ -455,6 +468,7 @@ function Assert-StringArray {
         [Parameter(Mandatory = $true)][string]$Label,
         [switch]$AllowProtected,
         [switch]$AllowSessionState,
+        [switch]$AllowTomlIdentity,
         [switch]$AllowUnsorted
     )
     $Seen = New-Object 'Collections.Generic.HashSet[string]' (
@@ -462,8 +476,13 @@ function Assert-StringArray {
     )
     $Previous = $null
     foreach ($Value in @($Values)) {
+        $IsTomlIdentity = $AllowTomlIdentity -and
+            [string]$Value -cmatch (
+                '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.-]+$'
+            )
         if ($Value -isnot [string] -or
-            -not (Test-PortablePath ([string]$Value)) -or
+            (-not $IsTomlIdentity -and
+                -not (Test-PortablePath ([string]$Value))) -or
             -not $Seen.Add([string]$Value)) {
             Throw-Foundation 'INVALID_PACKAGE' "$Label contains an invalid path"
         }
@@ -534,6 +553,7 @@ function Assert-ManifestProperties {
         'files'
     )
     $Optional = @(
+        'desired_state',
         'retired_managed_paths',
         'session_tools_baseline',
         'shared_tools'
@@ -552,6 +572,75 @@ function Assert-ManifestProperties {
         if (-not (Test-ObjectProperty $Manifest $Name)) {
             Throw-Foundation 'INVALID_PACKAGE' 'package manifest properties differ'
         }
+    }
+}
+
+function Assert-DesiredStateContract {
+    param([Parameter(Mandatory = $true)]$DesiredState)
+    Assert-ExactProperties $DesiredState @(
+        'schema_version',
+        'unknown_policy',
+        'local_exceptions',
+        'strict_doctor',
+        'inventory_roots',
+        'platform_owned',
+        'toml_reconcile'
+    ) 'desired state'
+    if ([int]$DesiredState.schema_version -ne 1 -or
+        [string]$DesiredState.unknown_policy -cne 'prompt-every-run' -or
+        -not [bool]$DesiredState.local_exceptions -or
+        -not [bool]$DesiredState.strict_doctor -or
+        $DesiredState.toml_reconcile -isnot [Array]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Desired-state contract differs'
+    }
+    Assert-StringArray @($DesiredState.inventory_roots) `
+        'desired-state inventory roots'
+    Assert-StringArray @($DesiredState.platform_owned) `
+        'desired-state platform-owned paths'
+    foreach ($PathValue in @(
+        @($DesiredState.inventory_roots) + @($DesiredState.platform_owned)
+    )) {
+        if (-not (Test-PortablePath ([string]$PathValue)) -or
+            (Test-ProtectedPath ([string]$PathValue))) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Desired-state path is invalid'
+        }
+    }
+    $PreviousPath = $null
+    foreach ($Rule in @($DesiredState.toml_reconcile)) {
+        Assert-ExactProperties $Rule @(
+            'path',
+            'exact_tables',
+            'protected_tables',
+            'allowed_entries'
+        ) 'TOML reconcile rule'
+        if (-not (Test-PortablePath ([string]$Rule.path)) -or
+            -not ([string]$Rule.path).EndsWith(
+                '.toml', [StringComparison]::OrdinalIgnoreCase)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'TOML reconcile path is invalid'
+        }
+        Assert-StringArray @($Rule.exact_tables) 'TOML exact tables' -AllowUnsorted
+        Assert-StringArray @($Rule.protected_tables) `
+            'TOML protected tables'
+        Assert-StringArray @($Rule.allowed_entries) 'TOML allowed entries' -AllowUnsorted
+        foreach ($Table in @($Rule.exact_tables)) {
+            if ([string]$Table -cnotmatch '^[A-Za-z0-9_-]+$') {
+                Throw-Foundation 'INVALID_PACKAGE' 'TOML exact table is invalid'
+            }
+        }
+        foreach ($Table in @($Rule.protected_tables)) {
+            if ([string]$Table -cnotmatch (
+                '^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$'
+            )) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    'TOML protected table is invalid'
+                )
+            }
+        }
+        if ($null -ne $PreviousPath -and [StringComparer]::Ordinal.Compare(
+                [string]$PreviousPath, [string]$Rule.path) -ge 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'TOML reconcile rules are not sorted'
+        }
+        $PreviousPath = [string]$Rule.path
     }
 }
 
@@ -1018,6 +1107,17 @@ function Assert-Manifest {
         Throw-Foundation 'INVALID_PACKAGE' 'Client contract is invalid'
     }
     Assert-ManagedSurface $Manifest.managed_surface
+    if (Test-ObjectProperty $Manifest 'desired_state') {
+        Assert-DesiredStateContract $Manifest.desired_state
+        foreach ($Rule in @($Manifest.desired_state.toml_reconcile)) {
+            if (@(Get-MergeTomlFiles $Manifest.managed_surface) -inotcontains
+                [string]$Rule.path) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    'TOML reconcile path is not a managed merge file'
+                )
+            }
+        }
+    }
     $MergeTomlFiles = @(Get-MergeTomlFiles $Manifest.managed_surface)
     if (@($Manifest.managed_surface.exact_directories).Count -eq 0 -or
         @($Manifest.managed_surface.replace_files).Count -eq 0 -or
@@ -1945,6 +2045,7 @@ function Get-FoundationPaths {
         foundation_root = $FoundationRoot
         state_root = $StateRoot
         active = Join-Path $StateRoot 'active.json'
+        local_exceptions = Join-Path $StateRoot 'local-exceptions.json'
         pending = Join-Path $StateRoot 'pending.json'
         rollback_journal = Join-Path $StateRoot 'rollback.json'
         backup_root = $BackupRoot
@@ -1969,6 +2070,8 @@ function Assert-ActiveState {
         'environment',
         'installed_files',
         'quarantined_unknown',
+        'local_exceptions',
+        'desired_state',
         'snapshot_path',
         'snapshot_sha256'
     ) 'active state'
@@ -1983,6 +2086,14 @@ function Assert-ActiveState {
         Throw-Foundation 'INVALID_PACKAGE' 'Active state is invalid'
     }
     Assert-EnvironmentContract $State.environment
+    Assert-StringArray @($State.local_exceptions) 'local exceptions' -AllowTomlIdentity
+    if ($State.desired_state -isnot [bool] -and
+        $State.desired_state -isnot [Management.Automation.PSCustomObject]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Active desired-state marker is invalid'
+    }
+    if ($State.desired_state -is [Management.Automation.PSCustomObject]) {
+        Assert-DesiredStateContract $State.desired_state
+    }
 }
 
 function Assert-PendingState {
@@ -2197,8 +2308,16 @@ function Get-UnknownEntries {
         [Parameter(Mandatory = $true)]$Manifest,
         [Parameter(Mandatory = $true)][string]$HomeRoot
     )
-    $Unknown = @()
-    foreach ($Root in @($Manifest.managed_surface.exact_directories)) {
+    $Unknown = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    $InventoryRoots = @($Manifest.managed_surface.exact_directories)
+    $PlatformOwned = @()
+    if (Test-ObjectProperty $Manifest 'desired_state') {
+        $InventoryRoots += @($Manifest.desired_state.inventory_roots)
+        $PlatformOwned = @($Manifest.desired_state.platform_owned)
+    }
+    foreach ($Root in @(Sort-OrdinalStrings $InventoryRoots)) {
         $Absolute = Resolve-HomePath ([string]$Root) $HomeRoot
         Assert-SafeAncestors $Absolute $HomeRoot
         if (-not (Test-Path -LiteralPath $Absolute -PathType Container)) {
@@ -2218,6 +2337,17 @@ function Get-UnknownEntries {
                 $null = $Expected.Add(($Remainder -split '/')[0])
             }
         }
+        foreach ($OwnedPathValue in $PlatformOwned) {
+            $OwnedPath = [string]$OwnedPathValue
+            $Prefix = [string]$Root + '/'
+            if ($OwnedPath.StartsWith(
+                $Prefix,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+                $Remainder = $OwnedPath.Substring($Prefix.Length)
+                $null = $Expected.Add(($Remainder -split '/')[0])
+            }
+        }
         foreach ($Child in @(Get-ChildItem -LiteralPath $Absolute -Force)) {
             if ($Child.Attributes -band [IO.FileAttributes]::ReparsePoint) {
                 Throw-Foundation 'UNSAFE_PATH' (
@@ -2225,11 +2355,126 @@ function Get-UnknownEntries {
                 )
             }
             if (-not $Expected.Contains($Child.Name)) {
-                $Unknown += ([string]$Root + '/' + $Child.Name)
+                $null = $Unknown.Add([string]$Root + '/' + $Child.Name)
             }
         }
     }
-    return @($Unknown | Sort-Object)
+    return @(Sort-OrdinalStrings @($Unknown))
+}
+
+function Get-TomlUnknownEntries {
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    if (-not (Test-ObjectProperty $Manifest 'desired_state')) { return @() }
+    $Unknown = @()
+    foreach ($Rule in @($Manifest.desired_state.toml_reconcile)) {
+        $Relative = [string]$Rule.path
+        $Path = Resolve-HomePath $Relative $HomeRoot
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { continue }
+        $Existing = Read-Utf8TextFile $Path
+        $AllowedEntries = New-Object 'Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal
+        )
+        foreach ($Value in @($Rule.allowed_entries)) {
+            $null = $AllowedEntries.Add([string]$Value)
+        }
+        $Protected = New-Object 'Collections.Generic.HashSet[string]' (
+            [StringComparer]::Ordinal
+        )
+        foreach ($Value in @($Rule.protected_tables)) {
+            $null = $Protected.Add([string]$Value)
+        }
+        $Owned = @($Rule.exact_tables)
+        $Section = ''
+        foreach ($Line in @([regex]::Split($Existing, '\r?\n'))) {
+            if ($Line -match '^\s*\[([^\[\]]+)\]') {
+                $Section = [string]$Matches[1]
+                $Root = ($Section -split '\.', 2)[0]
+                $IsProtected = @($Protected | Where-Object {
+                    $Section -ceq $_ -or $Section.StartsWith(
+                        [string]$_ + '.', [StringComparison]::Ordinal
+                    )
+                }).Count -gt 0
+                if ($Owned -contains $Root -and -not $IsProtected -and
+                    -not $AllowedEntries.Contains($Section) -and
+                    $Section -cne 'plugins') {
+                    $Unknown += ('toml:' + $Relative + '#' + $Section)
+                }
+            } elseif ($Section -ceq 'plugins' -and
+                $Line -match '^\s*([A-Za-z0-9_-]+)\s*=') {
+                $Key = [string]$Matches[1]
+                if (-not $AllowedEntries.Contains('plugins.' + $Key)) {
+                    $Unknown += ('toml:' + $Relative + '#plugins.' + $Key)
+                }
+            }
+        }
+    }
+    return @(Sort-OrdinalStrings $Unknown)
+}
+
+function Get-UnknownEntryDetails {
+    param([AllowEmptyCollection()][object[]]$Paths)
+    return @(
+        foreach ($PathValue in @(Sort-OrdinalStrings $Paths)) {
+            $Path = [string]$PathValue
+            $Kind = if ($Path -cmatch '^toml:.*#mcp_servers\.') {
+                'mcp'
+            } elseif ($Path -cmatch '^toml:.*#plugin_marketplaces\.') {
+                'marketplace'
+            } elseif ($Path -cmatch '^toml:.*#plugins\.') {
+                'plugin'
+            } elseif ($Path -cmatch '^\.agents/skills/') {
+                'skill'
+            } elseif ($Path -cmatch '/agents/') {
+                'agent'
+            } else {
+                'managed-entry'
+            }
+            [pscustomobject][ordered]@{
+                path = $Path
+                kind = $Kind
+                active = $true
+                source = if ($Path.StartsWith('toml:')) {
+                    'codex-config-toml'
+                } else { 'local-unmanaged' }
+                risk = if ($Kind -ceq 'skill') {
+                    'UNREVIEWED_EXECUTABLE_INSTRUCTIONS'
+                } elseif ($Kind -in @('mcp', 'plugin', 'marketplace')) {
+                    'UNMANAGED_RUNTIME_REGISTRATION'
+                } else {
+                    'UNREVIEWED_RUNTIME_COMPONENT'
+                }
+            }
+        }
+    )
+}
+
+function Get-ValidatedLocalExceptions {
+    param(
+        [AllowEmptyCollection()][object[]]$Requested,
+        [AllowEmptyCollection()][object[]]$Unknown
+    )
+    $UnknownSet = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($Path in @($Unknown)) { $null = $UnknownSet.Add([string]$Path) }
+    $Result = @()
+    foreach ($PathValue in @(Sort-OrdinalStrings $Requested)) {
+        $Path = [string]$PathValue
+        $IsTomlIdentity = $Path -cmatch (
+            '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.-]+$'
+        )
+        if ((-not $IsTomlIdentity -and -not (Test-PortablePath $Path)) -or
+            -not $UnknownSet.Contains($Path)) {
+            Throw-Foundation 'INVALID_ARGUMENT' (
+                "Local exception is not an unknown managed entry: $Path"
+            )
+        }
+        $Result += $Path
+    }
+    return @(Sort-OrdinalStrings $Result)
 }
 
 function Read-Utf8TextFile {
@@ -2353,6 +2598,57 @@ function Merge-TomlText {
     return (($Lines -join $NewLine) + $NewLine)
 }
 
+function Reconcile-TomlText {
+    param(
+        [AllowEmptyString()][string]$Existing,
+        [Parameter(Mandatory = $true)][string]$Required,
+        [AllowEmptyCollection()][object[]]$ExactTables,
+        [AllowEmptyCollection()][object[]]$ProtectedTables = @()
+    )
+    $Owned = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    foreach ($Table in @($ExactTables)) { $null = $Owned.Add([string]$Table) }
+    $Protected = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    foreach ($Table in @($ProtectedTables)) {
+        $null = $Protected.Add([string]$Table)
+    }
+    foreach ($IdentityValue in @($script:ActiveLocalTomlExceptions)) {
+        $Identity = [string]$IdentityValue
+        if ($Identity -match '^toml:[^#]+#(.+)$') {
+            $Table = [string]$Matches[1]
+            if ($Table.StartsWith('plugins.', [StringComparison]::Ordinal)) {
+                $Table = 'plugins'
+            }
+            $null = $Protected.Add($Table)
+        }
+    }
+    $Kept = New-Object 'Collections.Generic.List[string]'
+    $Skip = $false
+    foreach ($Line in @([regex]::Split($Existing, "`r?`n"))) {
+        if ($Line -match '^\s*\[([^\[\]]+)\]\s*(?:#.*)?$') {
+            $Header = [string]$Matches[1]
+            $RootTable = ($Header -split '\.', 2)[0]
+            $IsProtected = $false
+            foreach ($ProtectedTable in $Protected) {
+                if ($Header -ceq $ProtectedTable -or
+                    $Header.StartsWith(
+                        $ProtectedTable + '.',
+                        [StringComparison]::Ordinal
+                    )) {
+                    $IsProtected = $true
+                    break
+                }
+            }
+            $Skip = $Owned.Contains($RootTable) -and -not $IsProtected
+        }
+        if (-not $Skip) { $Kept.Add([string]$Line) }
+    }
+    return Merge-TomlText (($Kept -join "`n").TrimEnd() + "`n") $Required
+}
+
 function Merge-TomlFileAtomic {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -2365,7 +2661,20 @@ function Merge-TomlFileAtomic {
     } else {
         ''
     }
-    $Merged = Merge-TomlText $Existing (Read-Utf8TextFile $Source)
+    $Required = Read-Utf8TextFile $Source
+    $Rule = $null
+    if ($null -ne $script:ActiveDesiredState) {
+        $Relative = $script:ActiveMergeTomlRelativePath
+        $Rule = @($script:ActiveDesiredState.toml_reconcile | Where-Object {
+            [string]$_.path -ceq [string]$Relative
+        }) | Select-Object -First 1
+    }
+    $Merged = if ($null -ne $Rule) {
+        Reconcile-TomlText $Existing $Required @($Rule.exact_tables) `
+            @($Rule.protected_tables)
+    } else {
+        Merge-TomlText $Existing $Required
+    }
     $Parent = Split-Path -Parent $Destination
     if (-not (Test-Path -LiteralPath $Parent)) {
         [IO.Directory]::CreateDirectory($Parent) | Out-Null
@@ -2854,7 +3163,9 @@ function New-FoundationPlan {
         [Parameter(Mandatory = $true)]$Validated,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)][string]$ActualClientId,
-        [Parameter(Mandatory = $true)][string]$ActualClientVersion
+        [Parameter(Mandatory = $true)][string]$ActualClientVersion,
+        [AllowEmptyCollection()][object[]]$RequestedLocalExceptions = @(),
+        [switch]$RemoveUnknownConfirmed
     )
     $Manifest = $Validated.manifest
     Assert-ClientContract $Manifest.client $ActualClientId `
@@ -2927,13 +3238,34 @@ function New-FoundationPlan {
             bytes = [int64]$Row.bytes
         }
     }
-    $UnknownEntries = @(Get-UnknownEntries $Manifest $HomeRoot)
+    $UnknownEntries = @(Sort-OrdinalStrings @(
+        @(Get-UnknownEntries $Manifest $HomeRoot) +
+        @(Get-TomlUnknownEntries $Manifest $HomeRoot)
+    ))
     if ($null -ne $BaselinePlan) {
         $UnknownEntries = @(
             $UnknownEntries | Where-Object {
                 [string]$_ -cne [string]$BaselinePlan.paths.runtime_relative
             }
         )
+    }
+    $LocalExceptions = @(
+        Get-ValidatedLocalExceptions $RequestedLocalExceptions $UnknownEntries
+    )
+    if ((Test-ObjectProperty $Manifest 'desired_state') -and
+        $UnknownEntries.Count -gt 0 -and
+        -not $RemoveUnknownConfirmed -and
+        $LocalExceptions.Count -ne $UnknownEntries.Count) {
+        return [pscustomobject][ordered]@{
+            status = 'BLOCKED_USER_DECISION'
+            target = [string]$Manifest.target
+            release_version = [string]$Manifest.version
+            unknown_entries = @(Get-UnknownEntryDetails $UnknownEntries)
+            local_exceptions = $LocalExceptions
+            package_path = [string]$Validated.package_path
+            package_sha256 = [string]$Validated.package_sha256
+            target_home = [IO.Path]::GetFullPath($HomeRoot)
+        }
     }
     return [pscustomobject][ordered]@{
         status = 'READY'
@@ -2945,6 +3277,44 @@ function New-FoundationPlan {
             Get-EnvironmentActions $Manifest.environment $HomeRoot
         )
         quarantined_unknown = $UnknownEntries
+        local_exceptions = $LocalExceptions
+        package_path = [string]$Validated.package_path
+        package_sha256 = [string]$Validated.package_sha256
+        target_home = [IO.Path]::GetFullPath($HomeRoot)
+        remove_unknown = @(
+            $UnknownEntries | Where-Object {
+                $LocalExceptions -cnotcontains $_ -and
+                -not ([string]$_).StartsWith('toml:')
+            }
+        )
+    }
+}
+
+function Restore-LocalExceptions {
+    param(
+        [Parameter(Mandatory = $true)]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [AllowEmptyCollection()][object[]]$Paths
+    )
+    foreach ($RelativeValue in @(Sort-OrdinalStrings $Paths)) {
+        $Relative = [string]$RelativeValue
+        if ($Relative.StartsWith('toml:')) { continue }
+        $Source = Join-Path (Join-Path $Snapshot.root 'managed') (
+            $Relative.Replace('/', '\')
+        )
+        $Destination = Resolve-HomePath $Relative $HomeRoot
+        Assert-SafeAncestors $Destination $HomeRoot
+        if (Test-Path -LiteralPath $Destination) { continue }
+        if (Test-Path -LiteralPath $Source -PathType Container) {
+            Copy-TreeSafe $Source $Destination
+        } elseif (Test-Path -LiteralPath $Source -PathType Leaf) {
+            Copy-Atomic $Source $Destination $HomeRoot
+        } else {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                "Local exception is missing from snapshot: $Relative"
+            )
+        }
+        Invoke-MutationCheckpoint
     }
 }
 
@@ -3183,7 +3553,8 @@ function New-Snapshot {
     [IO.Directory]::CreateDirectory($ManagedRoot) | Out-Null
     $BaseManagedSurface = $Validated.manifest.managed_surface
     $SnapshotManagedSurface = $BaseManagedSurface
-    if ($null -ne $BaselinePlan -or @($RetiredPlan).Count -gt 0) {
+    if ($null -ne $BaselinePlan -or @($RetiredPlan).Count -gt 0 -or
+        @($Plan.remove_unknown).Count -gt 0) {
         $AdditionalExactDirectories = @(
             if ($null -ne $BaselinePlan) {
                 foreach ($Tool in @(
@@ -3199,6 +3570,31 @@ function New-Snapshot {
                     [string]$Action.path
                 }
             }
+            foreach ($UnknownValue in @($Plan.remove_unknown)) {
+                $Unknown = [string]$UnknownValue
+                $Covered = $false
+                foreach ($BaseRootValue in @(
+                    $BaseManagedSurface.exact_directories
+                )) {
+                    $BaseRoot = [string]$BaseRootValue
+                    if ($Unknown.Equals(
+                            $BaseRoot,
+                            [StringComparison]::OrdinalIgnoreCase
+                        ) -or $Unknown.StartsWith(
+                            $BaseRoot + '/',
+                            [StringComparison]::OrdinalIgnoreCase
+                        )) {
+                        $Covered = $true
+                        break
+                    }
+                }
+                if (-not $Covered) {
+                    $UnknownAbsolute = Resolve-HomePath $Unknown $HomeRoot
+                    if (Test-Path -LiteralPath $UnknownAbsolute -PathType Container) {
+                        $Unknown
+                    }
+                }
+            }
         )
         $AdditionalReplaceFiles = @(
             if ($null -ne $BaselinePlan) {
@@ -3207,6 +3603,31 @@ function New-Snapshot {
             foreach ($Action in @($RetiredPlan)) {
                 if ([string]$Action.kind -ceq 'file') {
                     [string]$Action.path
+                }
+            }
+            foreach ($UnknownValue in @($Plan.remove_unknown)) {
+                $Unknown = [string]$UnknownValue
+                $Covered = $false
+                foreach ($BaseRootValue in @(
+                    $BaseManagedSurface.exact_directories
+                )) {
+                    $BaseRoot = [string]$BaseRootValue
+                    if ($Unknown.Equals(
+                            $BaseRoot,
+                            [StringComparison]::OrdinalIgnoreCase
+                        ) -or $Unknown.StartsWith(
+                            $BaseRoot + '/',
+                            [StringComparison]::OrdinalIgnoreCase
+                        )) {
+                        $Covered = $true
+                        break
+                    }
+                }
+                if (-not $Covered) {
+                    $UnknownAbsolute = Resolve-HomePath $Unknown $HomeRoot
+                    if (Test-Path -LiteralPath $UnknownAbsolute -PathType Leaf) {
+                        $Unknown
+                    }
                 }
             }
         )
@@ -3663,6 +4084,17 @@ function Restore-Snapshot {
         } elseif (Test-Path -LiteralPath $Paths.active -PathType Leaf) {
             Remove-Item -LiteralPath $Paths.active -Force
         }
+        if ($null -ne $Snapshot.prior_active) {
+            Write-JsonFile ([pscustomobject][ordered]@{
+                schema_version = 1
+                target = [string]$Snapshot.prior_active.target
+                release_version = [string]$Snapshot.prior_active.release_version
+                paths = @($Snapshot.prior_active.local_exceptions)
+                reconfirmation = 'every-sync'
+            }) $Paths.local_exceptions
+        } elseif (Test-Path -LiteralPath $Paths.local_exceptions -PathType Leaf) {
+            Remove-Item -LiteralPath $Paths.local_exceptions -Force
+        }
         Invoke-RollbackStageCheckpoint 'after_active'
         if (Test-Path -LiteralPath $Paths.pending -PathType Leaf) {
             Remove-Item -LiteralPath $Paths.pending -Force
@@ -3748,6 +4180,21 @@ function Test-InstalledState {
                 $Relative = $File.FullName.Substring(
                     ([IO.Path]::GetFullPath($HomeRoot)).Length
                 ).TrimStart('\').Replace('\', '/')
+                $IsLocalException = $false
+                foreach ($ExceptionPathValue in @($State.local_exceptions)) {
+                    $ExceptionPath = [string]$ExceptionPathValue
+                    if ($Relative.Equals(
+                            $ExceptionPath,
+                            [StringComparison]::OrdinalIgnoreCase
+                        ) -or $Relative.StartsWith(
+                            $ExceptionPath + '/',
+                            [StringComparison]::OrdinalIgnoreCase
+                        )) {
+                        $IsLocalException = $true
+                        break
+                    }
+                }
+                if ($IsLocalException) { continue }
                 $null = $Actual.Add($Relative)
             }
         }
@@ -3792,7 +4239,13 @@ function Get-BundledOfficeCliContract {
     foreach ($Record in @(
         $Tools[0].private_exe,
         $Tools[0].shim,
-        $Tools[0].policy
+        $Tools[0].policy,
+        $(if (Test-ObjectProperty $Tools[0] 'pdf_exporter') {
+            $Tools[0].pdf_exporter
+        }),
+        $(if (Test-ObjectProperty $Tools[0] 'csv_batch_adapter') {
+            $Tools[0].csv_batch_adapter
+        })
     )) {
         if ([string]$Record.path -notmatch '^shared-tools/officecli/[A-Za-z0-9._-]+$' -or
             [string]$Record.sha256 -notmatch '^[0-9a-f]{64}$' -or
@@ -3862,11 +4315,23 @@ function Install-BundledOfficeCli {
     $PolicyDestination = Resolve-HomePath (
         '.llm-foundation/libexec/officecli/officecli-command-policy.json'
     ) $HomeRoot -AllowSharedToolPath
+    $ExporterDestination = Resolve-HomePath (
+        '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe'
+    ) $HomeRoot -AllowSharedToolPath
+    $CsvAdapterDestination = Resolve-HomePath (
+        '.llm-foundation/libexec/officecli/officecli_csv_batch.py'
+    ) $HomeRoot -AllowSharedToolPath
     $Pairs = @(
         @($Tool.private_exe, $PrivateDestination),
         @($Tool.shim, $ShimDestination),
         @($Tool.policy, $PolicyDestination)
     )
+    if (Test-ObjectProperty $Tool 'pdf_exporter') {
+        $Pairs += ,@($Tool.pdf_exporter, $ExporterDestination)
+    }
+    if (Test-ObjectProperty $Tool 'csv_batch_adapter') {
+        $Pairs += ,@($Tool.csv_batch_adapter, $CsvAdapterDestination)
+    }
     foreach ($Pair in $Pairs) {
         $Source = Join-Path $PSScriptRoot (
             ([string]$Pair[0].path).Replace('/', '\')
@@ -3913,6 +4378,20 @@ function Install-BundledOfficeCli {
                 sha256 = [string]$Tool.policy.sha256
                 bytes = [int64]$Tool.policy.bytes
             }
+            if (Test-ObjectProperty $Tool 'pdf_exporter') {
+                [pscustomobject][ordered]@{
+                    path = '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe'
+                    sha256 = [string]$Tool.pdf_exporter.sha256
+                    bytes = [int64]$Tool.pdf_exporter.bytes
+                }
+            }
+            if (Test-ObjectProperty $Tool 'csv_batch_adapter') {
+                [pscustomobject][ordered]@{
+                    path = '.llm-foundation/libexec/officecli/officecli_csv_batch.py'
+                    sha256 = [string]$Tool.csv_batch_adapter.sha256
+                    bytes = [int64]$Tool.csv_batch_adapter.bytes
+                }
+            }
         )
     }
     Write-JsonFile $Receipt $ReceiptPath
@@ -3950,10 +4429,18 @@ function Invoke-Install {
         [Parameter(Mandatory = $true)]$Validated,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)][string]$ActualClientId,
-        [Parameter(Mandatory = $true)][string]$ActualClientVersion
+        [Parameter(Mandatory = $true)][string]$ActualClientVersion,
+        [AllowEmptyCollection()][object[]]$RequestedLocalExceptions = @(),
+        [switch]$RemoveUnknownConfirmed
     )
     $Plan = New-FoundationPlan $Validated $HomeRoot $ActualClientId `
-        $ActualClientVersion
+        $ActualClientVersion $RequestedLocalExceptions `
+        -RemoveUnknownConfirmed:$RemoveUnknownConfirmed
+    if ([string]$Plan.status -ceq 'BLOCKED_USER_DECISION') {
+        Throw-Foundation 'BLOCKED_USER_DECISION' (
+            'Unknown managed entries require an explicit decision'
+        )
+    }
     $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Validated.manifest.target)
     $ActiveBeforeInstall = Read-ActiveState $Paths -AllowMissing
@@ -3999,12 +4486,40 @@ function Invoke-Install {
             if (@(Get-MergeTomlFiles (
                     $Validated.manifest.managed_surface
                 )) -icontains [string]$Row.path) {
-                Merge-TomlFileAtomic $Source $Destination $HomeRoot
+                $script:ActiveDesiredState = if (Test-ObjectProperty (
+                    $Validated.manifest
+                ) 'desired_state') { $Validated.manifest.desired_state } else { $null }
+                $script:ActiveMergeTomlRelativePath = [string]$Row.path
+                $script:ActiveLocalTomlExceptions = @(
+                    $Plan.local_exceptions | Where-Object {
+                        ([string]$_).StartsWith('toml:')
+                    }
+                )
+                try {
+                    Merge-TomlFileAtomic $Source $Destination $HomeRoot
+                } finally {
+                    $script:ActiveDesiredState = $null
+                    $script:ActiveMergeTomlRelativePath = $null
+                    $script:ActiveLocalTomlExceptions = @()
+                }
             } else {
                 Copy-Atomic $Source $Destination $HomeRoot
             }
             Invoke-MutationCheckpoint
         }
+        foreach ($UnknownValue in @($Plan.remove_unknown)) {
+            $Unknown = [string]$UnknownValue
+            if ($Unknown.StartsWith('toml:')) { continue }
+            $Destination = Resolve-HomePath $Unknown $HomeRoot
+            Assert-SafeAncestors $Destination $HomeRoot
+            if (Test-Path -LiteralPath $Destination -PathType Container) {
+                Remove-TreeSafe $Destination $HomeRoot
+            } elseif (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                Remove-Item -LiteralPath $Destination -Force
+            }
+            Invoke-MutationCheckpoint
+        }
+        Restore-LocalExceptions $Snapshot $HomeRoot @($Plan.local_exceptions)
         foreach ($Action in $RetiredPlan) {
             if ([string]$Action.kind -ceq 'directory') {
                 Remove-TreeSafe $Action.destination $HomeRoot
@@ -4058,15 +4573,34 @@ function Invoke-Install {
             environment = $Validated.manifest.environment
             installed_files = $Installed
             quarantined_unknown = @($Plan.quarantined_unknown)
+            local_exceptions = @($Plan.local_exceptions)
+            desired_state = if (Test-ObjectProperty (
+                $Validated.manifest
+            ) 'desired_state') {
+                $Validated.manifest.desired_state
+            } else {
+                $false
+            }
             snapshot_path = [string]$Snapshot.metadata_path
             snapshot_sha256 = [string]$Snapshot.metadata_sha256
         }
         $null = Test-InstalledState $State $HomeRoot $ActualClientId `
             $ActualClientVersion
         Write-JsonFile $State $Paths.active
+        Write-JsonFile ([pscustomobject][ordered]@{
+            schema_version = 1
+            target = [string]$State.target
+            release_version = [string]$State.release_version
+            paths = @($State.local_exceptions)
+            reconfirmation = 'every-sync'
+        }) $Paths.local_exceptions
         Remove-Item -LiteralPath $Paths.pending -Force
         return [pscustomobject][ordered]@{
-            status = 'INSTALLED'
+            status = if (@($State.local_exceptions).Count -gt 0) {
+                'CANONICAL_WITH_LOCAL_EXCEPTIONS'
+            } else {
+                'CANONICAL'
+            }
             target = [string]$State.target
             release_version = [string]$State.release_version
             installed_file_count = @($State.installed_files).Count
@@ -4127,6 +4661,27 @@ function Invoke-Doctor {
             $SessionState $HomeRoot $TargetName $SessionPaths -CheckDestination
     }
     Test-BundledOfficeCliState $HomeRoot
+    if ($State.desired_state -is [Management.Automation.PSCustomObject]) {
+        $CurrentManifest = [pscustomobject]@{
+            managed_surface = $State.managed_surface
+            files = $State.installed_files
+            desired_state = $State.desired_state
+        }
+        $CurrentUnknown = @(Sort-OrdinalStrings @(
+            @(Get-UnknownEntries $CurrentManifest $HomeRoot) +
+            @(Get-TomlUnknownEntries $CurrentManifest $HomeRoot)
+        ))
+        $Declared = @(Sort-OrdinalStrings @($State.local_exceptions))
+        $Actual = @(Sort-OrdinalStrings $CurrentUnknown)
+        if (@(Compare-Object -ReferenceObject $Declared -DifferenceObject $Actual).Count -ne 0) {
+            Throw-Foundation 'ACTIVE_DRIFT' 'Local exception inventory differs'
+        }
+        $Health.status = if ($Declared.Count -gt 0) {
+            'CANONICAL_WITH_LOCAL_EXCEPTIONS'
+        } else {
+            'CANONICAL'
+        }
+    }
     return $Health
 }
 
@@ -4147,6 +4702,8 @@ function Invoke-Inventory {
         managed_surface = $State.managed_surface
         environment = $State.environment
         quarantined_unknown = @($State.quarantined_unknown)
+        local_exceptions = @($State.local_exceptions)
+        desired_state = $State.desired_state
     }
 }
 
@@ -4182,6 +4739,36 @@ $OperationLock = $null
 try {
     $TargetHome = [IO.Path]::GetFullPath($TargetHome)
     Assert-SafeDirectory $TargetHome
+    if ($Command -ceq 'apply') {
+        if ([string]::IsNullOrWhiteSpace($PlanFile) -or
+            -not (Test-Path -LiteralPath $PlanFile -PathType Leaf)) {
+            Throw-Foundation 'INVALID_ARGUMENT' 'Apply requires -Plan <file>'
+        }
+        $SavedPlan = Read-JsonFile ([IO.Path]::GetFullPath($PlanFile))
+        if ([string]$SavedPlan.status -cne 'READY' -or
+            [string]$SavedPlan.package_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$SavedPlan.target_home -cne $TargetHome -or
+            [string]::IsNullOrWhiteSpace([string]$SavedPlan.package_path) -or
+            [string]::IsNullOrWhiteSpace([string]$SavedPlan.target) -or
+            [string]::IsNullOrWhiteSpace([string]$SavedPlan.client.id) -or
+            [string]::IsNullOrWhiteSpace(
+                [string]$SavedPlan.client.supported_version
+            )) {
+            Throw-Foundation 'INVALID_ARGUMENT' 'Saved plan is invalid'
+        }
+        $Package = [string]$SavedPlan.package_path
+        if (-not (Test-Path -LiteralPath $Package -PathType Leaf) -or
+            (Get-FileSha256 $Package) -cne [string]$SavedPlan.package_sha256) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Saved-plan package differs'
+        }
+        $Target = [string]$SavedPlan.target
+        $ClientId = [string]$SavedPlan.client.id
+        $ClientVersion = [string]$SavedPlan.client.supported_version
+        $script:RequestedLocalExceptionPaths = @(
+            $SavedPlan.local_exceptions
+        )
+        $ConfirmRemoveUnknown = @($SavedPlan.remove_unknown).Count -gt 0
+    }
     $HasReleaseManifest = -not [string]::IsNullOrWhiteSpace($ReleaseManifest)
     $HasReleaseManifestSha256 = -not [string]::IsNullOrWhiteSpace(
         $ReleaseManifestSha256
@@ -4221,7 +4808,7 @@ try {
             'Doctor requires Package or Target'
         )
     }
-    if ($Command -in @('plan', 'install', 'doctor') -and (
+    if ($Command -in @('plan', 'apply', 'install', 'doctor') -and (
         [string]::IsNullOrWhiteSpace($ClientId) -or
         [string]::IsNullOrWhiteSpace($ClientVersion)
     )) {
@@ -4229,18 +4816,27 @@ try {
             'ClientId and ClientVersion are required'
         )
     }
-    if ($Command -in @('install', 'rollback')) {
+    if ($Command -in @('apply', 'install', 'rollback')) {
         $OperationPaths = Get-FoundationPaths $TargetHome $Target
         $OperationLock = Enter-TargetLock $OperationPaths $TargetHome
     }
     $Result = switch ($Command) {
         'plan' {
             New-FoundationPlan $Validated $TargetHome $ClientId `
-                $ClientVersion
+                $ClientVersion $script:RequestedLocalExceptionPaths `
+                -RemoveUnknownConfirmed:$ConfirmRemoveUnknown
             break
         }
         'install' {
-            Invoke-Install $Validated $TargetHome $ClientId $ClientVersion
+            Invoke-Install $Validated $TargetHome $ClientId $ClientVersion `
+                $script:RequestedLocalExceptionPaths `
+                -RemoveUnknownConfirmed:$ConfirmRemoveUnknown
+            break
+        }
+        'apply' {
+            Invoke-Install $Validated $TargetHome $ClientId $ClientVersion `
+                $script:RequestedLocalExceptionPaths `
+                -RemoveUnknownConfirmed:$ConfirmRemoveUnknown
             break
         }
         'doctor' {
@@ -4257,6 +4853,7 @@ try {
         }
     }
     Write-Result $Result
+    if ([string]$Result.status -ceq 'BLOCKED_USER_DECISION') { exit 20 }
     exit 0
 } catch {
     $Code = [string]$_.Exception.Data['FoundationCode']
@@ -4266,7 +4863,11 @@ try {
     $Exit = $script:ExitCode[$Code]
     if ($null -eq $Exit) { $Exit = 30 }
     Write-Result ([pscustomobject][ordered]@{
-        status = 'BLOCKED'
+        status = if ($Code -ceq 'BLOCKED_USER_DECISION') {
+            'BLOCKED_USER_DECISION'
+        } else {
+            'BLOCKED'
+        }
         code = $Code
         message = [string]$_.Exception.Message
     })

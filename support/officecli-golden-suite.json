@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "officecli_version": "1.0.143",
+  "schema_reference": {
+    "command": ["help", "all", "--json"],
+    "minimum_description_lines": 2458,
+    "minimum_elements": {"docx": 45, "xlsx": 41, "pptx": 34}
+  },
+  "required_families": {
+    "docx": ["create", "outline", "get", "query", "set", "add", "remove", "batch", "merge", "dump", "replay", "validate", "issues", "native-render", "pdf-export"],
+    "xlsx": ["create", "outline", "get", "set", "batch", "formula", "table", "chart", "validation", "conditional-format", "comment", "named-range", "freeze", "print-area", "dump", "replay", "merge", "validate", "issues", "pdf-export"],
+    "pptx": ["create", "outline", "get", "set", "add", "remove", "batch", "dump", "replay", "native-render", "pdf-export"]
+  },
+  "known_routes": {
+    "csv_import": "k7-deterministic-csv-batch-adapter",
+    "sparkline_edit": "excel-com-or-codex-fallback",
+    "xlsx_range_screenshot": "not-acceptance-evidence",
+    "html_render": "diagnostic-only",
+    "pdf_export": "k7-officecli-pdf-exporter"
+  },
+  "acceptance": {
+    "docx": ["officecli-readback", "officecli-validate", "word-native-render", "word-checker", "document-quality-gate"],
+    "xlsx": ["officecli-readback", "officecli-validate", "excel-com-readback", "excel-pdf", "excel-validator", "document-quality-gate"],
+    "pptx": ["officecli-readback", "powerpoint-native-render", "pdf-page-render", "presentation-reviewer", "document-quality-gate"],
+    "pdf": ["all-pages-render", "page-count-and-size", "font-and-crop-check", "pdf-reviewer", "document-quality-gate"]
+  }
+}
