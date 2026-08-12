@@ -1,0 +1,49 @@
+name: K7 shared components
+
+on:
+  workflow_dispatch:
+    inputs:
+      codex_ref:
+        description: Exact codex-base ref
+        required: true
+        type: string
+      claude_ref:
+        description: Exact claude-base-v2 ref
+        required: true
+        type: string
+      opencode_ref:
+        description: Exact opencode-base ref
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  shared-hash-lock:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: daniileliseev1337/codex-base
+          ref: ${{ inputs.codex_ref }}
+          path: repos/codex-base
+      - uses: actions/checkout@v4
+        with:
+          repository: daniileliseev1337/claude-base-v2
+          ref: ${{ inputs.claude_ref }}
+          path: repos/claude-base-v2
+      - uses: actions/checkout@v4
+        with:
+          repository: daniileliseev1337/opencode-base
+          ref: ${{ inputs.opencode_ref }}
+          path: repos/opencode-base
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Require byte-identical shared components
+        shell: pwsh
+        run: >-
+          python repos/codex-base/tools/verify_shared_components.py
+          repos/codex-base repos/claude-base-v2 repos/opencode-base
