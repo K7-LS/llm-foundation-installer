@@ -30,6 +30,12 @@ def test_inventory_reports_unmanaged_profile_before_first_install(
     skill = home / ".agents" / "skills" / "imported-from-claude"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("legacy\n", encoding="utf-8")
+    config = home / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        '[mcp_servers.imported]\ncommand = "legacy-mcp.exe"\n',
+        encoding="utf-8",
+    )
 
     result = _run(executable, engine_root, "inventory", home, target="codex")
 
@@ -37,8 +43,10 @@ def test_inventory_reports_unmanaged_profile_before_first_install(
     payload = _json(result)
     assert payload["status"] == "UNMANAGED_PROFILE"
     assert [row["path"] for row in payload["unknown_entries"]] == [
-        ".agents/skills/imported-from-claude"
+        ".agents/skills/imported-from-claude",
+        "toml:.codex/config.toml#mcp_servers.imported",
     ]
+    assert payload["unknown_entries"][1]["launch_command"] == "legacy-mcp.exe"
 
 
 def _sha256(payload: bytes) -> str:
