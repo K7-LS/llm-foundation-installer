@@ -1628,8 +1628,9 @@ def test_engine_bundle_is_deterministic_across_ps7_and_ps51(
     }
     manifest = json.loads(first["engine-manifest.json"])
     assert manifest["engine_version"] == ENGINE_VERSION
-    assert manifest["commands"] == [
-        "doctor",
+        assert manifest["commands"] == [
+            "apply",
+            "doctor",
         "install",
         "inventory",
         "plan",
