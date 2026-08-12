@@ -98,6 +98,9 @@ def _compile_fake_officecli(path: Path) -> None:
                         Environment.GetEnvironmentVariable("OFFICECLI_SHIM_TEST_OUTPUT"),
                         args
                     );
+                    Console.OutputEncoding = System.Text.Encoding.UTF8;
+                    Console.Error.WriteLine("officecli-stderr: проверка");
+                    Console.WriteLine("officecli-stdout: документ");
                     return 23;
                 }
             }
@@ -260,3 +263,24 @@ def test_shim_forwards_only_exact_version_and_help_forms(tmp_path: Path) -> None
         )
         assert invocation.returncode != 23
         assert not marker.exists(), arguments
+
+
+def test_shim_forwards_utf8_stdout_stderr_and_exit_code(tmp_path: Path) -> None:
+    """Dropping redirected output must fail even when the child exit code survives."""
+    public, marker, environment = _install_shim(tmp_path)
+
+    invocation = subprocess.run(
+        [str(public), "view", "документ.docx", "text"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+
+    assert invocation.returncode == 23
+    assert invocation.stdout.strip() == "officecli-stdout: документ"
+    assert invocation.stderr.strip() == "officecli-stderr: проверка"
+    assert marker.read_text(encoding="utf-8").splitlines() == [
+        "view", "документ.docx", "text"
+    ]

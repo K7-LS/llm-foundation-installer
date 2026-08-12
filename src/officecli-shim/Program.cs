@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 namespace Foundation.OfficeCliShim
@@ -163,13 +164,23 @@ namespace Foundation.OfficeCliShim
                 start.Arguments = WindowsArgv.Serialize(args);
                 start.UseShellExecute = false;
                 start.CreateNoWindow = true;
+                start.RedirectStandardOutput = true;
+                start.RedirectStandardError = true;
+                start.StandardOutputEncoding = new UTF8Encoding(false, true);
+                start.StandardErrorEncoding = new UTF8Encoding(false, true);
                 foreach (KeyValuePair<string, string> variable in policy.process_environment)
                 {
                     start.EnvironmentVariables[variable.Key] = variable.Value;
                 }
                 using (Process process = Process.Start(start))
                 {
+                    Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+                    Task<string> stderr = process.StandardError.ReadToEndAsync();
                     process.WaitForExit();
+                    Task.WaitAll(stdout, stderr);
+                    Console.OutputEncoding = new UTF8Encoding(false);
+                    Console.Write(stdout.Result);
+                    Console.Error.Write(stderr.Result);
                     return process.ExitCode;
                 }
             }

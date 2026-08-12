@@ -13,6 +13,8 @@ $VersionPath = Join-Path $RepositoryRoot 'VERSION'
 $SourcePath = Join-Path $RepositoryRoot 'src\foundation.ps1'
 $SourceLockPath = Join-Path $RepositoryRoot 'client-sources.lock.json'
 $ShimBuildPath = Join-Path $RepositoryRoot 'tools\build-officecli-shim.ps1'
+$ExporterBuildPath = Join-Path $RepositoryRoot 'tools\build-officecli-pdf-exporter.ps1'
+$CsvAdapterSourcePath = Join-Path $RepositoryRoot 'tools\officecli_csv_batch.py'
 $PolicySourcePath = Join-Path $RepositoryRoot 'support\officecli-command-policy.json'
 
 if (Test-Path -LiteralPath $OutputRoot) {
@@ -22,6 +24,8 @@ if (-not (Test-Path -LiteralPath $VersionPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $SourcePath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $SourceLockPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $ShimBuildPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $ExporterBuildPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $CsvAdapterSourcePath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $PolicySourcePath -PathType Leaf)) {
     throw 'Foundation source is incomplete'
 }
@@ -64,6 +68,7 @@ $Hash = Get-Sha256 $BundledScript
 $Manifest = @"
 {
   "commands": [
+    "apply",
     "doctor",
     "install",
     "inventory",
@@ -109,6 +114,11 @@ $ShimPath = Join-Path $SharedRoot 'officecli-shim.exe'
 if ($LASTEXITCODE -ne 0) { throw 'OfficeCLI shim build failed' }
 $PolicyPath = Join-Path $SharedRoot 'officecli-command-policy.json'
 [IO.File]::Copy($PolicySourcePath, $PolicyPath, $false)
+$ExporterPath = Join-Path $SharedRoot 'k7-officecli-pdf.exe'
+& $ExporterBuildPath -OutputPath $ExporterPath
+if ($LASTEXITCODE -ne 0) { throw 'OfficeCLI PDF exporter build failed' }
+$CsvAdapterPath = Join-Path $SharedRoot 'officecli_csv_batch.py'
+[IO.File]::Copy($CsvAdapterSourcePath, $CsvAdapterPath, $false)
 
 $SharedLock = [ordered]@{
     schema_version = 1
@@ -132,6 +142,16 @@ $SharedLock = [ordered]@{
                 path = 'shared-tools/officecli/officecli-command-policy.json'
                 sha256 = Get-Sha256 $PolicyPath
                 bytes = (Get-Item -LiteralPath $PolicyPath).Length
+            }
+            pdf_exporter = [ordered]@{
+                path = 'shared-tools/officecli/k7-officecli-pdf.exe'
+                sha256 = Get-Sha256 $ExporterPath
+                bytes = (Get-Item -LiteralPath $ExporterPath).Length
+            }
+            csv_batch_adapter = [ordered]@{
+                path = 'shared-tools/officecli/officecli_csv_batch.py'
+                sha256 = Get-Sha256 $CsvAdapterPath
+                bytes = (Get-Item -LiteralPath $CsvAdapterPath).Length
             }
             environment = [ordered]@{
                 OFFICECLI_NO_AUTO_INSTALL = '1'

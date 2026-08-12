@@ -135,8 +135,8 @@ def _render_guide_preview(
         (
             "Employee",
             "Installer",
-            ["codex", "opencode"],
-            ["codex", "opencode"],
+            ["claude", "codex", "opencode"],
+            ["claude", "codex", "opencode"],
             True,
             "K7Signal",
             False,
@@ -145,10 +145,19 @@ def _render_guide_preview(
             "Owner",
             "LaunchCenter",
             ["claude", "codex", "opencode"],
-            ["codex", "opencode"],
+            ["claude", "codex", "opencode"],
             False,
             "SignalConsole",
             True,
+        ),
+        (
+            "Simple",
+            "Installer",
+            ["claude", "codex", "opencode"],
+            ["claude", "codex", "opencode"],
+            True,
+            "K7Signal",
+            False,
         ),
     ],
 )
@@ -165,11 +174,7 @@ def test_embedded_edition_contract(
     value = _describe_edition(tmp_path, edition, product_role)
     assert value == {
         "edition_id": edition,
-        "display_name": (
-            "K-7 AI Foundation Employee"
-            if edition == "Employee"
-            else "K-7 AI Foundation Owner"
-        ),
+        "display_name": f"K-7 AI Foundation {edition}",
         "distribution_allowed": distribution_allowed,
         "included_target_ids": included,
         "required_target_ids": required,
@@ -276,6 +281,8 @@ def test_owner_launch_center_labels_claude_as_owner_only_candidate() -> None:
         ("Employee", "LaunchCenter"),
         ("Owner", "Installer"),
         ("Owner", "LaunchCenter"),
+        ("Simple", "Installer"),
+        ("Simple", "LaunchCenter"),
     ],
 )
 def test_each_edition_product_renders_its_own_preview(

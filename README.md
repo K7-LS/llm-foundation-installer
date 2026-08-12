@@ -1,13 +1,18 @@
 # K-7 — установщик и центр запуска ИИ
 
-Локальный установщик Windows 10/11 и ежедневный центр запуска в двух строго
+Локальный установщик Windows 10/11 и ежедневный центр запуска в трёх строго
 разделённых версиях:
 
-- **для сотрудников** — Codex Desktop, Codex CLI, OpenCode Desktop,
+- **Simple** — Claude Code, Codex CLI и OpenCode CLI;
+- **для сотрудников** — Claude Code, Codex Desktop, Codex CLI, OpenCode Desktop,
   OpenCode CLI и VS Code + Codex; стабильная выдача разрешается только после
   пилота на чистом ПК и неизменяемой публикации;
-- **для владельца** — Codex, OpenCode и кандидат Claude только для владельца;
-  `distribution_allowed=false`, пока `FULL_RELEASE_CLAUDE=NOT_PASS`.
+- **для владельца** — Claude Code, Codex и OpenCode с расширенной диагностикой.
+
+Техническая готовность Claude и допустимый live-доступ провайдера разделены:
+`TECHNICAL_READY` отвечает за официальный бинарник и пакет, а
+`PROVIDER_LIVE` — за интерактивный допустимый вход. До live-пилота единый
+комплект имеет канал `InternalUnsigned` и не публикуется как stable/public.
 
 Каждая версия — единый комплект с двумя EXE, `bundle-manifest.json` и
 закреплённой средой SingBox. Программы работают от текущего пользователя,

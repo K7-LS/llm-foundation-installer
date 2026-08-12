@@ -492,7 +492,7 @@ namespace LlmFoundationInstaller
                         : new[]
                         {
                             "Выберите Codex или OpenCode" +
-                                (owner ? "; Claude доступен только владельцу." : "."),
+                                "; Claude, Codex и OpenCode входят в технический комплект.",
                             "Укажите прямое подключение, VPN, SingBox HTTP или SingBox HTTPS.",
                             "Нажмите «Запустить». Центр запускает только проверенную точную цель."
                         },

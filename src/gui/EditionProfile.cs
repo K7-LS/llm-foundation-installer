@@ -121,8 +121,21 @@ namespace LlmFoundationInstaller
                 ValidateExact(
                     "K-7 AI Foundation Employee",
                     true,
-                    new[] { "codex", "opencode" },
-                    new[] { "codex", "opencode" },
+                    new[] { "claude", "codex", "opencode" },
+                    new[] { "claude", "codex", "opencode" },
+                    "K7Signal",
+                    false
+                );
+                return;
+            }
+
+            if (edition_id == "Simple")
+            {
+                ValidateExact(
+                    "K-7 AI Foundation Simple",
+                    true,
+                    new[] { "claude", "codex", "opencode" },
+                    new[] { "claude", "codex", "opencode" },
                     "K7Signal",
                     false
                 );
@@ -135,7 +148,7 @@ namespace LlmFoundationInstaller
                     "K-7 AI Foundation Owner",
                     false,
                     new[] { "claude", "codex", "opencode" },
-                    new[] { "codex", "opencode" },
+                    new[] { "claude", "codex", "opencode" },
                     "SignalConsole",
                     true
                 );

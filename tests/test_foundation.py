@@ -41,10 +41,12 @@ def _package(
     casefold_preserved: bool = False,
     compatibility_surface: bool = False,
     environment_set: list[dict[str, str]] | None = None,
+    desired_state: bool = False,
+    config_payload: bytes | None = None,
 ) -> Path:
     entries = {
         ".codex/AGENTS.md": b"# candidate\n",
-        ".codex/config.toml": (
+        ".codex/config.toml": config_payload or (
             b"project_doc_max_bytes = 8192\n"
             b"check_for_update_on_startup = false\n"
             b"[features]\nhooks = true\n"
@@ -93,6 +95,8 @@ def _package(
             ]
         )
         replace_files.sort()
+    if desired_state and ".codex/config.toml" in replace_files:
+        replace_files.remove(".codex/config.toml")
     if casefold_preserved:
         entries.pop(".codex/agents/auditor.toml")
         entries[".CODEX/SESSIONS/managed.txt"] = b"must-not-install\n"
@@ -144,7 +148,7 @@ def _package(
                 {
                     "merge_toml_files": [".codex/config.toml"],
                 }
-                if compatibility_surface
+                if compatibility_surface or desired_state
                 else {}
             ),
         },
@@ -161,6 +165,37 @@ def _package(
         },
         "files": rows,
     }
+    if desired_state:
+        manifest["desired_state"] = {
+            "schema_version": 1,
+            "unknown_policy": "prompt-every-run",
+            "local_exceptions": True,
+            "strict_doctor": True,
+            "inventory_roots": [
+                ".agents/skills",
+                ".codex/agents",
+            ],
+            "platform_owned": [],
+            "toml_reconcile": [
+                {
+                    "path": ".codex/config.toml",
+                    "exact_tables": [
+                        "mcp_servers",
+                        "plugin_marketplaces",
+                        "plugins",
+                    ],
+                    "protected_tables": [
+                        "mcp_servers.node_repl",
+                    ],
+                    "allowed_entries": [
+                        "mcp_servers.k7-autocad-bridge",
+                        "mcp_servers.k7-revit-bridge",
+                        "plugins.documents",
+                        "plugins.spreadsheets",
+                    ],
+                }
+            ],
+        }
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         for name, payload in entries.items():
@@ -192,6 +227,10 @@ def _run(
     release_manifest: Path | None = None,
     release_manifest_sha256: str | None = None,
     extra_env: dict[str, str] | None = None,
+    local_exceptions: list[str] | None = None,
+    confirm_remove_unknown: bool = False,
+    strict: bool = False,
+    plan_file: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     arguments = [
         executable,
@@ -207,6 +246,8 @@ def _run(
     ]
     if package is not None:
         arguments.extend(["-Package", str(package)])
+    if plan_file is not None:
+        arguments.extend(["-Plan", str(plan_file)])
     if target is not None:
         arguments.extend(["-Target", target])
     if release_manifest is not None:
@@ -218,6 +259,12 @@ def _run(
     if client is not None:
         arguments.extend(["-ClientId", client_id])
         arguments.extend(["-ClientVersion", client])
+    if local_exceptions:
+        arguments.extend(["-LocalExceptionPath", "|".join(local_exceptions)])
+    if confirm_remove_unknown:
+        arguments.append("-ConfirmRemoveUnknown")
+    if strict:
+        arguments.append("-Strict")
     environment = os.environ.copy()
     environment["FOUNDATION_ACCEPTANCE_MODE"] = "1"
     acceptance_temp = home.parent / "_foundation-temp"
@@ -361,6 +408,322 @@ def test_plan_install_doctor_inventory_and_rollback_preserve_user_data(
     for path, payload in sentinels.items():
         assert path.read_bytes() == payload
 
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_desired_state_prompts_every_run_and_keeps_approved_local_exception(
+    engine_root, tmp_path, executable
+):
+    """Removing the decision gate or exception restore must break this contract."""
+    home = tmp_path / f"desired-state-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(
+        tmp_path / f"desired-state-{Path(executable).stem}.zip",
+        desired_state=True,
+    )
+    local_path = ".agents/skills/local-personal"
+
+    blocked = _run(executable, engine_root, "plan", home, package=package)
+    assert blocked.returncode == 20, blocked.stderr
+    blocked_payload = _json(blocked)
+    assert blocked_payload["status"] == "BLOCKED_USER_DECISION"
+    assert blocked_payload["unknown_entries"] == [
+        {
+            "path": local_path,
+            "kind": "skill",
+            "active": True,
+            "source": "local-unmanaged",
+            "risk": "UNREVIEWED_EXECUTABLE_INSTRUCTIONS",
+        }
+    ]
+
+    install = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        local_exceptions=[local_path],
+        confirm_remove_unknown=True,
+    )
+    assert install.returncode == 0, install.stderr
+    assert _json(install)["status"] == "CANONICAL_WITH_LOCAL_EXCEPTIONS"
+    assert (home / local_path.replace("/", os.sep) / "SKILL.md").is_file()
+
+    doctor = _run(
+        executable,
+        engine_root,
+        "doctor",
+        home,
+        target="codex",
+        strict=True,
+    )
+    assert doctor.returncode == 0, doctor.stderr
+    assert _json(doctor)["status"] == "CANONICAL_WITH_LOCAL_EXCEPTIONS"
+
+    inventory = _run(
+        executable, engine_root, "inventory", home, target="codex"
+    )
+    assert inventory.returncode == 0, inventory.stderr
+    assert _json(inventory)["local_exceptions"] == [local_path]
+
+    blocked_again = _run(
+        executable, engine_root, "plan", home, package=package
+    )
+    assert blocked_again.returncode == 20, blocked_again.stderr
+    assert _json(blocked_again)["status"] == "BLOCKED_USER_DECISION"
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_desired_state_reconciles_owned_toml_tables_and_preserves_projects(
+    engine_root, tmp_path, executable
+):
+    """Preserving a stale MCP table or deleting project state must fail."""
+    home = tmp_path / f"desired-toml-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    config = home / ".codex" / "config.toml"
+    config.write_text(
+        "[features]\nmemories = true\n\n"
+        "[mcp_servers.node_repl]\ncommand = \"platform-node-repl.exe\"\n\n"
+        "[mcp_servers.exa]\nurl = \"https://example.invalid/mcp\"\n\n"
+        "[plugin_marketplaces.claude-plugins-official]\n"
+        "url = \"https://example.invalid/claude\"\n\n"
+        "[plugins]\nclaude-md-management = true\n\n"
+        "[projects.'C:\\\\work']\ntrust_level = \"trusted\"\n",
+        encoding="utf-8",
+    )
+    required = (
+        b"project_doc_max_bytes = 8192\n"
+        b"check_for_update_on_startup = false\n\n"
+        b"[features]\nhooks = true\n\n"
+        b"[agents]\nenabled = true\n\n"
+        b"[mcp_servers.k7-revit-bridge]\ncommand = \"k7-revit-bridge.exe\"\n\n"
+        b"[mcp_servers.k7-autocad-bridge]\ncommand = \"k7-autocad-bridge.exe\"\n\n"
+        b"[plugins]\ndocuments = true\nspreadsheets = true\n"
+    )
+    package = _package(
+        tmp_path / f"desired-toml-{Path(executable).stem}.zip",
+        desired_state=True,
+        config_payload=required,
+    )
+
+    install = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        confirm_remove_unknown=True,
+    )
+    assert install.returncode == 0, install.stderr
+    text = config.read_text(encoding="utf-8")
+    assert "[mcp_servers.exa]" not in text
+    assert "[mcp_servers.node_repl]" in text
+    assert 'command = "platform-node-repl.exe"' in text
+    assert "claude-plugins-official" not in text
+    assert "claude-md-management" not in text
+    assert "[mcp_servers.k7-revit-bridge]" in text
+    assert "[mcp_servers.k7-autocad-bridge]" in text
+    assert "documents = true" in text
+    assert "spreadsheets = true" in text
+    assert "[projects.'C:\\\\work']" in text
+    assert 'trust_level = "trusted"' in text
+    assert "memories = true" in text
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_desired_state_inventory_roots_remove_granular_unmanaged_entries_and_rollback(
+    engine_root, tmp_path, executable
+):
+    """A granular payload must still find, remove and restore sibling drift."""
+    home = tmp_path / f"inventory-roots-{Path(executable).stem}"
+    home.mkdir()
+    sentinels = _seed_home(home)
+    legacy_agent = home / ".codex" / "agents" / "claude-derived.toml"
+    legacy_agent.parent.mkdir(parents=True)
+    legacy_agent.write_text('name = "claude-derived"\n', encoding="utf-8")
+    package = _package(
+        tmp_path / f"inventory-roots-{Path(executable).stem}.zip",
+        compatibility_surface=True,
+        desired_state=True,
+    )
+
+    blocked = _run(executable, engine_root, "plan", home, package=package)
+    assert blocked.returncode == 20, blocked.stderr
+    unknown = {
+        row["path"]: row for row in _json(blocked)["unknown_entries"]
+    }
+    assert set(unknown) == {
+        ".agents/skills/local-personal",
+        ".codex/agents/claude-derived.toml",
+    }
+    assert unknown[".agents/skills/local-personal"]["kind"] == "skill"
+    assert unknown[".codex/agents/claude-derived.toml"]["kind"] == "agent"
+
+    installed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        confirm_remove_unknown=True,
+    )
+    assert installed.returncode == 0, installed.stderr
+    assert _json(installed)["status"] == "CANONICAL"
+    assert not (home / ".agents" / "skills" / "local-personal").exists()
+    assert not legacy_agent.exists()
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+
+    doctor = _run(
+        executable,
+        engine_root,
+        "doctor",
+        home,
+        target="codex",
+        strict=True,
+    )
+    assert doctor.returncode == 0, doctor.stderr
+    assert _json(doctor)["status"] == "CANONICAL"
+
+    rollback = _run(
+        executable, engine_root, "rollback", home, target="codex"
+    )
+    assert rollback.returncode == 0, rollback.stderr
+    assert (home / ".agents" / "skills" / "local-personal" / "SKILL.md").is_file()
+    assert legacy_agent.is_file()
+    for path, payload in sentinels.items():
+        assert path.read_bytes() == payload
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_control_fixture_classifies_20_mcp_47_skills_and_18_agents(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"control-profile-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    skills = home / ".agents" / "skills"
+    for index in range(44):
+        path = skills / f"legacy-skill-{index:02d}" / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("# legacy\n", encoding="utf-8")
+    agents = home / ".codex" / "agents"
+    agents.mkdir(parents=True)
+    for index in range(17):
+        (agents / f"legacy-agent-{index:02d}.toml").write_text(
+            'name = "legacy"\n', encoding="utf-8"
+        )
+    config_rows = [
+        "[mcp_servers.node_repl]\ncommand = \"platform.exe\"\n",
+        "[mcp_servers.k7-revit-bridge]\ncommand = \"k7-revit-bridge.exe\"\n",
+        "[mcp_servers.k7-autocad-bridge]\ncommand = \"k7-autocad-bridge.exe\"\n",
+    ]
+    config_rows.extend(
+        f"[mcp_servers.legacy-{index:02d}]\ncommand = \"legacy.exe\"\n"
+        for index in range(17)
+    )
+    config = home / ".codex" / "config.toml"
+    config.write_text("\n".join(config_rows), encoding="utf-8")
+    package = _package(
+        tmp_path / f"control-profile-{Path(executable).stem}.zip",
+        desired_state=True,
+        config_payload=(
+            b"[mcp_servers.k7-revit-bridge]\ncommand = \"k7-revit-bridge.exe\"\n\n"
+            b"[mcp_servers.k7-autocad-bridge]\ncommand = \"k7-autocad-bridge.exe\"\n\n"
+            b"[plugins]\ndocuments = true\nspreadsheets = true\n"
+        ),
+    )
+    result = _run(executable, engine_root, "plan", home, package=package)
+    assert result.returncode == 20, result.stderr
+    unknown = _json(result)["unknown_entries"]
+    counts = {
+        kind: sum(row["kind"] == kind for row in unknown)
+        for kind in ("mcp", "skill", "agent")
+    }
+    assert counts == {"mcp": 17, "skill": 45, "agent": 17}
+    assert 17 + 3 == 20
+    assert 45 + 2 == 47
+    assert 17 + 1 == 18
+    assert all(row["source"] == "codex-config-toml" for row in unknown if row["kind"] == "mcp")
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_toml_local_exception_is_explicit_and_reconfirmed_every_run(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"toml-exception-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    config = home / ".codex" / "config.toml"
+    config.write_text(
+        "[mcp_servers.local]\ncommand = \"local.exe\"\n",
+        encoding="utf-8",
+    )
+    package = _package(
+        tmp_path / f"toml-exception-{Path(executable).stem}.zip",
+        desired_state=True,
+    )
+    identity = "toml:.codex/config.toml#mcp_servers.local"
+    blocked = _run(executable, engine_root, "plan", home, package=package)
+    assert blocked.returncode == 20
+    assert identity in [row["path"] for row in _json(blocked)["unknown_entries"]]
+    installed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        local_exceptions=[
+            ".agents/skills/local-personal",
+            identity,
+        ],
+    )
+    assert installed.returncode == 0, installed.stderr
+    assert "[mcp_servers.local]" in config.read_text(encoding="utf-8")
+    doctor = _run(
+        executable, engine_root, "doctor", home, target="codex", strict=True
+    )
+    assert doctor.returncode == 0, doctor.stderr
+    assert _json(doctor)["status"] == "CANONICAL_WITH_LOCAL_EXCEPTIONS"
+    blocked_again = _run(executable, engine_root, "plan", home, package=package)
+    assert blocked_again.returncode == 20
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_apply_uses_hash_bound_saved_plan_and_rechecks_live_state(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"saved-plan-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    package = _package(
+        tmp_path / f"saved-plan-{Path(executable).stem}.zip",
+        desired_state=True,
+    )
+    planned = _run(
+        executable,
+        engine_root,
+        "plan",
+        home,
+        package=package,
+        confirm_remove_unknown=True,
+    )
+    assert planned.returncode == 0, planned.stderr
+    plan_file = tmp_path / f"plan-{Path(executable).stem}.json"
+    plan_file.write_text(
+        json.dumps(_json(planned), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    applied = _run(
+        executable,
+        engine_root,
+        "apply",
+        home,
+        plan_file=plan_file,
+    )
+    assert applied.returncode == 0, applied.stderr
+    assert _json(applied)["status"] == "CANONICAL"
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
 def test_install_adopts_existing_codex_home_without_replacing_local_state(

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "K-7 atomic release set",
+  "type": "object",
+  "required": ["schema_version", "release_set_id", "channel", "signed", "publication_allowed", "components", "gates"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release_set_id": {"const": "K-7"},
+    "channel": {"enum": ["InternalUnsigned", "Stable", "Public"]},
+    "signed": {"type": "boolean"},
+    "publication_allowed": {"type": "boolean"},
+    "components": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "path", "sha256", "bytes"]
+      }
+    },
+    "gates": {"type": "object", "required": ["TECHNICAL_READY"]}
+  },
+  "additionalProperties": false
+}

@@ -64,10 +64,6 @@ namespace LlmFoundationInstaller
         public TrustedFile acceptance_evidence { get; set; }
         public TrustedFile release_verification { get; set; }
         public TrustedFile package_acceptance { get; set; }
-        public TrustedFile candidate_acceptance { get; set; }
-        public TrustedFile live_canary { get; set; }
-        public TrustedFile components_lock { get; set; }
-        public TrustedFile non_releasable { get; set; }
     }
 
     internal sealed class ProviderEligibilityRecord
@@ -232,19 +228,7 @@ namespace LlmFoundationInstaller
                         package,
                         definition[0],
                         definition[2]
-                    ) ? (String.Equals(
-                        package.trust_level,
-                        "owner_candidate",
-                        StringComparison.Ordinal
-                    ) ? "owner_candidate" : "accepted") : "tampered");
-                if (state == "accepted" &&
-                    definition[0] == "claude" &&
-                    eligibilityState != "PASS")
-                {
-                    state = edition.owner_controlled
-                        ? "owner_candidate"
-                        : "policy_blocked";
-                }
+                    ) ? "accepted" : "tampered");
                 string detected = null;
                 string clientState = "not_checked";
                 ClientSource primarySource = ClientBootstrap.Load(bundleRoot)
@@ -535,36 +519,6 @@ namespace LlmFoundationInstaller
                         package.package_acceptance
                     );
             }
-            if (String.Equals(
-                    package.trust_level,
-                    "owner_candidate",
-                    StringComparison.Ordinal))
-            {
-                EditionProfile edition =
-                    EditionProfile.LoadEmbedded();
-                return edition.owner_controlled &&
-                    String.Equals(
-                        target,
-                        "claude",
-                        StringComparison.Ordinal
-                    ) &&
-                    ValidateFile(
-                        bundleRoot,
-                        package.candidate_acceptance
-                    ) &&
-                    ValidateFile(
-                        bundleRoot,
-                        package.live_canary
-                    ) &&
-                    ValidateFile(
-                        bundleRoot,
-                        package.components_lock
-                    ) &&
-                    ValidateFile(
-                        bundleRoot,
-                        package.non_releasable
-                    );
-            }
             return false;
         }
 
@@ -737,6 +691,7 @@ namespace LlmFoundationInstaller
                     "FoundationEngine.VERSION",
                     Path.Combine(engineRoot, "VERSION")
                 );
+                BundleIntegrity.WriteFoundationExtras(engineRoot);
                 string packagePath = Path.Combine(root, "target-package.zip");
                 BundleIntegrity.WriteResource(
                     package.asset.resource_name,
@@ -933,6 +888,59 @@ namespace LlmFoundationInstaller
 
     internal static class BundleIntegrity
     {
+        private sealed class FoundationExtraFile
+        {
+            public string relative_path { get; set; }
+            public string resource_name { get; set; }
+            public string sha256 { get; set; }
+            public long bytes { get; set; }
+        }
+
+        public static void WriteFoundationExtras(string engineRoot)
+        {
+            byte[] indexBytes = ReadResourceBytes(
+                "FoundationEngine.extra-files.json"
+            );
+            FoundationExtraFile[] records = new JavaScriptSerializer()
+                .Deserialize<FoundationExtraFile[]>(
+                    Encoding.UTF8.GetString(indexBytes)
+                );
+            foreach (FoundationExtraFile record in records ?? new FoundationExtraFile[0])
+            {
+                if (record == null || String.IsNullOrWhiteSpace(record.relative_path) ||
+                    Path.IsPathRooted(record.relative_path) ||
+                    record.relative_path.Contains("..") ||
+                    String.IsNullOrWhiteSpace(record.resource_name))
+                {
+                    throw new InvalidOperationException(
+                        "Embedded Foundation extra path is invalid"
+                    );
+                }
+                byte[] payload = ReadResourceBytes(record.resource_name);
+                if (payload.LongLength != record.bytes || !String.Equals(
+                        Sha256(payload), record.sha256,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Embedded Foundation extra bytes differ"
+                    );
+                }
+                string destination = Path.GetFullPath(Path.Combine(
+                    engineRoot,
+                    record.relative_path.Replace('/', Path.DirectorySeparatorChar)
+                ));
+                string prefix = Path.GetFullPath(engineRoot) + Path.DirectorySeparatorChar;
+                if (!destination.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Embedded Foundation extra escapes engine root"
+                    );
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                File.WriteAllBytes(destination, payload);
+            }
+        }
+
         public static bool ValidateEngine(string bundleRoot, out int protocol)
         {
             protocol = 0;
@@ -1224,16 +1232,12 @@ namespace LlmFoundationInstaller
                                         row.supported_version)))
                         : (row.package_state == "tampered"
                             ? "Пакет повреждён · установка запрещена"
-                            : (row.package_state == "owner_candidate"
-                                ? "Только владельцу · маркер провайдера не проверен"
-                                : (row.package_state == "policy_blocked"
-                                ? "Допуск провайдера истёк или недействителен"
-                                : (row.client_state == "present_unbound"
+                            : (row.client_state == "present_unbound"
                                     ? "Клиент " + row.detected_version +
                                         " найден · пакет не включён"
                                     : (row.client_state == "missing"
                                         ? "Пакет не включён · клиент не найден"
-                                        : "Пакет не включён в эту сборку")))));
+                                        : "Пакет не включён в эту сборку")));
                     bool ready = row.package_state == "accepted" &&
                         (row.client_state == "ready" ||
                             row.client_state == "not_checked");
@@ -1249,11 +1253,7 @@ namespace LlmFoundationInstaller
                                 row.detected_version
                             : "Пакет проверен. Поддерживаемая версия клиента: " +
                                 row.supported_version)
-                        : (row.package_state == "owner_candidate"
-                            ? "Пакет доступен только в версии владельца. Установщик не подтверждает допуск провайдера."
-                            : (row.package_state == "policy_blocked"
-                            ? "Повторите проверку политики поддерживаемых регионов и соберите новый подписанный установщик."
-                            : null));
+                        : null;
                     if (badge != null)
                     {
                         badge.Background = new SolidColorBrush(
@@ -1265,8 +1265,7 @@ namespace LlmFoundationInstaller
                 }
                 if (selected != null)
                 {
-                    bool eligible = row.package_state == "accepted" ||
-                        row.package_state == "owner_candidate";
+                    bool eligible = row.package_state == "accepted";
                     selected.IsEnabled = eligible;
                     selected.IsChecked = eligible;
                 }
@@ -2713,9 +2712,7 @@ namespace LlmFoundationInstaller
         {
             return row != null &&
                 edition != null &&
-                (row.package_state == "accepted" ||
-                 (edition.owner_controlled &&
-                  row.package_state == "owner_candidate"));
+                row.package_state == "accepted";
         }
 
         private static void SetStatus(
