@@ -15,6 +15,7 @@ param(
     [string]$DistributionMode = 'Preview',
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
+    [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
@@ -1326,7 +1327,8 @@ if ($NeedsAcceptedFoundation) {
 }
 else {
     & (Join-Path $RepositoryRoot 'tools\build-engine.ps1') `
-        -OutputRoot $EngineRoot
+        -OutputRoot $EngineRoot `
+        -OfficeCliBinaryPath $OfficeCliBinaryPath
     if (-not $?) {
         throw 'Foundation engine build failed'
     }

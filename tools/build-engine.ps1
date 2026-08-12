@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$OutputRoot
+    [string]$OutputRoot,
+    [string]$OfficeCliBinaryPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,7 +106,15 @@ if ($OfficeCli.Count -ne 1 -or
 $SharedRoot = Join-Path $OutputRoot 'shared-tools\officecli'
 [IO.Directory]::CreateDirectory($SharedRoot) | Out-Null
 $PrivatePath = Join-Path $SharedRoot 'officecli.exe'
-Invoke-WebRequest -UseBasicParsing -Uri ([string]$OfficeCli[0].url) -OutFile $PrivatePath
+if ([string]::IsNullOrWhiteSpace($OfficeCliBinaryPath)) {
+    Invoke-WebRequest -UseBasicParsing -Uri ([string]$OfficeCli[0].url) -OutFile $PrivatePath
+} else {
+    $PinnedBinary = [IO.Path]::GetFullPath($OfficeCliBinaryPath)
+    if (-not (Test-Path -LiteralPath $PinnedBinary -PathType Leaf)) {
+        throw 'OfficeCLI binary cache is missing'
+    }
+    [IO.File]::Copy($PinnedBinary, $PrivatePath, $false)
+}
 if ((Get-Sha256 $PrivatePath) -cne [string]$OfficeCli[0].sha256) {
     throw 'OfficeCLI source hash differs'
 }
