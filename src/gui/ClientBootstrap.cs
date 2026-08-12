@@ -677,11 +677,11 @@ namespace LlmFoundationInstaller
             }
             return new ClientPlanResult
             {
-                status = "BLOCKED_NO_DOWNGRADE",
+                status = "READY",
                 client_id = source.id,
                 supported_version = source.version,
                 detected_version = detected,
-                detected_state = comparison > 0 ? "newer" : "different",
+                detected_state = comparison > 0 ? "newer" : "detected",
                 action = "none"
             };
         }

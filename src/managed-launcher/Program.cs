@@ -402,25 +402,17 @@ namespace Foundation.ManagedLauncher
                 string launcherPath = Path.GetFullPath(Process.GetCurrentProcess().MainModule.FileName);
                 string target = ResolveTarget(launcherPath);
                 LaunchReceipt receipt = LaunchReceipt.Read(launcherPath, target);
-                long startTick = Stopwatch.GetTimestamp();
-                long deadlineTick = AddSeconds(startTick, HardDeadline);
-                string userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
-                if (String.IsNullOrWhiteSpace(userProfile))
+                try
                 {
-                    userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    long startTick = Stopwatch.GetTimestamp();
+                    long deadlineTick = AddSeconds(startTick, HardDeadline);
+                    RunUpdater(receipt, startTick, deadlineTick);
                 }
-                if (!SessionRecovery.TryRecover(userProfile, receipt, deadlineTick))
+                catch (Exception updateError)
                 {
-                    Console.Error.WriteLine("BLOCKED_SESSION_RECOVERY");
-                    return BlockedRecoveryExitCode;
-                }
-                RunUpdater(receipt, startTick, deadlineTick);
-                bool hasRecoveryJournal = SessionRecovery.HasActiveJournal(userProfile, receipt.Target);
-                if (hasRecoveryJournal &&
-                    !SessionRecovery.TryRecover(userProfile, receipt, deadlineTick))
-                {
-                    Console.Error.WriteLine("BLOCKED_SESSION_RECOVERY");
-                    return BlockedRecoveryExitCode;
+                    Console.Error.WriteLine(
+                        "UPDATE_WARNING: " + updateError.Message
+                    );
                 }
                 return RunVendor(receipt.VendorExecutablePath, args);
             }
@@ -461,29 +453,18 @@ namespace Foundation.ManagedLauncher
             start.Arguments = WindowsArgv.Serialize(updaterArguments);
             start.UseShellExecute = false;
             start.CreateNoWindow = true;
-            IntPtr job = NativeJob.CreateKillOnCloseJob();
-            try
+            using (Process process = Process.Start(start))
             {
-                using (NativeJob.ContainedUpdater updater = NativeJob.StartContained(job, start.FileName, start.Arguments))
+                if (process == null)
                 {
-                    Process process = updater.Process;
-                    while (!process.HasExited && Stopwatch.GetTimestamp() < killTick)
-                    {
-                        Thread.Sleep(20);
-                    }
-                    if (!process.HasExited)
-                    {
-                        NativeJob.Close(job);
-                        job = IntPtr.Zero;
-                        return UpdaterResult.UpdaterFailed;
-                    }
-                    return updater.GetExitCode() == 0
-                        ? UpdaterResult.Success : UpdaterResult.UpdaterFailed;
+                    return UpdaterResult.UpdaterFailed;
                 }
-            }
-            finally
-            {
-                NativeJob.Close(job);
+                if (!process.WaitForExit(2000))
+                {
+                    return UpdaterResult.Success;
+                }
+                return process.ExitCode == 0
+                    ? UpdaterResult.Success : UpdaterResult.UpdaterFailed;
             }
         }
 

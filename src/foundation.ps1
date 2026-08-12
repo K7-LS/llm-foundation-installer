@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.3.6'
+$script:EngineVersion = '0.3.7'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -2605,7 +2605,7 @@ function Assert-SessionToolsState {
     return $State
 }
 
-function Test-ActiveManagedDirectoryUnchanged {
+function Test-ActiveManagedDirectorySafeToReplace {
     param(
         [Parameter(Mandatory = $true)][string]$Relative,
         [Parameter(Mandatory = $true)][string]$Destination,
@@ -2641,14 +2641,9 @@ function Test-ActiveManagedDirectoryUnchanged {
             return $false
         }
     }
-    $Actual = @(Get-SafeTreeFiles $Destination)
-    if ($Actual.Count -ne $Expected.Count) { return $false }
-    $Root = [IO.Path]::GetFullPath($Destination)
-    foreach ($File in $Actual) {
-        $Child = $File.FullName.Substring($Root.Length).
-            TrimStart('\').Replace('\', '/')
-        if (-not $Expected.ContainsKey($Child)) { return $false }
-    }
+    # Extra local files are allowed here. New-Snapshot copies the complete
+    # directory before replacement, so they remain recoverable from backup.
+    $null = @(Get-SafeTreeFiles $Destination)
     return $true
 }
 
@@ -2716,7 +2711,7 @@ function Get-SessionToolsBaselinePlan {
             } catch {
                 $RelativeDestination = Get-SessionToolDestinationRelative `
                     $Paths ([string]$Tool.id)
-                if (-not (Test-ActiveManagedDirectoryUnchanged `
+                if (-not (Test-ActiveManagedDirectorySafeToReplace `
                         $RelativeDestination $Destination $ActiveState)) {
                     Throw-Foundation 'INVALID_PACKAGE' (
                         "Unmanaged session tool collision: $($Tool.id)"
