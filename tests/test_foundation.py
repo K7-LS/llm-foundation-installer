@@ -22,6 +22,25 @@ POWERSHELLS = [
 ]
 
 
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_inventory_reports_unmanaged_profile_before_first_install(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"fresh-inventory-{Path(executable).stem}"
+    skill = home / ".agents" / "skills" / "imported-from-claude"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("legacy\n", encoding="utf-8")
+
+    result = _run(executable, engine_root, "inventory", home, target="codex")
+
+    assert result.returncode == 0, result.stderr
+    payload = _json(result)
+    assert payload["status"] == "UNMANAGED_PROFILE"
+    assert [row["path"] for row in payload["unknown_entries"]] == [
+        ".agents/skills/imported-from-claude"
+    ]
+
+
 def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -432,6 +451,9 @@ def test_desired_state_prompts_every_run_and_keeps_approved_local_exception(
             "path": local_path,
             "kind": "skill",
             "active": True,
+            "registration_path": local_path,
+            "launch_command": None,
+            "duplicates": [],
             "source": "local-unmanaged",
             "risk": "UNREVIEWED_EXECUTABLE_INSTRUCTIONS",
         }
@@ -1593,7 +1615,17 @@ def test_engine_bundle_is_deterministic_across_ps7_and_ps51(
         if path.is_file()
     }
     assert first == second
-    assert set(first) == {"VERSION", "engine-manifest.json", "foundation.ps1"}
+    assert set(first) == {
+        "VERSION",
+        "engine-manifest.json",
+        "foundation.ps1",
+        "shared-tools.lock.json",
+        "shared-tools/officecli/officecli.exe",
+        "shared-tools/officecli/officecli-shim.exe",
+        "shared-tools/officecli/officecli-command-policy.json",
+        "shared-tools/officecli/k7-officecli-pdf.exe",
+        "shared-tools/officecli/officecli_csv_batch.py",
+    }
     manifest = json.loads(first["engine-manifest.json"])
     assert manifest["engine_version"] == ENGINE_VERSION
     assert manifest["commands"] == [
@@ -1623,8 +1655,5 @@ def test_foundation_engine_has_no_network_or_secret_material(engine_root):
         "feedback-pending",
         "session-report",
         "-----begin private key-----",
-        "codex",
-        ".claude",
-        "opencode",
     ):
         assert forbidden not in lowered

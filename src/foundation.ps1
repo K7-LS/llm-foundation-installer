@@ -16,6 +16,7 @@ param(
     [string]$PlanFile,
     [string]$LocalExceptionPath = '',
     [switch]$ConfirmRemoveUnknown,
+    [switch]$Interactive,
     [switch]$Strict,
     [switch]$Json
 )
@@ -2415,8 +2416,11 @@ function Get-TomlUnknownEntries {
 }
 
 function Get-UnknownEntryDetails {
-    param([AllowEmptyCollection()][object[]]$Paths)
-    return @(
+    param(
+        [AllowEmptyCollection()][object[]]$Paths,
+        [string]$HomeRoot
+    )
+    $Rows = @(
         foreach ($PathValue in @(Sort-OrdinalStrings $Paths)) {
             $Path = [string]$PathValue
             $Kind = if ($Path -cmatch '^toml:.*#mcp_servers\.') {
@@ -2432,10 +2436,30 @@ function Get-UnknownEntryDetails {
             } else {
                 'managed-entry'
             }
+            $LaunchCommand = $null
+            if ($Path -cmatch '^toml:([^#]+)#(.+)$' -and $HomeRoot) {
+                $TomlPath = Resolve-HomePath ([string]$Matches[1]) $HomeRoot
+                $WantedSection = [string]$Matches[2]
+                if (Test-Path -LiteralPath $TomlPath -PathType Leaf) {
+                    $Section = ''
+                    foreach ($Line in [regex]::Split((Read-Utf8TextFile $TomlPath), '\r?\n')) {
+                        if ($Line -match '^\s*\[([^\[\]]+)\]') {
+                            $Section = [string]$Matches[1]
+                        } elseif ($Section -ceq $WantedSection -and
+                            $Line -match '^\s*(command|url)\s*=\s*["'']([^"'']+)["'']') {
+                            $LaunchCommand = [string]$Matches[2]
+                            break
+                        }
+                    }
+                }
+            }
             [pscustomobject][ordered]@{
                 path = $Path
                 kind = $Kind
                 active = $true
+                registration_path = $Path
+                launch_command = $LaunchCommand
+                duplicates = @()
                 source = if ($Path.StartsWith('toml:')) {
                     'codex-config-toml'
                 } else { 'local-unmanaged' }
@@ -2449,6 +2473,15 @@ function Get-UnknownEntryDetails {
             }
         }
     )
+    foreach ($Row in $Rows) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$Row.launch_command)) {
+            $Row.duplicates = @($Rows | Where-Object {
+                [string]$_.path -cne [string]$Row.path -and
+                [string]$_.launch_command -ceq [string]$Row.launch_command
+            } | ForEach-Object { [string]$_.path })
+        }
+    }
+    return $Rows
 }
 
 function Get-ValidatedLocalExceptions {
@@ -3260,7 +3293,7 @@ function New-FoundationPlan {
             status = 'BLOCKED_USER_DECISION'
             target = [string]$Manifest.target
             release_version = [string]$Manifest.version
-            unknown_entries = @(Get-UnknownEntryDetails $UnknownEntries)
+            unknown_entries = @(Get-UnknownEntryDetails $UnknownEntries $HomeRoot)
             local_exceptions = $LocalExceptions
             package_path = [string]$Validated.package_path
             package_sha256 = [string]$Validated.package_sha256
@@ -4692,7 +4725,32 @@ function Invoke-Inventory {
     )
     $Paths = Get-FoundationPaths $HomeRoot $TargetName
     Assert-NoRecoveryPending $Paths
-    $State = Read-ActiveState $Paths
+    $State = Read-ActiveState $Paths -AllowMissing
+    if ($null -eq $State) {
+        $InventoryRoots = switch ($TargetName) {
+            'codex' { @('.agents/skills', '.codex/agents', '.codex/plugins') }
+            'claude' { @('.claude/skills', '.claude/agents', '.claude/plugins') }
+            'opencode' { @('.config/opencode/skills', '.config/opencode/agents', '.config/opencode/plugins') }
+            default { @() }
+        }
+        $Synthetic = [pscustomobject]@{
+            managed_surface = [pscustomobject]@{ exact_directories = @() }
+            files = @()
+            desired_state = [pscustomobject]@{
+                inventory_roots = $InventoryRoots
+                platform_owned = @()
+                toml_reconcile = @()
+            }
+        }
+        $Unknown = @(Get-UnknownEntries $Synthetic $HomeRoot)
+        return [pscustomobject][ordered]@{
+            status = 'UNMANAGED_PROFILE'
+            target = $TargetName
+            unknown_entries = @(Get-UnknownEntryDetails $Unknown $HomeRoot)
+            local_exceptions = @()
+            note = 'Run plan with the signed package to classify registrations and reconcile desired state.'
+        }
+    }
     return [pscustomobject][ordered]@{
         status = 'INSTALLED'
         target = [string]$State.target
@@ -4822,9 +4880,29 @@ try {
     }
     $Result = switch ($Command) {
         'plan' {
-            New-FoundationPlan $Validated $TargetHome $ClientId `
+            $PlanResult = New-FoundationPlan $Validated $TargetHome $ClientId `
                 $ClientVersion $script:RequestedLocalExceptionPaths `
                 -RemoveUnknownConfirmed:$ConfirmRemoveUnknown
+            if ($Interactive -and [string]$PlanResult.status -ceq
+                'BLOCKED_USER_DECISION') {
+                $Keep = @()
+                foreach ($Unknown in @($PlanResult.unknown_entries)) {
+                    $Answer = Read-Host (
+                        "Unknown $($Unknown.kind) $($Unknown.path): REMOVE or KEEP"
+                    )
+                    if ([string]$Answer -cmatch '^(?i:keep)$') {
+                        $Keep += [string]$Unknown.path
+                    } elseif ([string]$Answer -cnotmatch '^(?i:remove)$') {
+                        Throw-Foundation 'BLOCKED_USER_DECISION' (
+                            "Decision is required for $($Unknown.path)"
+                        )
+                    }
+                }
+                $PlanResult = New-FoundationPlan $Validated $TargetHome `
+                    $ClientId $ClientVersion $Keep `
+                    -RemoveUnknownConfirmed
+            }
+            $PlanResult
             break
         }
         'install' {
@@ -4863,7 +4941,9 @@ try {
     $Exit = $script:ExitCode[$Code]
     if ($null -eq $Exit) { $Exit = 30 }
     Write-Result ([pscustomobject][ordered]@{
-        status = if ($Code -ceq 'BLOCKED_USER_DECISION') {
+        status = if ($Command -ceq 'doctor') {
+            'FAILED_DOCTOR'
+        } elseif ($Code -ceq 'BLOCKED_USER_DECISION') {
             'BLOCKED_USER_DECISION'
         } else {
             'BLOCKED'

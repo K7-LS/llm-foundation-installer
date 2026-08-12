@@ -1658,7 +1658,8 @@ $EditionTargetSetReady = (
 $TechnicalReady = (
     $EditionTargetSetReady -and
     $RequiredReady -and
-    $null -ne $AcceptedFoundation
+    ($null -ne $AcceptedFoundation -or
+        $DistributionMode -ceq 'InternalUnsigned')
 )
 $InternalReady = (
     $DistributionMode -ceq 'InternalUnsigned' -and

@@ -111,8 +111,8 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
   -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
 ```
 
-Версия для сотрудников никогда не содержит Claude или свидетельство допуска
-провайдера Claude.
+Версия для сотрудников содержит официальный закреплённый Claude Code, но не
+синтезирует и не переносит свидетельство допуска провайдера Claude.
 
 ## Релизный конвейер Employee 0.3.0
 
