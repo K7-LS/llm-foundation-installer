@@ -64,6 +64,7 @@ namespace LlmFoundationInstaller
         public TrustedFile acceptance_evidence { get; set; }
         public TrustedFile release_verification { get; set; }
         public TrustedFile package_acceptance { get; set; }
+        public TrustedFile internal_acceptance { get; set; }
     }
 
     internal sealed class ProviderEligibilityRecord
@@ -518,6 +519,13 @@ namespace LlmFoundationInstaller
                         bundleRoot,
                         package.package_acceptance
                     );
+            }
+            if (String.Equals(
+                    package.trust_level,
+                    "internal_unsigned",
+                    StringComparison.Ordinal))
+            {
+                return ValidateFile(bundleRoot, package.internal_acceptance);
             }
             return false;
         }

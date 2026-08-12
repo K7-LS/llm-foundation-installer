@@ -570,7 +570,7 @@ function Read-AcceptedFoundation {
 }
 
 function Read-AcceptedPackages {
-    param([string]$Root)
+    param([string]$Root, [string]$Mode)
     $Definitions = [ordered]@{
         codex = [ordered]@{
             client = 'codex-cli'
@@ -598,6 +598,65 @@ function Read-AcceptedPackages {
         }
         if (-not $Definitions.Contains($Target)) {
             throw "Package acceptance has unknown target: $Target"
+        }
+        $InternalPath = Join-Path $Directory.FullName 'internal-acceptance.json'
+        if ($Mode -ceq 'InternalUnsigned' -and
+            (Test-Path -LiteralPath $InternalPath -PathType Leaf)) {
+            try {
+                $Internal = Get-Content -LiteralPath $InternalPath -Raw |
+                    ConvertFrom-Json
+            } catch {
+                throw "Internal acceptance JSON is invalid for target: $Target"
+            }
+            $AssetPath = Assert-FileBinding $Directory.FullName $Internal.asset 'internal asset'
+            $ReleasePath = Assert-FileBinding $Directory.FullName $Internal.release_manifest 'internal release manifest'
+            $Release = Get-Content -LiteralPath $ReleasePath -Raw |
+                ConvertFrom-Json
+            if ([int]$Internal.schema_version -ne 1 -or
+                [string]$Internal.target -cne $Target -or
+                [string]$Internal.channel -cne 'InternalUnsigned' -or
+                [string]$Internal.TECHNICAL_READY -cne 'PASS' -or
+                [string]$Internal.client.id -cne [string]$Definitions[$Target].client -or
+                [string]$Release.target -cne $Target -or
+                [string]$Release.channel -cne 'candidate' -or
+                [string]$Release.asset.name -cne [string]$Internal.asset.name -or
+                [string]$Release.asset.sha256 -cne [string]$Internal.asset.sha256 -or
+                [long]$Release.asset.bytes -ne [long]$Internal.asset.bytes -or
+                [string]$Release.client.id -cne [string]$Internal.client.id -or
+                [string]$Release.client.supported_version -cne (
+                    [string]$Internal.client.supported_version
+                )) {
+                throw "Internal acceptance contract differs for target: $Target"
+            }
+            $Rows += [ordered]@{
+                trust_level = 'internal_unsigned'
+                target = $Target
+                client_id = [string]$Internal.client.id
+                supported_version = [string]$Internal.client.supported_version
+                foundation_engine_manifest_sha256 = [string](
+                    $Release.foundation_engine_manifest_sha256
+                )
+                asset = [ordered]@{
+                    relative_path = "packages/$Target/$([string]$Internal.asset.name)"
+                    resource_name = "TargetPackage.$Target.asset"
+                    sha256 = [string]$Internal.asset.sha256
+                    bytes = [long]$Internal.asset.bytes
+                }
+                release_manifest = [ordered]@{
+                    relative_path = "packages/$Target/$([string]$Internal.release_manifest.name)"
+                    resource_name = "TargetPackage.$Target.release_manifest"
+                    sha256 = [string]$Internal.release_manifest.sha256
+                    bytes = [long]$Internal.release_manifest.bytes
+                }
+                internal_acceptance = [ordered]@{
+                    relative_path = "packages/$Target/internal-acceptance.json"
+                    resource_name = "TargetPackage.$Target.internal_acceptance"
+                    sha256 = Get-Sha256 $InternalPath
+                    bytes = (Get-Item -LiteralPath $InternalPath).Length
+                }
+                source_directory = $Directory.FullName
+            }
+            continue
         }
         $AcceptancePath = Join-Path $Directory.FullName 'package-acceptance.json'
         if (-not (Test-Path -LiteralPath $AcceptancePath -PathType Leaf)) {
@@ -802,6 +861,13 @@ function Get-PackageRecords {
             $Package.package_acceptance
         )
     }
+    if ([string]$Package.trust_level -ceq 'internal_unsigned') {
+        return @(
+            $Package.asset,
+            $Package.release_manifest,
+            $Package.internal_acceptance
+        )
+    }
     throw 'Package trust level is invalid'
 }
 
@@ -883,7 +949,7 @@ function Export-AcceptedFoundationEngine {
         [string]$EngineManifest.engine_version -cne $FoundationEngineVersion -or
         [string]$EngineManifest.network -cne 'offline' -or
         (@($EngineManifest.commands) -join ',') -cne (
-            'doctor,install,inventory,plan,rollback'
+            'apply,doctor,install,inventory,plan,rollback'
         ) -or
         (@($EngineManifest.supported_powershell) -join ',') -cne '5.1,7' -or
         [string]$EngineManifest.foundation_ps1_sha256 -cne (
@@ -964,7 +1030,7 @@ $References = @(
     (Get-AssemblyPath $AssemblyRoots 'System.IO.Compression.FileSystem.dll')
 )
 
-$AcceptedPackages = @(Read-AcceptedPackages $PackageRoot)
+$AcceptedPackages = @(Read-AcceptedPackages $PackageRoot $DistributionMode)
 $AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
 $ProviderEligibility = Read-ProviderEligibilityEvidence `
     $ProviderEligibilityEvidence
@@ -974,6 +1040,13 @@ $AvailableTargets = @($AllPackages.target | Sort-Object)
 $IncludedTargets = @('claude', 'codex', 'opencode')
 $RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
+$NeedsAcceptedFoundation = (
+    $DistributionMode -ceq 'PublicSigned' -or
+    ($null -ne $AcceptedFoundation -and
+        @($AllPackages | Where-Object {
+            [string]$_.trust_level -cne 'accepted'
+        }).Count -eq 0)
+)
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
 try {
@@ -1133,20 +1206,24 @@ if ($IsPackagedRelease) {
     if (($AvailableTargets -join ',') -cne ($IncludedTargets -join ',')) {
         throw "$Edition target set differs from the edition contract"
     }
-    if ($null -eq $AcceptedFoundation) {
+    if ($NeedsAcceptedFoundation -and $null -eq $AcceptedFoundation) {
         throw (
             "$Edition release requires an accepted immutable Foundation " +
             'package'
         )
     }
-    $FoundationManifestRecord = (
-        $AcceptedFoundation.engine_files.PSObject.Properties[
-            'engine-manifest.json'
-        ].Value
-    )
+    $FoundationExpectedManifestSha256 = if ($NeedsAcceptedFoundation) {
+        [string](
+            $AcceptedFoundation.engine_files.PSObject.Properties[
+                'engine-manifest.json'
+            ].Value.sha256
+        )
+    } else {
+        [string]$AllPackages[0].foundation_engine_manifest_sha256
+    }
     foreach ($Package in $AllPackages) {
         if ([string]$Package.foundation_engine_manifest_sha256 -cne (
-                [string]$FoundationManifestRecord.sha256
+                $FoundationExpectedManifestSha256
             )) {
             throw (
                 'Target package Foundation binding differs: ' +
@@ -1244,7 +1321,7 @@ Copy-Item -LiteralPath $RuntimeSourcesLock -Destination (
     $EffectiveRuntimeSourcesPath
 )
 $EngineRoot = Join-Path $OutputRoot 'engine'
-if ($IsPackagedRelease) {
+if ($NeedsAcceptedFoundation) {
     Export-AcceptedFoundationEngine $AcceptedFoundation $EngineRoot
 }
 else {
@@ -1253,6 +1330,11 @@ else {
     if (-not $?) {
         throw 'Foundation engine build failed'
     }
+}
+if ($IsPackagedRelease -and
+    (Get-Sha256 (Join-Path $EngineRoot 'engine-manifest.json')) -cne
+        $FoundationExpectedManifestSha256) {
+    throw 'Built Foundation engine differs from base release binding'
 }
 
 $TrustedProviderEligibility = [ordered]@{
@@ -1277,7 +1359,7 @@ $TrustedIndex = [ordered]@{
     packages = @(
         $AllPackages | ForEach-Object {
             [ordered]@{
-                trust_level = 'accepted'
+                trust_level = $_.trust_level
                 target = $_.target
                 client_id = $_.client_id
                 supported_version = $_.supported_version
@@ -1286,6 +1368,7 @@ $TrustedIndex = [ordered]@{
                 acceptance_evidence = $_.acceptance_evidence
                 release_verification = $_.release_verification
                 package_acceptance = $_.package_acceptance
+                internal_acceptance = $_.internal_acceptance
             }
         }
     )
@@ -1530,7 +1613,7 @@ if ($null -ne $ProviderEligibility) {
         contains_personal_data = $false
     }
 }
-$FoundationReleaseManifest = if ($IsPackagedRelease) {
+$FoundationReleaseManifest = if ($NeedsAcceptedFoundation) {
     [ordered]@{
         package_acceptance = 'PASS'
         engine_version = [string]$AcceptedFoundation.engine_version
@@ -1545,7 +1628,9 @@ $FoundationReleaseManifest = if ($IsPackagedRelease) {
 }
 else {
     [ordered]@{
-        package_acceptance = 'LOCAL_PREVIEW'
+        package_acceptance = if ($DistributionMode -ceq 'InternalUnsigned') {
+            'INTERNAL_UNSIGNED_TECHNICAL'
+        } else { 'LOCAL_PREVIEW' }
         engine_version = $FoundationEngineVersion
     }
 }

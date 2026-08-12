@@ -456,6 +456,7 @@ def _accepted_foundation(root: Path) -> Path:
         json.dumps(
             {
                 "commands": [
+                    "apply",
                     "doctor",
                     "install",
                     "inventory",
