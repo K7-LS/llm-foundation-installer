@@ -274,12 +274,6 @@ namespace LlmFoundationInstaller
             string expectedVersion = release.tag_name.Substring(
                 source.tagPrefix.Length
             );
-            string engineVersion = ReadResourceText(
-                "FoundationEngine.VERSION"
-            ).Trim();
-            string engineManifestHash = Sha256(
-                ReadResourceBytes("FoundationEngine.engine-manifest.json")
-            );
             string expectedRepository = "https://github.com/" +
                 source.repository;
             if (manifest == null || manifest.schema_version != 1 ||
@@ -291,10 +285,12 @@ namespace LlmFoundationInstaller
                     StringComparison.Ordinal) ||
                 !String.Equals(manifest.channel, "stable",
                     StringComparison.Ordinal) ||
-                !String.Equals(manifest.foundation_engine_version,
-                    engineVersion, StringComparison.Ordinal) ||
-                !String.Equals(manifest.foundation_engine_manifest_sha256,
-                    engineManifestHash, StringComparison.OrdinalIgnoreCase) ||
+                !Version.IsMatch(manifest.foundation_engine_version ?? "") ||
+                !Regex.IsMatch(
+                    manifest.foundation_engine_manifest_sha256 ?? "",
+                    "\\A[0-9a-f]{64}\\z",
+                    RegexOptions.CultureInvariant
+                ) ||
                 manifest.source == null ||
                 !String.Equals(manifest.source.repository,
                     expectedRepository, StringComparison.Ordinal) ||
@@ -568,13 +564,6 @@ namespace LlmFoundationInstaller
                 resource.CopyTo(memory);
                 return memory.ToArray();
             }
-        }
-
-        private static string ReadResourceText(string name)
-        {
-            return new UTF8Encoding(false, true).GetString(
-                ReadResourceBytes(name)
-            );
         }
 
         private static string Sha256(byte[] payload)
