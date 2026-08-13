@@ -1293,7 +1293,7 @@ namespace LlmFoundationInstaller
                 statusText.Text = catalog.install_enabled
                     ? "Компоненты готовы. Следующий шаг — проверяемый план изменений."
                     : (catalog.provider_eligibility == "INVALID_OR_EXPIRED"
-                        ? "Установка Claude заблокирована: допуск провайдера истёк или недействителен."
+                        ? "Нет принятых пакетов клиентов; допуск провайдера истёк или недействителен и перепроверяется отдельно."
                         : "Установка заблокирована: нет принятых пакетов клиентов.");
                 statusText.Foreground = new SolidColorBrush(
                     catalog.install_enabled
