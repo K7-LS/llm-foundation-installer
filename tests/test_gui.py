@@ -2952,6 +2952,53 @@ def test_codex_newer_version_is_ready_without_download(
     assert not staging.exists()
 
 
+def test_codex_older_version_is_selected_for_update(
+    tmp_path: Path,
+):
+    source_lock = _codex_cli_source_lock(
+        tmp_path / "codex-client-sources.test.json",
+        version="2.0.0",
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    home = tmp_path / "employee-home"
+    home.mkdir()
+    safe_path = tmp_path / "safe-path"
+    safe_path.mkdir()
+    _compile_versioned_codex(safe_path / "codex.exe", "1.0.0")
+    environment = os.environ.copy()
+    environment["PATH"] = str(safe_path)
+
+    plan = subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--client-plan-json",
+            str(home),
+            "codex-cli",
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    assert json.loads(plan.stdout) == {
+        "status": "INSTALL_AVAILABLE",
+        "client_id": "codex-cli",
+        "supported_version": "2.0.0",
+        "detected_version": "1.0.0",
+        "detected_state": "older",
+        "action": "install",
+    }
+
+
 def test_target_plan_passes_detected_codex_version_to_foundation(
     tmp_path: Path,
 ):
