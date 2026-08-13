@@ -1410,6 +1410,9 @@ $LaunchRoutePreferencesSource = Join-Path (
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\ClientBootstrap.cs'
+$BaseReleaseUpdaterSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\BaseReleaseUpdater.cs'
 $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
@@ -1529,7 +1532,8 @@ $CompilerArguments += @(
     $OperatorGuideSource,
     $ConnectionSource,
     $LaunchRoutePreferencesSource,
-    $ClientBootstrapSource
+    $ClientBootstrapSource,
+    $BaseReleaseUpdaterSource
 )
 
 & $Compiler @CompilerArguments
