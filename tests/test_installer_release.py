@@ -77,8 +77,8 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     assert manifest["launch_center_fallback"] == record(
         bundle / FALLBACK_FILE
     )
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
-    assert "FULL_RELEASE_CLAUDE" not in manifest["verdicts"]
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
     assert manifest["verdicts"]["CLEAN_PC_PILOT"] == "PENDING"
 
 
@@ -118,11 +118,11 @@ def test_draft_release_rejects_tampered_launch_center_fallback(
         )
 
 
-def test_draft_release_rejects_owner_or_claude_contract(tmp_path: Path):
+def test_draft_release_rejects_partial_employee_contract(tmp_path: Path):
     bundle = employee_bundle(tmp_path / "bundle")
     manifest_path = bundle / "bundle-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["targets"].append("claude")
+    manifest["targets"].remove("claude")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="Employee"):

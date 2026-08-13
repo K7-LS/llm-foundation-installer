@@ -102,8 +102,8 @@ def test_pilot_finalization_preserves_both_products_and_runtime(
     )
     assert manifest["tag"] == "employee-v0.4.0"
     assert manifest["channel"] == "stable"
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
-    assert "FULL_RELEASE_CLAUDE" not in manifest["verdicts"]
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
     assert manifest["verdicts"]["CLEAN_PC_PILOT"] == "PASS"
     assert manifest["verdicts"]["RELEASE_INTEGRITY"] == (
         "PENDING_PUBLICATION"

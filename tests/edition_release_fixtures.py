@@ -54,11 +54,12 @@ def employee_bundle(root: Path) -> Path:
         "owner_controlled": False,
         "distribution_allowed": True,
         "distribution_mode": "InternalUnsigned",
-        "targets": ["codex", "opencode"],
+        "targets": ["claude", "codex", "opencode"],
         "verdicts": {
+            "FULL_RELEASE_CLAUDE": "PASS",
             "FULL_RELEASE_CODEX": "PASS",
             "FULL_RELEASE_OPENCODE": "PASS",
-            "PROGRAM_RELEASE": "2/2",
+            "PROGRAM_RELEASE": "3/3",
             "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
             "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
         },
@@ -117,8 +118,8 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
     target_result = {
         "status": "PASS",
         "plan": "READY",
-        "install": "INSTALLED",
-        "doctor": "HEALTHY",
+        "install": "CANONICAL",
+        "doctor": "CANONICAL",
         "inventory": "INSTALLED",
         "rollback": "ROLLED_BACK",
         "preserved_data": "PASS",
@@ -139,6 +140,7 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
             "status": "VERIFIED",
         },
         "targets": {
+            "claude": dict(target_result),
             "codex": dict(target_result),
             "opencode": dict(target_result),
         },

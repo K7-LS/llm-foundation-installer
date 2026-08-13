@@ -11,7 +11,7 @@ from typing import Any
 
 VERSION = "0.4.0"
 TAG = "employee-v0.4.0"
-TARGETS = ("codex", "opencode")
+TARGETS = ("claude", "codex", "opencode")
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
     "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
@@ -25,8 +25,8 @@ RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
 EXPECTED_TARGET_LIFECYCLE = {
     "status": "PASS",
     "plan": "READY",
-    "install": "INSTALLED",
-    "doctor": "HEALTHY",
+    "install": "CANONICAL",
+    "doctor": "CANONICAL",
     "inventory": "INSTALLED",
     "rollback": "ROLLED_BACK",
     "preserved_data": "PASS",
@@ -51,9 +51,10 @@ EXPECTED_RUNTIME_CANARY = {
     "status": "VERIFIED",
 }
 EXPECTED_BUNDLE_VERDICTS = {
+    "FULL_RELEASE_CLAUDE": "PASS",
     "FULL_RELEASE_CODEX": "PASS",
     "FULL_RELEASE_OPENCODE": "PASS",
-    "PROGRAM_RELEASE": "2/2",
+    "PROGRAM_RELEASE": "3/3",
     "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
     "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
 }
@@ -76,8 +77,10 @@ INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0
 
 Перед запуском сверить каждый файл с `SHA256SUMS`. Подпись пока внутренняя
 без цифровой подписи, поэтому Windows может показать «Неизвестный издатель»
-или SmartScreen. Администратор не требуется. Версия для сотрудников включает только Codex и
-OpenCode; Claude в этот релиз не входит.
+или SmartScreen. Администратор не требуется. Версия для сотрудников включает
+Codex, Claude Code и OpenCode. Авторизация Claude выполняется интерактивно в
+официальном клиенте; выбор proxy-маршрута не подменяет право доступа к
+провайдеру.
 """
 
 
