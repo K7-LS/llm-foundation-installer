@@ -2,5 +2,6 @@
 __pycache__/
 *.pyc
 .work/
+Microsoft/Windows/PowerShell/ModuleAnalysisCache
 .worktrees/
 dist/

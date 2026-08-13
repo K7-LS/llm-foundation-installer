@@ -37,6 +37,10 @@ namespace LlmFoundationInstaller
         public string supported_version { get; set; }
         public string detected_version { get; set; }
         public string client_state { get; set; }
+        public string latest_base_version { get; set; }
+        public string latest_base_package_path { get; set; }
+        public string latest_base_manifest_path { get; set; }
+        public string latest_base_manifest_sha256 { get; set; }
     }
 
     internal sealed class ClientDetectionResult
@@ -658,7 +662,10 @@ namespace LlmFoundationInstaller
         public string EnginePath { get; private set; }
         public string PackagePath { get; private set; }
 
-        public static RuntimePayload Prepare(TrustedPackage package)
+        public static RuntimePayload Prepare(
+            TrustedPackage package,
+            string externalPackagePath
+        )
         {
             int protocol;
             if (!BundleIntegrity.ValidateEngine("", out protocol))
@@ -667,7 +674,8 @@ namespace LlmFoundationInstaller
                     "Embedded Foundation engine is invalid"
                 );
             }
-            if (!BundleIntegrity.ValidateResource(
+            if (String.IsNullOrWhiteSpace(externalPackagePath) &&
+                !BundleIntegrity.ValidateResource(
                     package.asset.resource_name,
                     package.asset.sha256,
                     package.asset.bytes
@@ -700,11 +708,27 @@ namespace LlmFoundationInstaller
                     Path.Combine(engineRoot, "VERSION")
                 );
                 BundleIntegrity.WriteFoundationExtras(engineRoot);
-                string packagePath = Path.Combine(root, "target-package.zip");
-                BundleIntegrity.WriteResource(
-                    package.asset.resource_name,
-                    packagePath
-                );
+                string packagePath;
+                if (String.IsNullOrWhiteSpace(externalPackagePath))
+                {
+                    packagePath = Path.Combine(root, "target-package.zip");
+                    BundleIntegrity.WriteResource(
+                        package.asset.resource_name,
+                        packagePath
+                    );
+                }
+                else
+                {
+                    packagePath = Path.GetFullPath(externalPackagePath);
+                    if (!File.Exists(packagePath) ||
+                        (File.GetAttributes(packagePath) &
+                            FileAttributes.ReparsePoint) != 0)
+                    {
+                        throw new InvalidOperationException(
+                            "Latest base package is missing or unsafe"
+                        );
+                    }
+                }
                 return new RuntimePayload
                 {
                     Root = root,
@@ -749,6 +773,33 @@ namespace LlmFoundationInstaller
             out string standardError
         )
         {
+            return Run(
+                bundleRoot,
+                command,
+                target,
+                home,
+                clientVersion,
+                null,
+                null,
+                null,
+                out standardOutput,
+                out standardError
+            );
+        }
+
+        public static int Run(
+            string bundleRoot,
+            string command,
+            string target,
+            string home,
+            string clientVersion,
+            string externalPackagePath,
+            string releaseManifestPath,
+            string releaseManifestSha256,
+            out string standardOutput,
+            out string standardError
+        )
+        {
             standardOutput = "";
             standardError = "";
             if (!Commands.Contains(command))
@@ -788,7 +839,10 @@ namespace LlmFoundationInstaller
                 standardError = "Target home path is invalid";
                 return 2;
             }
-            using (RuntimePayload runtime = RuntimePayload.Prepare(package))
+            using (RuntimePayload runtime = RuntimePayload.Prepare(
+                package,
+                externalPackagePath
+            ))
             {
                 List<string> arguments = new List<string>
                 {
@@ -808,6 +862,13 @@ namespace LlmFoundationInstaller
                 {
                     arguments.Add("-Package");
                     arguments.Add(runtime.PackagePath);
+                    if (!String.IsNullOrWhiteSpace(releaseManifestPath))
+                    {
+                        arguments.Add("-ReleaseManifest");
+                        arguments.Add(Path.GetFullPath(releaseManifestPath));
+                        arguments.Add("-ReleaseManifestSha256");
+                        arguments.Add(releaseManifestSha256);
+                    }
                 }
                 if (command == "plan" || command == "install" ||
                     command == "doctor")
@@ -2244,7 +2305,7 @@ namespace LlmFoundationInstaller
             if (progress != null)
             {
                 progress.Minimum = 0;
-                progress.Maximum = Math.Max(1, selected.Count * 7);
+                progress.Maximum = Math.Max(1, selected.Count * 8);
                 progress.Value = 0;
                 progress.Visibility = Visibility.Visible;
             }
@@ -2262,6 +2323,39 @@ namespace LlmFoundationInstaller
                 );
                 foreach (TargetRow row in selected)
                 {
+                    SetStatus(
+                        view,
+                        "Проверяется последний stable-релиз базы " +
+                            row.display_name + "...",
+                        "info"
+                    );
+                    BaseReleaseResolution baseRelease =
+                        await RunBaseReleaseResolveAsync(
+                            bundleRoot,
+                            home,
+                            row.id
+                        );
+                    completedOperations++;
+                    SetProgress(progress, completedOperations);
+                    if (baseRelease.status == "LATEST")
+                    {
+                        row.latest_base_version = baseRelease.version;
+                        row.latest_base_package_path =
+                            baseRelease.package_path;
+                        row.latest_base_manifest_path =
+                            baseRelease.release_manifest_path;
+                        row.latest_base_manifest_sha256 =
+                            baseRelease.release_manifest_sha256;
+                    }
+                    else
+                    {
+                        notices.Add(
+                            row.display_name +
+                            ": latest stable недоступен или несовместим (" +
+                            baseRelease.reason +
+                            "); использован проверенный embedded fallback."
+                        );
+                    }
                     TargetClientPlanResult clientPlan =
                         await RunClientPlanAsync(
                             bundleRoot,
@@ -2473,8 +2567,11 @@ namespace LlmFoundationInstaller
                         ? ((object[])actionsValue).Length
                         : 0;
                     planLines.Add(
-                        row.display_name + ": " + actions +
-                        " файлов, backup и doctor"
+                        row.display_name +
+                        (String.IsNullOrWhiteSpace(row.latest_base_version)
+                            ? " (embedded)"
+                            : " base " + row.latest_base_version) +
+                        ": " + actions + " файлов, backup и doctor"
                     );
                     planned.Add(row);
                     completedOperations++;
@@ -2654,6 +2751,23 @@ namespace LlmFoundationInstaller
             });
         }
 
+        private static Task<BaseReleaseResolution>
+            RunBaseReleaseResolveAsync(
+                string bundleRoot,
+                string home,
+                string target
+            )
+        {
+            return Task.Run(delegate
+            {
+                return BaseReleaseUpdater.ResolveLatestOrFallback(
+                    bundleRoot,
+                    home,
+                    target
+                );
+            });
+        }
+
         private static Task<object> RunClientBootstrapAsync(
             string bundleRoot,
             string home,
@@ -2745,6 +2859,9 @@ namespace LlmFoundationInstaller
                     row.id,
                     home,
                     row.detected_version,
+                    row.latest_base_package_path,
+                    row.latest_base_manifest_path,
+                    row.latest_base_manifest_sha256,
                     out output,
                     out error
                 );
@@ -4511,6 +4628,18 @@ namespace LlmFoundationInstaller
                         ClientBootstrap.Describe(bundleRoot)
                     ));
                     return 0;
+                }
+                if (args.Length == 3 &&
+                    args[0] == "--latest-base-json")
+                {
+                    BaseReleaseResolution latest =
+                        BaseReleaseUpdater.ResolveLatestOrFallback(
+                            bundleRoot,
+                            args[2],
+                            args[1]
+                        );
+                    WriteOutput(new JavaScriptSerializer().Serialize(latest));
+                    return latest.status == "LATEST" ? 0 : 20;
                 }
                 if (args.Length == 3 &&
                     args[0] == "--validate-store-record-json")
