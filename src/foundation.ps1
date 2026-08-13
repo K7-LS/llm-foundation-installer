@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.0'
+$script:EngineVersion = '0.5.1'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -3313,9 +3313,21 @@ function New-FoundationPlan {
         @(Get-TomlUnknownEntries $Manifest $HomeRoot)
     ))
     if ($null -ne $BaselinePlan) {
+        $BaselineTools = if ([string]$BaselinePlan.action -ceq 'PRESERVE') {
+            @($BaselinePlan.state.tools)
+        } else {
+            @($BaselinePlan.tools)
+        }
+        $BaselineOwnedPaths = @(
+            foreach ($Tool in $BaselineTools) {
+                Get-SessionToolDestinationRelative `
+                    $BaselinePlan.paths ([string]$Tool.id)
+            }
+        )
         $UnknownEntries = @(
             $UnknownEntries | Where-Object {
-                [string]$_ -cne [string]$BaselinePlan.paths.runtime_relative
+                [string]$_ -cne [string]$BaselinePlan.paths.runtime_relative -and
+                $BaselineOwnedPaths -cnotcontains [string]$_
             }
         )
     }
@@ -4725,6 +4737,7 @@ function Invoke-Doctor {
     $SessionBaseRoots = @($SessionManagedPaths | Where-Object {
         [string]$_ -match '/base/(?:VERSION|runtime(?:/|$))'
     })
+    $SessionOwnedPaths = @()
     if ($SessionSkillRoots.Count -gt 0 -and
         $SessionBaseRoots.Count -gt 0) {
         $SessionPaths = Get-SessionToolsPaths `
@@ -4743,6 +4756,12 @@ function Invoke-Doctor {
             $null = Assert-SessionToolsState `
                 $SessionState $HomeRoot $TargetName $SessionPaths `
                 -CheckDestination
+            $SessionOwnedPaths = @(
+                foreach ($Tool in @($SessionState.tools)) {
+                    Get-SessionToolDestinationRelative `
+                        $SessionPaths ([string]$Tool.id)
+                }
+            )
         }
     }
     Test-BundledOfficeCliState $HomeRoot
@@ -4755,7 +4774,9 @@ function Invoke-Doctor {
         $CurrentUnknown = @(Sort-OrdinalStrings @(
             @(Get-UnknownEntries $CurrentManifest $HomeRoot) +
             @(Get-TomlUnknownEntries $CurrentManifest $HomeRoot)
-        ))
+        ) | Where-Object {
+            $SessionOwnedPaths -cnotcontains [string]$_
+        })
         $Declared = @(Sort-OrdinalStrings @($State.local_exceptions))
         $Actual = @(Sort-OrdinalStrings $CurrentUnknown)
         if (@(Compare-Object -ReferenceObject $Declared -DifferenceObject $Actual).Count -ne 0) {
