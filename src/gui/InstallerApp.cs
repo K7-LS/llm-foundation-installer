@@ -41,6 +41,8 @@ namespace LlmFoundationInstaller
         public string latest_base_package_path { get; set; }
         public string latest_base_manifest_path { get; set; }
         public string latest_base_manifest_sha256 { get; set; }
+        public List<string> local_exception_paths { get; set; }
+        public bool confirm_remove_unknown { get; set; }
     }
 
     internal sealed class ClientDetectionResult
@@ -782,6 +784,8 @@ namespace LlmFoundationInstaller
                 null,
                 null,
                 null,
+                null,
+                false,
                 out standardOutput,
                 out standardError
             );
@@ -796,6 +800,8 @@ namespace LlmFoundationInstaller
             string externalPackagePath,
             string releaseManifestPath,
             string releaseManifestSha256,
+            IEnumerable<string> localExceptionPaths,
+            bool confirmRemoveUnknown,
             out string standardOutput,
             out string standardError
         )
@@ -868,6 +874,20 @@ namespace LlmFoundationInstaller
                         arguments.Add(Path.GetFullPath(releaseManifestPath));
                         arguments.Add("-ReleaseManifestSha256");
                         arguments.Add(releaseManifestSha256);
+                    }
+                    List<string> exceptions = localExceptionPaths == null
+                        ? new List<string>()
+                        : localExceptionPaths.Where(path =>
+                            !String.IsNullOrWhiteSpace(path)
+                        ).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    if (exceptions.Count > 0)
+                    {
+                        arguments.Add("-LocalExceptionPath");
+                        arguments.Add(String.Join("|", exceptions.ToArray()));
+                    }
+                    if (confirmRemoveUnknown)
+                    {
+                        arguments.Add("-ConfirmRemoveUnknown");
                     }
                 }
                 if (command == "plan" || command == "install" ||
@@ -2540,6 +2560,16 @@ namespace LlmFoundationInstaller
                         row,
                         home
                     );
+                    if (result.code == 20 &&
+                        ResolveUnknownDecisions(row, result))
+                    {
+                        result = await RunFoundationAsync(
+                            bundleRoot,
+                            "plan",
+                            row,
+                            home
+                        );
+                    }
                     if (result.code != 0)
                     {
                         SetStatus(
@@ -2862,6 +2892,8 @@ namespace LlmFoundationInstaller
                     row.latest_base_package_path,
                     row.latest_base_manifest_path,
                     row.latest_base_manifest_sha256,
+                    row.local_exception_paths,
+                    row.confirm_remove_unknown,
                     out output,
                     out error
                 );
@@ -2872,6 +2904,99 @@ namespace LlmFoundationInstaller
                     error = error
                 };
             });
+        }
+
+        private static bool ResolveUnknownDecisions(
+            TargetRow row,
+            WorkflowRunResult result
+        )
+        {
+            Dictionary<string, object> payload;
+            try
+            {
+                payload = new JavaScriptSerializer().Deserialize<
+                    Dictionary<string, object>
+                >(result.output);
+            }
+            catch
+            {
+                return false;
+            }
+            object status;
+            object unknownValue;
+            if (!payload.TryGetValue("status", out status) ||
+                !String.Equals(
+                    Convert.ToString(status, CultureInfo.InvariantCulture),
+                    "BLOCKED_USER_DECISION",
+                    StringComparison.Ordinal
+                ) ||
+                !payload.TryGetValue("unknown_entries", out unknownValue))
+            {
+                return false;
+            }
+            object[] unknown = unknownValue as object[];
+            if (unknown == null || unknown.Length == 0)
+            {
+                return false;
+            }
+            List<string> keep = new List<string>();
+            foreach (object value in unknown)
+            {
+                Dictionary<string, object> entry =
+                    value as Dictionary<string, object>;
+                if (entry == null)
+                {
+                    return false;
+                }
+                object pathValue;
+                object kindValue;
+                object sourceValue;
+                object riskValue;
+                string path = entry.TryGetValue("path", out pathValue)
+                    ? Convert.ToString(
+                        pathValue,
+                        CultureInfo.InvariantCulture
+                    )
+                    : "";
+                string kind = entry.TryGetValue("kind", out kindValue)
+                    ? Convert.ToString(kindValue, CultureInfo.InvariantCulture)
+                    : "component";
+                string source = entry.TryGetValue("source", out sourceValue)
+                    ? Convert.ToString(sourceValue, CultureInfo.InvariantCulture)
+                    : "unknown";
+                string risk = entry.TryGetValue("risk", out riskValue)
+                    ? Convert.ToString(riskValue, CultureInfo.InvariantCulture)
+                    : "UNREVIEWED";
+                if (String.IsNullOrWhiteSpace(path))
+                {
+                    return false;
+                }
+                MessageBoxResult answer = MessageBox.Show(
+                    "Найден компонент вне manifest:\n\n" +
+                    "Путь: " + path + "\n" +
+                    "Тип: " + kind + "\n" +
+                    "Источник: " + source + "\n" +
+                    "Риск: " + risk + "\n\n" +
+                    "Да — удалить из активного профиля с backup.\n" +
+                    "Нет — оставить как локальное исключение " +
+                    "(drift, повторное подтверждение при следующем Sync).\n" +
+                    "Отмена — остановить установку.",
+                    "Sync Base: решение пользователя",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Warning
+                );
+                if (answer == MessageBoxResult.Cancel)
+                {
+                    return false;
+                }
+                if (answer == MessageBoxResult.No)
+                {
+                    keep.Add(path);
+                }
+            }
+            row.local_exception_paths = keep;
+            row.confirm_remove_unknown = true;
+            return true;
         }
 
         private static void SetProgress(
