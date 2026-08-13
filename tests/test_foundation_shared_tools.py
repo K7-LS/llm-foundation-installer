@@ -501,6 +501,35 @@ def test_candidate_release_manifest_is_accepted_only_in_acceptance_mode(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+def test_release_binding_accepts_valid_acceptance_evidence_hash(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    home = tmp_path / f"evidence-hash-{Path(executable).stem}"
+    home.mkdir()
+    package = _modern_package(
+        tmp_path / f"evidence-hash-{Path(executable).stem}.zip"
+    )
+    manifest = _write_release_manifest(
+        package,
+        mutate=lambda release: release.update(
+            {"acceptance_evidence_sha256": "d" * 64}
+        ),
+    )
+
+    accepted = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        release_manifest=manifest,
+        release_manifest_sha256=_sha256(manifest.read_bytes()),
+    )
+
+    assert accepted.returncode == 0, accepted.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 @pytest.mark.parametrize(
     "case",
     [
