@@ -22,6 +22,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$PinnedOfficeCliFromEnvironment = [Environment]::GetEnvironmentVariable(
+    'K7_OFFICECLI_BINARY_PATH',
+    [EnvironmentVariableTarget]::Process
+)
+if ([string]::IsNullOrWhiteSpace($OfficeCliBinaryPath) -and
+    -not [string]::IsNullOrWhiteSpace($PinnedOfficeCliFromEnvironment)) {
+    $OfficeCliBinaryPath = $PinnedOfficeCliFromEnvironment
+}
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
@@ -493,7 +501,7 @@ function Read-AcceptedFoundation {
     }
     if ([int]$Evidence.schema_version -ne 1 -or
         [string]$Evidence.engine_version -cne $FoundationEngineVersion -or
-        [string]$Evidence.installer_version -cne '0.3.0' -or
+        [string]$Evidence.installer_version -cne '0.4.0' -or
         [string]$Evidence.FOUNDATION_SYNTHETIC -cne 'PASS' -or
         [string]$Evidence.deterministic_engine_bundle -cne 'PASS' -or
         [string]$Evidence.evidence_body_sha256 -notmatch (
@@ -1402,6 +1410,9 @@ $OperatorGuideSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\OperatorGuideDashboard.cs'
 $ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
+$LaunchRoutePreferencesSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\LaunchRoutePreferences.cs'
 $ClientBootstrapSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\ClientBootstrap.cs'
@@ -1523,6 +1534,7 @@ $CompilerArguments += @(
     $SystemProxyLeaseSource,
     $OperatorGuideSource,
     $ConnectionSource,
+    $LaunchRoutePreferencesSource,
     $ClientBootstrapSource
 )
 

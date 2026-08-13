@@ -6,6 +6,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$PinnedOfficeCliFromEnvironment = [Environment]::GetEnvironmentVariable(
+    'K7_OFFICECLI_BINARY_PATH',
+    [EnvironmentVariableTarget]::Process
+)
+if ([string]::IsNullOrWhiteSpace($OfficeCliBinaryPath) -and
+    -not [string]::IsNullOrWhiteSpace($PinnedOfficeCliFromEnvironment)) {
+    $OfficeCliBinaryPath = $PinnedOfficeCliFromEnvironment
+}
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom

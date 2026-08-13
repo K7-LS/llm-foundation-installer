@@ -274,7 +274,7 @@ def _run(command: list[str]) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify immutable employee-v0.3.0 and every published asset."
+            "Verify immutable employee-v0.4.0 and every published asset."
         )
     )
     parser.add_argument("--stable-root", required=True, type=Path)

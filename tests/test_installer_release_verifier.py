@@ -84,7 +84,7 @@ def _stable_release(tmp_path: Path) -> Path:
 
 def _release_api(root: Path) -> dict[str, object]:
     return {
-        "tag_name": "employee-v0.3.0",
+        "tag_name": "employee-v0.4.0",
         "draft": False,
         "prerelease": False,
         "immutable": True,
@@ -121,7 +121,7 @@ def test_verifier_binds_immutable_employee_release_and_every_asset(
     )
 
     assert evidence["RELEASE_INTEGRITY"] == "PASS"
-    assert evidence["tag"] == "employee-v0.3.0"
+    assert evidence["tag"] == "employee-v0.4.0"
     assert [row["name"] for row in evidence["assets"]] == sorted(
         path.name for path in root.iterdir() if path.is_file()
     )
@@ -136,7 +136,7 @@ def test_verifier_binds_immutable_employee_release_and_every_asset(
         ("draft", True),
         ("prerelease", True),
         ("immutable", False),
-        ("tag_name", "installer-v0.3.0"),
+        ("tag_name", "installer-v0.4.0"),
     ],
 )
 def test_verifier_rejects_nonstable_or_wrong_release(

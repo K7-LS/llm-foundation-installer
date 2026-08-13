@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.3.0"
-TAG = "employee-v0.3.0"
+VERSION = "0.4.0"
+TAG = "employee-v0.4.0"
 TARGETS = ("codex", "opencode")
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
@@ -63,7 +63,7 @@ EXPECTED_DRAFT_VERDICTS = {
     "CLEAN_PC_PILOT": "PENDING",
     "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
 }
-INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.3.0
+INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0
 
 В комплекте пять связанных позиций:
 
@@ -398,7 +398,7 @@ def prepare_draft_release(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare deterministic employee-v0.3.0 draft assets from the "
+            "Prepare deterministic employee-v0.4.0 draft assets from the "
             "accepted Employee edition and no-model hub canary."
         )
     )

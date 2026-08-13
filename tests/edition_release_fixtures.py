@@ -49,7 +49,7 @@ def employee_bundle(root: Path) -> Path:
         "schema_version": 1,
         "app_id": "k7-ai-edition-bundle",
         "edition_id": "Employee",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "theme_id": "K7Signal",
         "owner_controlled": False,
         "distribution_allowed": True,
@@ -126,7 +126,7 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
     value = {
         "schema_version": 1,
         "target": "employee_edition",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "generated_at_utc": "2026-07-28T12:00:00Z",
         "bundle": binding,
         "products": {

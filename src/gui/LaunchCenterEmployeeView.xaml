@@ -190,6 +190,7 @@
               <RadioButton x:Name="RouteDirect" GroupName="Route" Content="Напрямую" IsChecked="True" Style="{StaticResource RouteButton}" />
               <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
               <RadioButton x:Name="ProxyMode" GroupName="Route" Content="SingBox" Style="{StaticResource RouteButton}" Margin="0,8,0,0" />
+              <TextBlock x:Name="RouteScopeStatus" Text="Маршрут сохраняется отдельно для каждого клиента." Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0" />
               <Grid x:Name="ProxySettings" Visibility="Collapsed" Margin="0,16,0,0">
                 <StackPanel>
                   <TextBlock Text="НАСТРОЙКИ SING-BOX" FontFamily="Cascadia Mono" FontSize="10" Foreground="{StaticResource Muted}" Margin="0,0,0,8" />

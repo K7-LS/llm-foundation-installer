@@ -334,7 +334,7 @@ def finalize_employee_release(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Finalize employee-v0.3.0 after an accepted clean-PC pilot "
+            "Finalize employee-v0.4.0 after an accepted clean-PC pilot "
             "without rebuilding either executable or the runtime."
         )
     )
