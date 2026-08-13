@@ -1476,10 +1476,16 @@ function Assert-ReleaseManifestBinding {
         'tree',
         'transformation'
     ) 'release source'
-    Assert-ExactProperties $Release.requires @(
+    $RequirementProperties = @(
         'immutable_release',
         'release_attestation'
-    ) 'release requirements'
+    )
+    if (Test-ObjectProperty $Release.requires 'verification_commands') {
+        $RequirementProperties += 'verification_commands'
+    }
+    Assert-ExactProperties $Release.requires $RequirementProperties (
+        'release requirements'
+    )
     $ExpectedTag = (
         [string]$PackageManifest.target + '-v' +
         [string]$PackageManifest.version
@@ -1524,6 +1530,34 @@ function Assert-ReleaseManifestBinding {
         $Release.requires.release_attestation -isnot [bool] -or
         -not [bool]$Release.requires.release_attestation) {
         Throw-Foundation 'INVALID_PACKAGE' 'Release manifest binding differs'
+    }
+    if (Test-ObjectProperty $Release.requires 'verification_commands') {
+        try {
+            $RepositoryPath = ([uri][string]$Release.source.repository).
+                AbsolutePath.Trim('/')
+        } catch {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Release verification commands differ'
+            )
+        }
+        $ExpectedVerificationCommands = @(
+            "gh release verify $ExpectedTag -R $RepositoryPath",
+            "gh release verify-asset $ExpectedTag $PackageName -R $RepositoryPath"
+        )
+        if ($Release.requires.verification_commands -isnot [Array] -or
+            @($Release.requires.verification_commands).Count -ne 2 -or
+            @(
+                Compare-Object `
+                    -ReferenceObject $ExpectedVerificationCommands `
+                    -DifferenceObject @(
+                        $Release.requires.verification_commands
+                    ) `
+                    -SyncWindow 0
+            ).Count -ne 0) {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Release verification commands differ'
+            )
+        }
     }
     foreach ($Property in $Release.source.PSObject.Properties) {
         if ($Property.Value -isnot [string] -or
