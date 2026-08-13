@@ -616,21 +616,6 @@ namespace LlmFoundationInstaller
                 };
             }
             if (String.Equals(
-                    source.target,
-                    "codex",
-                    StringComparison.Ordinal))
-            {
-                return new ClientPlanResult
-                {
-                    status = "READY",
-                    client_id = source.id,
-                    supported_version = source.version,
-                    detected_version = detected,
-                    detected_state = "detected",
-                    action = "none"
-                };
-            }
-            if (String.Equals(
                     detected,
                     source.version,
                     StringComparison.Ordinal))
@@ -673,6 +658,21 @@ namespace LlmFoundationInstaller
                     detected_version = detected,
                     detected_state = "older",
                     action = "install"
+                };
+            }
+            if (comparison > 0 && String.Equals(
+                    source.target,
+                    "codex",
+                    StringComparison.Ordinal))
+            {
+                return new ClientPlanResult
+                {
+                    status = "READY",
+                    client_id = source.id,
+                    supported_version = source.version,
+                    detected_version = detected,
+                    detected_state = "newer",
+                    action = "none"
                 };
             }
             return new ClientPlanResult

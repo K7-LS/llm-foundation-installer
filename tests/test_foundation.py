@@ -1315,23 +1315,6 @@ def test_incompatible_engine_and_incomplete_managed_surface_fail_before_mutation
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
-def test_newer_engine_accepts_older_same_major_package(
-    engine_root, tmp_path, executable
-):
-    home = tmp_path / f"older-engine-package-{Path(executable).stem}"
-    home.mkdir()
-    package = _package(
-        tmp_path / f"older-engine-package-{Path(executable).stem}.zip",
-        foundation_engine_version="0.4.0",
-    )
-
-    result = _run(executable, engine_root, "install", home, package=package)
-
-    assert result.returncode == 0, result.stderr
-    assert _json(result)["status"] == "CANONICAL"
-
-
-@pytest.mark.parametrize("executable", POWERSHELLS)
 def test_preserved_paths_cannot_be_bypassed_by_windows_case_folding(
     engine_root, tmp_path, executable
 ):

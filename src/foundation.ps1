@@ -1090,20 +1090,10 @@ function Assert-Manifest {
             '^[0-9]+\.[0-9]+\.[0-9]+$') {
         Throw-Foundation 'INVALID_PACKAGE' 'Package manifest constants differ'
     }
-    try {
-        $RequiredEngineVersion = [version][string](
-            $Manifest.foundation_engine_version
-        )
-        $RunningEngineVersion = [version]$script:EngineVersion
-    } catch {
+    if ([string]$Manifest.foundation_engine_version -cne
+        $script:EngineVersion) {
         Throw-Foundation 'INVALID_PACKAGE' (
-            'Package Foundation engine version is invalid'
-        )
-    }
-    if ($RequiredEngineVersion.Major -ne $RunningEngineVersion.Major -or
-        $RequiredEngineVersion -gt $RunningEngineVersion) {
-        Throw-Foundation 'INVALID_PACKAGE' (
-            "Package requires incompatible Foundation engine " +
+            "Package requires Foundation engine " +
             "$($Manifest.foundation_engine_version); running engine is " +
             $script:EngineVersion
         )
