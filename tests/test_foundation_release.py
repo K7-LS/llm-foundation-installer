@@ -70,7 +70,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "schema_version": 1,
         "generated_at_utc": "2026-07-27T12:00:00Z",
         "engine_version": FOUNDATION_VERSION,
-        "installer_version": "0.3.0",
+        "installer_version": "0.4.0",
         "source": {
             "repository": (
                 "https://github.com/daniileliseev1337/"

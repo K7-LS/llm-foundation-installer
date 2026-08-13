@@ -67,7 +67,7 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     manifest = json.loads(
         first.release_manifest_path.read_text(encoding="utf-8")
     )
-    assert manifest["tag"] == "employee-v0.3.0"
+    assert manifest["tag"] == "employee-v0.4.0"
     assert manifest["channel"] == "draft"
     assert manifest["products"] == {
         key: record(bundle / filename)

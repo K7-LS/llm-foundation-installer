@@ -490,7 +490,7 @@ def _accepted_foundation(root: Path) -> Path:
     evidence_value = {
         "schema_version": 1,
         "engine_version": FOUNDATION_VERSION,
-        "installer_version": "0.3.0",
+        "installer_version": "0.4.0",
         "FOUNDATION_SYNTHETIC": "PASS",
         "deterministic_engine_bundle": "PASS",
     }
@@ -929,13 +929,13 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     engine_version = (REPOSITORY_ROOT / "VERSION").read_text(
         encoding="utf-8"
     ).strip()
-    assert app_version == "0.3.0"
+    assert app_version == "0.4.0"
     assert engine_version == FOUNDATION_VERSION
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
-    assert '[assembly: AssemblyVersion("0.3.0.0")]' in source
-    assert '[assembly: AssemblyFileVersion("0.3.0.0")]' in source
+    assert '[assembly: AssemblyVersion("0.4.0.0")]' in source
+    assert '[assembly: AssemblyFileVersion("0.4.0.0")]' in source
     assert manifest["version"] == app_version
     assert (gui_bundle / "engine" / "VERSION").read_text(
         encoding="utf-8"
@@ -3327,7 +3327,7 @@ def test_four_view_connection_contract(
     )
     if edition == "Owner" and product_role == "LaunchCenter":
         assert value["route_detail"] == (
-            "Launch Center управляет sing-box и временным прокси"
+            "Proxy передаётся только процессу выбранного клиента"
         )
 
 
@@ -3382,6 +3382,128 @@ def test_employee_launch_center_has_one_singbox_route_with_type_selector(
         assert value["proxy_type"] == proxy_type
         assert value["singbox_route_count"] == 1
         assert value["proxy_type_selector"] is True
+
+
+def test_launch_center_persists_independent_routes_per_client(
+    connection_ui_bundles: dict[tuple[str, str], Path],
+    tmp_path: Path,
+) -> None:
+    """Choosing proxy for one client must not reroute another client."""
+    bundle = connection_ui_bundles[("Employee", "LaunchCenter")]
+    executable = bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "profile"
+    home.mkdir()
+
+    for target, route in (
+        ("codex-desktop", "SingBoxHttps"),
+        ("claude-code", "Direct"),
+        ("opencode-cli", "VPN"),
+    ):
+        saved = subprocess.run(
+            [
+                str(executable),
+                "--save-launch-route-json",
+                str(home),
+                target,
+                route,
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=30,
+        )
+        assert saved.returncode == 0, saved.stdout + saved.stderr
+        value = json.loads(saved.stdout)
+        assert value["target_id"] == target
+        assert value["route"] == route
+
+    loaded = subprocess.run(
+        [str(executable), "--launch-routes-json", str(home)],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert loaded.returncode == 0, loaded.stdout + loaded.stderr
+    routes = json.loads(loaded.stdout)["target_routes"]
+    assert routes == {
+        "claude-code": "Direct",
+        "codex-desktop": "SingBoxHttps",
+        "opencode-cli": "VPN",
+    }
+
+    selected = subprocess.run(
+        [
+            str(executable),
+            "--ui-stored-launch-route-json",
+            str(home),
+            "codex-desktop",
+        ],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert selected.returncode == 0, selected.stdout + selected.stderr
+    state = json.loads(selected.stdout)
+    assert state["selected_target"] == "codex-desktop"
+    assert state["route_display"] == "SINGBOX HTTPS"
+
+    rejected = subprocess.run(
+        [
+            str(executable),
+            "--save-launch-route-json",
+            str(home),
+            "codex-desktop",
+            "SystemWideForever",
+        ],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert rejected.returncode != 0
+    unchanged = subprocess.run(
+        [str(executable), "--launch-routes-json", str(home)],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=30,
+    )
+    assert json.loads(unchanged.stdout)["target_routes"] == routes
+
+
+def test_every_installer_has_large_labeled_component_checkboxes() -> None:
+    """Every edition must expose an obvious clickable install selector."""
+    for resource in (
+        "InstallerView.xaml",
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+    ):
+        xaml = (REPOSITORY_ROOT / "src" / "gui" / resource).read_text(
+            encoding="utf-8"
+        )
+        for technical_name in (
+            "CodexSelected",
+            "ClaudeSelected",
+            "OpenCodeSelected",
+        ):
+            control = xaml.split(f'x:Name="{technical_name}"', 1)[1].split(
+                "/>", 1
+            )[0]
+            assert 'Content="Установить"' in control, resource
+            assert 'MinWidth="100"' in control, resource
+            assert 'Height="28"' in control, resource
 
 
 @pytest.mark.parametrize(

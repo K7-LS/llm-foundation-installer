@@ -114,7 +114,7 @@ def _validate_acceptance(
     valid = (
         evidence.get("schema_version") == 1
         and evidence.get("engine_version") == VERSION
-        and evidence.get("installer_version") == "0.3.0"
+        and evidence.get("installer_version") == "0.4.0"
         and evidence.get("FOUNDATION_SYNTHETIC") == "PASS"
         and evidence.get("deterministic_engine_bundle") == "PASS"
         and evidence.get("evidence_body_sha256")

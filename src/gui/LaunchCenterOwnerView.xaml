@@ -145,6 +145,7 @@
                 <RadioButton x:Name="RouteHttps" GroupName="Route" Content="ПРОКСИ HTTPS" Style="{StaticResource Route}" Margin="0" ToolTip="TLS-протокол самого прокси-сервера" />
               </StackPanel>
             </Grid>
+            <TextBlock x:Name="RouteScopeStatus" Grid.Row="1" Text="Маршрут сохраняется отдельно для каждого клиента." Foreground="#91AAAD" FontFamily="Cascadia Mono" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0" />
             <Grid Grid.Row="1" Margin="0,24,0,18">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
               <Border Grid.Column="0" Background="#10343A" BorderBrush="#30BCED" BorderThickness="1" CornerRadius="6" Padding="18"><StackPanel><TextBlock Text="01 / Выбранный клиент" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock x:Name="SelectedClientName" Text="CODEX" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,0" /></StackPanel></Border>

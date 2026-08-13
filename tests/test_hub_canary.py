@@ -115,7 +115,7 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
             }
         if command == "--self-test-json":
             return {
-                "version": "0.3.0",
+                "version": "0.4.0",
                 "targets": ["codex", "opencode"],
                 "engine_validated": True,
                 "automatic_network": False,

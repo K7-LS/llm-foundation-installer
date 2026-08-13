@@ -100,7 +100,7 @@ def test_pilot_finalization_preserves_both_products_and_runtime(
     manifest = json.loads(
         first.release_manifest_path.read_text(encoding="utf-8")
     )
-    assert manifest["tag"] == "employee-v0.3.0"
+    assert manifest["tag"] == "employee-v0.4.0"
     assert manifest["channel"] == "stable"
     assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert "FULL_RELEASE_CLAUDE" not in manifest["verdicts"]

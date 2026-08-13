@@ -267,7 +267,7 @@
                     <TextBlock Text="Codex" FontSize="17" FontWeight="SemiBold" />
                     <TextBlock Text="OpenAI" Style="{StaticResource Caption}" Margin="0,3,0,0" />
                   </StackPanel>
-                  <CheckBox x:Name="CodexSelected" Grid.Column="2" Width="22" Height="22" IsEnabled="False" VerticalAlignment="Top" />
+                  <CheckBox x:Name="CodexSelected" Grid.Column="2" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" VerticalAlignment="Top" />
                 </Grid>
                 <TextBlock Grid.Row="1"
                            Text="Компактный HOT-слой, 16 агентов и 37 навыков по требованию."
@@ -302,7 +302,7 @@
                     <TextBlock Text="Claude" FontSize="17" FontWeight="SemiBold" />
                     <TextBlock Text="Anthropic" Style="{StaticResource Caption}" Margin="0,3,0,0" />
                   </StackPanel>
-                  <CheckBox x:Name="ClaudeSelected" Grid.Column="2" Width="22" Height="22" IsEnabled="False" VerticalAlignment="Top" />
+                  <CheckBox x:Name="ClaudeSelected" Grid.Column="2" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" VerticalAlignment="Top" />
                 </Grid>
                 <TextBlock Grid.Row="1"
                            Text="Короткий CLAUDE.md; подробные правила, skills и agents загружаются по контексту."
@@ -337,7 +337,7 @@
                     <TextBlock Text="OpenCode" FontSize="17" FontWeight="SemiBold" />
                     <TextBlock Text="Provider-neutral" Style="{StaticResource Caption}" Margin="0,3,0,0" />
                   </StackPanel>
-                  <CheckBox x:Name="OpenCodeSelected" Grid.Column="2" Width="22" Height="22" IsEnabled="False" VerticalAlignment="Top" />
+                  <CheckBox x:Name="OpenCodeSelected" Grid.Column="2" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" VerticalAlignment="Top" />
                 </Grid>
                 <TextBlock Grid.Row="1"
                            Text="Нативные agents, commands и skills; провайдер и модель выбираются пользователем."

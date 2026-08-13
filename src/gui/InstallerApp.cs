@@ -22,8 +22,8 @@ using System.Windows.Media.Imaging;
 [assembly: AssemblyCompany("LLM Foundation")]
 [assembly: AssemblyProduct("LLM Foundation Installer")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
+[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyFileVersion("0.4.0.0")]
 [assembly: ComVisible(false)]
 
 namespace LlmFoundationInstaller
@@ -1463,10 +1463,23 @@ namespace LlmFoundationInstaller
                 "LaunchOfficialLink"
             ) as Button;
             Button stopRoute = view.FindName("StopRoute") as Button;
+            TextBlock routeScopeStatus = view.FindName(
+                "RouteScopeStatus"
+            ) as TextBlock;
             if (targetList == null || launch == null)
             {
                 return;
             }
+            string home = Environment.GetFolderPath(
+                Environment.SpecialFolder.UserProfile
+            );
+            bool applyingSavedRoute = false;
+            Func<string> selectedTarget = delegate
+            {
+                ListBoxItem selected =
+                    targetList.SelectedItem as ListBoxItem;
+                return selected == null ? null : selected.Tag as string;
+            };
             Action refreshLabel = delegate
             {
                 ListBoxItem selected =
@@ -1496,6 +1509,32 @@ namespace LlmFoundationInstaller
                         ? "Локальный ID OpenAI.chatgpt будет " +
                             "обнаружен при запуске"
                         : "Пакет проверен";
+                }
+                if (interactive &&
+                    !String.IsNullOrWhiteSpace(targetId))
+                {
+                    try
+                    {
+                        applyingSavedRoute = true;
+                        ConnectionUi.ApplyRoute(
+                            view,
+                            LaunchRouteStore.Resolve(home, targetId)
+                        );
+                    }
+                    catch (Exception exception)
+                    {
+                        ConnectionUi.ApplyRoute(view, "Direct");
+                        if (routeScopeStatus != null)
+                        {
+                            routeScopeStatus.Text =
+                                "Не удалось прочитать правило маршрута: " +
+                                exception.Message;
+                        }
+                    }
+                    finally
+                    {
+                        applyingSavedRoute = false;
+                    }
                 }
             };
             Func<string> selectedRoute = delegate
@@ -1539,11 +1578,18 @@ namespace LlmFoundationInstaller
                 }
                 if (routeDetail != null)
                 {
-                    routeDetail.Text = route == "Direct"
-                        ? "Прокси не изменяется"
-                        : (route == "VPN"
-                            ? "Используется системный VPN"
-                            : "Launch Center управляет sing-box и временным прокси");
+                    routeDetail.Text = RouteScopeDescription(
+                        selectedTarget(),
+                        route
+                    );
+                }
+                if (routeScopeStatus != null &&
+                    !String.IsNullOrWhiteSpace(selectedTarget()))
+                {
+                    routeScopeStatus.Text =
+                        "Сохранено для «" +
+                        TargetDisplayName(selectedTarget()) +
+                        "»: " + routeLabel + ".";
                 }
             };
             targetList.SelectionChanged += delegate
@@ -1551,8 +1597,33 @@ namespace LlmFoundationInstaller
                 ApplyResolutionFeedback(view, null);
                 refreshLabel();
             };
+            Action persistRoute = delegate
+            {
+                if (interactive && !applyingSavedRoute &&
+                    !String.IsNullOrWhiteSpace(selectedTarget()))
+                {
+                    try
+                    {
+                        LaunchRouteStore.Save(
+                            home,
+                            selectedTarget(),
+                            selectedRoute()
+                        );
+                    }
+                    catch (Exception exception)
+                    {
+                        if (routeScopeStatus != null)
+                        {
+                            routeScopeStatus.Text =
+                                "Правило маршрута не сохранено: " +
+                                exception.Message;
+                        }
+                    }
+                }
+            };
             RoutedEventHandler routeChanged = delegate
             {
+                persistRoute();
                 refreshRoute();
             };
             if (direct != null)
@@ -1579,6 +1650,7 @@ namespace LlmFoundationInstaller
             {
                 proxyType.SelectionChanged += delegate
                 {
+                    persistRoute();
                     refreshRoute();
                 };
             }
@@ -1620,9 +1692,6 @@ namespace LlmFoundationInstaller
                 }
                 string route = selectedRoute();
                 EditionProfile edition = EditionProfile.LoadEmbedded();
-                string home = Environment.GetFolderPath(
-                    Environment.SpecialFolder.UserProfile
-                );
                 LaunchTargetResolution resolution =
                     LaunchTargetResolver.Resolve(
                         edition,
@@ -1702,6 +1771,30 @@ namespace LlmFoundationInstaller
                 }
                 refreshLabel();
             };
+        }
+
+        internal static string RouteScopeDescription(
+            string targetId,
+            string route
+        )
+        {
+            if (route == "Direct")
+            {
+                return "Только этот клиент запускается напрямую";
+            }
+            if (route == "VPN")
+            {
+                return "Этот клиент использует уже активный системный VPN";
+            }
+            if (String.Equals(
+                    targetId,
+                    "codex-desktop",
+                    StringComparison.Ordinal))
+            {
+                return "Store Codex требует временный системный proxy; " +
+                    "на время сеанса он может затронуть другие приложения";
+            }
+            return "Proxy передаётся только процессу выбранного клиента";
         }
 
         internal static void ApplyResolutionFeedback(
@@ -4590,6 +4683,26 @@ namespace LlmFoundationInstaller
                     );
                     return 0;
                 }
+                if (args.Length == 4 &&
+                    args[0] == "--save-launch-route-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchRouteStore.Save(
+                            args[1],
+                            args[2],
+                            args[3]
+                        )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 2 &&
+                    args[0] == "--launch-routes-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchRouteStore.Load(args[1])
+                    ));
+                    return 0;
+                }
                 if (args.Length == 2 && args[0] == "--connection-json")
                 {
                     WriteOutput(new JavaScriptSerializer().Serialize(
@@ -4669,6 +4782,35 @@ namespace LlmFoundationInstaller
                     stateApp.Shutdown();
                     return 0;
                 }
+                if (args.Length == 3 &&
+                    args[0] == "--ui-stored-launch-route-json")
+                {
+                    if (edition.product_role != "LaunchCenter")
+                    {
+                        WriteError(
+                            "Команда маршрута доступна только центру запуска"
+                        );
+                        return 2;
+                    }
+                    Application routeApp = new Application();
+                    UserControl routeView = InstallerView.Create(
+                        bundleRoot,
+                        false
+                    );
+                    bool selected = LaunchCenterActions.SelectTarget(
+                        routeView,
+                        args[2]
+                    );
+                    bool applied = selected && ConnectionUi.ApplyRoute(
+                        routeView,
+                        LaunchRouteStore.Resolve(args[1], args[2])
+                    );
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        LaunchCenterActions.DescribeSelection(routeView)
+                    ));
+                    routeApp.Shutdown();
+                    return applied ? 0 : 20;
+                }
                 if (args.Length == 2 &&
                     (args[0] == "--ui-selection-json" ||
                      args[0] == "--ui-launch-selection-json" ||
@@ -4726,7 +4868,8 @@ namespace LlmFoundationInstaller
                 application.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 Window window = new Window
                 {
-                    Title = EditionTheme.WindowTitle(edition),
+                    Title = EditionTheme.WindowTitle(edition) + " · v" +
+                        BundleIntegrity.ReadBundleVersion(bundleRoot),
                     Width = 1280,
                     Height = 800,
                     MinWidth = 1100,

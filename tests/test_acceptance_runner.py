@@ -110,7 +110,7 @@ def test_source_hashes_bind_gui_version_and_client_source_lock(tmp_path):
     repository.mkdir()
     tracked = {
         "VERSION": "0.2.1\n",
-        "APP_VERSION": "0.3.0\n",
+        "APP_VERSION": "0.4.0\n",
         "client-sources.lock.json": '{"schema_version":1}\n',
         "src/app.txt": "source\n",
         "tests/test_app.py": "def test_app(): pass\n",
