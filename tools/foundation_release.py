@@ -378,14 +378,25 @@ def create_package_acceptance(
         != manifest.get("acceptance_evidence_sha256")
     ):
         raise ValueError("Foundation acceptance evidence binding differs")
-    _validate_acceptance(
-        evidence,
-        {
-            name: str(record.get("sha256"))
-            for name, record in engine_files.items()
-            if isinstance(record, dict)
-        },
+    builds = evidence.get("engine_builds")
+    ps7_build = builds.get("ps7") if isinstance(builds, dict) else None
+    accepted_tree = (
+        ps7_build.get("files") if isinstance(ps7_build, dict) else None
     )
+    manifest_core = {
+        name: str(record.get("sha256"))
+        for name, record in engine_files.items()
+        if isinstance(record, dict)
+    }
+    if (
+        not isinstance(accepted_tree, dict)
+        or any(
+            accepted_tree.get(name) != digest
+            for name, digest in manifest_core.items()
+        )
+    ):
+        raise ValueError("Foundation engine core differs from accepted tree")
+    _validate_acceptance(evidence, accepted_tree)
     verified_assets = verification.get("assets")
     if (
         verification.get("schema_version") != 1

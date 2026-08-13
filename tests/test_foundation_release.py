@@ -63,9 +63,13 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
             }
         )
     )
+    shared = engine / "shared-tools" / "officecli" / "officecli.exe"
+    shared.parent.mkdir(parents=True)
+    shared.write_bytes(b"officecli fixture\n")
     files = {
-        path.name: _sha256(path)
-        for path in sorted(engine.iterdir(), key=lambda item: item.name)
+        path.relative_to(engine).as_posix(): _sha256(path)
+        for path in sorted(engine.rglob("*"), key=lambda item: item.as_posix())
+        if path.is_file()
     }
     evidence = {
         "schema_version": 1,
