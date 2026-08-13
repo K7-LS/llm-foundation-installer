@@ -33,6 +33,7 @@ def _write_release_manifest(
     package: Path,
     *,
     destination: Path | None = None,
+    channel: str = "stable",
     mutate=None,
 ) -> Path:
     with zipfile.ZipFile(package) as archive:
@@ -45,7 +46,7 @@ def _write_release_manifest(
         "tag": (
             f"{package_manifest['target']}-v{package_manifest['version']}"
         ),
-        "channel": "stable",
+        "channel": channel,
         "client": package_manifest["client"],
         "foundation_engine_version": package_manifest[
             "foundation_engine_version"
@@ -466,6 +467,37 @@ def test_baseline_release_binding_accepts_explicit_pair_and_sibling_fallback(
             ).read_text(encoding="utf-8")
         )
         assert state["release_manifest_sha256"] == manifest_hash
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_candidate_release_manifest_is_accepted_only_in_acceptance_mode(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    accepted_home = tmp_path / f"candidate-accepted-{Path(executable).stem}"
+    rejected_home = tmp_path / f"candidate-rejected-{Path(executable).stem}"
+    accepted_home.mkdir()
+    rejected_home.mkdir()
+    package = _modern_package(
+        tmp_path / f"candidate-{Path(executable).stem}.zip"
+    )
+    _write_release_manifest(package, channel="candidate")
+
+    accepted = _run(
+        executable, engine_root, "plan", accepted_home, package=package
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    assert _json(accepted)["status"] == "READY"
+
+    rejected = _run(
+        executable,
+        engine_root,
+        "plan",
+        rejected_home,
+        package=package,
+        extra_env={"FOUNDATION_ACCEPTANCE_MODE": "0"},
+    )
+    assert rejected.returncode == 30
+    assert _json(rejected)["code"] == "INVALID_PACKAGE"
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)

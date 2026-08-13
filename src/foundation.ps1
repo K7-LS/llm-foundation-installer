@@ -1500,7 +1500,10 @@ function Assert-ReleaseManifestBinding {
         $Release.tag -isnot [string] -or
         [string]$Release.tag -cne $ExpectedTag -or
         $Release.channel -isnot [string] -or
-        [string]$Release.channel -cne 'stable' -or
+        ([string]$Release.channel -cne 'stable' -and -not (
+            $env:FOUNDATION_ACCEPTANCE_MODE -ceq '1' -and
+            [string]$Release.channel -ceq 'candidate'
+        )) -or
         $Release.client.id -isnot [string] -or
         [string]$Release.client.id -cne [string]$PackageManifest.client.id -or
         $Release.client.supported_version -isnot [string] -or
