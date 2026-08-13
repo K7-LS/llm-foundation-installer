@@ -52,6 +52,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
                 "foundation_ps1_sha256": script_hash,
                 "network": "offline",
                 "commands": [
+                    "apply",
                     "doctor",
                     "install",
                     "inventory",

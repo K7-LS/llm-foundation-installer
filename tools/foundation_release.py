@@ -93,7 +93,7 @@ def _validate_engine_contract(engine_root: Path) -> None:
         or manifest.get("engine_version") != VERSION
         or manifest.get("network") != "offline"
         or manifest.get("commands")
-        != ["doctor", "install", "inventory", "plan", "rollback"]
+        != ["apply", "doctor", "install", "inventory", "plan", "rollback"]
         or manifest.get("supported_powershell") != ["5.1", "7"]
         or manifest.get("foundation_ps1_sha256")
         != _record(engine_root / "foundation.ps1")["sha256"]
