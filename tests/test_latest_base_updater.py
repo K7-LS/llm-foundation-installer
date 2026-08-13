@@ -63,3 +63,13 @@ def test_latest_base_source_is_compiled_into_every_gui() -> None:
     build = BUILD.read_text(encoding="utf-8")
     assert "src\\gui\\BaseReleaseUpdater.cs" in build
     assert "$BaseReleaseUpdaterSource" in build
+
+
+def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
+    app = APP.read_text(encoding="utf-8")
+    assert '"BLOCKED_USER_DECISION"' in app
+    assert 'MessageBoxButton.YesNoCancel' in app
+    assert 'arguments.Add("-LocalExceptionPath")' in app
+    assert 'arguments.Add("-ConfirmRemoveUnknown")' in app
+    assert "row.local_exception_paths" in app
+    assert "row.confirm_remove_unknown" in app
