@@ -20,8 +20,9 @@ import installer_release  # noqa: E402
 
 
 TARGET_CLIENT = {
+    "claude": "2.1.218",
     "codex": "0.146.0-alpha.3.1",
-    "opencode": "1.18.7",
+    "opencode": "1.18.13",
 }
 
 
@@ -146,8 +147,10 @@ def _verify_product(
         or product_value.get("product_role") != role
         or product_value.get("targets")
         != [
+            "chrome-browser",
             "codex-cli",
             "codex-desktop",
+            "claude-code",
             "opencode-cli",
             "opencode-desktop",
             "vscode-codex",
@@ -192,7 +195,7 @@ def _verify_product(
             for target in installer_release.TARGETS
         }
         or catalog.get("install_enabled") is not True
-        or catalog.get("provider_eligibility") != "NOT_PROVIDED"
+        or catalog.get("provider_eligibility") != "PASS"
     ):
         raise ValueError(f"Employee {product} catalog differs")
     if product == "installer":
@@ -221,6 +224,13 @@ def _sentinel_paths(home: Path, target: str) -> dict[Path, bytes]:
         return {
             home / ".codex" / "auth.json": b'{"auth":"preserve"}\n',
             home / ".codex" / "sessions" / "s.json": b"session\n",
+        }
+    if target == "claude":
+        return {
+            home / ".claude" / ".credentials.json": (
+                b'{"auth":"preserve"}\n'
+            ),
+            home / ".claude" / "projects" / "session.json": b"session\n",
         }
     return {
         home / ".config" / "opencode" / "auth.json": (
@@ -269,8 +279,8 @@ def _run_target(
             if statuses
             == {
                 "plan": "READY",
-                "install": "INSTALLED",
-                "doctor": "HEALTHY",
+                "install": "CANONICAL",
+                "doctor": "CANONICAL",
                 "inventory": "INSTALLED",
                 "rollback": "ROLLED_BACK",
             }

@@ -23,7 +23,7 @@ sys.modules[SPEC.name] = canary
 SPEC.loader.exec_module(canary)
 
 
-def test_hub_canary_accepts_two_products_runtime_and_two_targets(
+def test_hub_canary_accepts_two_products_runtime_and_three_targets(
     tmp_path: Path,
 ):
     bundle = employee_bundle(tmp_path / "bundle")
@@ -46,7 +46,7 @@ def test_hub_canary_accepts_two_products_runtime_and_two_targets(
         value["products"]["launch_center"]["sibling_handoff"]
         == "NOT_APPLICABLE"
     )
-    assert set(value["targets"]) == {"codex", "opencode"}
+    assert set(value["targets"]) == {"claude", "codex", "opencode"}
     assert value["runtime"]["status"] == "VERIFIED"
     assert value["model_requests"] == 0
     assert value["evidence_body_sha256"] == canary.evidence_body_sha256(
@@ -106,8 +106,10 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
                 "edition_id": "Employee",
                 "product_role": "Installer",
                 "targets": [
+                    "chrome-browser",
                     "codex-cli",
                     "codex-desktop",
+                    "claude-code",
                     "opencode-cli",
                     "opencode-desktop",
                     "vscode-codex",
@@ -116,7 +118,7 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
         if command == "--self-test-json":
             return {
                 "version": "0.4.0",
-                "targets": ["codex", "opencode"],
+                "targets": ["claude", "codex", "opencode"],
                 "engine_validated": True,
                 "automatic_network": False,
                 "telemetry": False,
@@ -125,11 +127,12 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
         if command == "--catalog-json":
             return {
                 "targets": [
+                    {"id": "claude", "package_state": "accepted"},
                     {"id": "codex", "package_state": "accepted"},
                     {"id": "opencode", "package_state": "accepted"},
                 ],
                 "install_enabled": True,
-                "provider_eligibility": "NOT_PROVIDED",
+                "provider_eligibility": "PASS",
             }
         if command == "--resolve-sibling-json":
             return {
