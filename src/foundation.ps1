@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.1'
+$script:EngineVersion = '0.5.2'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -1460,6 +1460,9 @@ function Assert-ReleaseManifestBinding {
     if (Test-ObjectProperty $Release 'session_tools_asset') {
         $Properties += 'session_tools_asset'
     }
+    if (Test-ObjectProperty $Release 'acceptance_evidence_sha256') {
+        $Properties += 'acceptance_evidence_sha256'
+    }
     Assert-ExactProperties $Release $Properties 'release manifest'
     Assert-ExactProperties $Release.client @(
         'id',
@@ -1533,6 +1536,15 @@ function Assert-ReleaseManifestBinding {
         $Release.requires.release_attestation -isnot [bool] -or
         -not [bool]$Release.requires.release_attestation) {
         Throw-Foundation 'INVALID_PACKAGE' 'Release manifest binding differs'
+    }
+    if (Test-ObjectProperty $Release 'acceptance_evidence_sha256') {
+        if ($Release.acceptance_evidence_sha256 -isnot [string] -or
+            [string]$Release.acceptance_evidence_sha256 -cnotmatch
+                '^[0-9a-f]{64}$') {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Release acceptance evidence hash is invalid'
+            )
+        }
     }
     if (Test-ObjectProperty $Release.requires 'verification_commands') {
         try {
