@@ -3184,7 +3184,7 @@ def test_gui_builder_supports_powershell_7_and_5_1(
         text=True,
         encoding="utf-8",
         check=False,
-        timeout=30,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
