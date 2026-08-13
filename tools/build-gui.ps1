@@ -1049,13 +1049,7 @@ $AvailableTargets = @($AllPackages.target | Sort-Object)
 $IncludedTargets = @('claude', 'codex', 'opencode')
 $RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
-$NeedsAcceptedFoundation = (
-    $DistributionMode -ceq 'PublicSigned' -or
-    ($null -ne $AcceptedFoundation -and
-        @($AllPackages | Where-Object {
-            [string]$_.trust_level -cne 'accepted'
-        }).Count -eq 0)
-)
+$NeedsAcceptedFoundation = $IsPackagedRelease
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
 try {

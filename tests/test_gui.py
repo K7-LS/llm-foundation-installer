@@ -1045,6 +1045,7 @@ def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
         ("claude-code", "2.1.218", "download"),
         ("opencode-cli", "1.18.13", "download"),
         ("opencode-desktop", "1.18.13", "download"),
+        ("officecli", "1.0.143", "download"),
     ]
 
 
@@ -4928,7 +4929,7 @@ def test_gui_runs_real_foundation_workflow_and_preserves_auth(tmp_path: Path):
 
     install = run("install")
     assert install.returncode == 0, install.stdout + install.stderr
-    assert json.loads(install.stdout)["status"] == "INSTALLED"
+    assert json.loads(install.stdout)["status"] == "CANONICAL"
     assert (home / ".codex" / "AGENTS.md").read_text(
         encoding="utf-8"
     ) == "# accepted candidate\n"
@@ -5001,7 +5002,7 @@ def test_gui_executable_is_a_standalone_installer_payload(tmp_path: Path):
         timeout=60,
     )
     assert install.returncode == 0, install.stdout + install.stderr
-    assert json.loads(install.stdout)["status"] == "INSTALLED"
+    assert json.loads(install.stdout)["status"] == "CANONICAL"
     assert (home / ".codex" / "AGENTS.md").is_file()
 
 
@@ -5754,5 +5755,5 @@ def test_installer_ui_makes_provider_policy_boundary_visible():
     ).read_text(encoding="utf-8")
     assert "vpn/proxy — это только транспорт" in xaml
     assert "не подтверждает доступность сервиса в регионе" in xaml
-    assert "Допуск провайдера истёк или недействителен" in source
-    assert "Установка Claude заблокирована" in source
+    assert "допуск провайдера истёк или недействителен" in source
+    assert "Установка Claude заблокирована" not in source

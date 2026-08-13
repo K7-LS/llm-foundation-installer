@@ -4677,21 +4677,36 @@ function Invoke-Doctor {
     $State = Read-ActiveState $Paths
     $Health = Test-InstalledState $State $HomeRoot $ActualClientId `
         $ActualClientVersion
-    $SessionPaths = Get-SessionToolsPaths `
-        $HomeRoot $TargetName $State.managed_surface
-    $SessionStateExists = Test-Path -LiteralPath (
-        $SessionPaths.state_path
-    ) -PathType Leaf
-    $SessionStateRequired = @($State.installed_files).path -ccontains (
-        [string]$SessionPaths.runtime_relative
+    $SessionManagedPaths = @(
+        @($State.managed_surface.exact_directories) +
+        @($State.managed_surface.replace_files) +
+        @(Get-MergeTomlFiles $State.managed_surface)
     )
-    if ($SessionStateRequired -and -not $SessionStateExists) {
-        Throw-Foundation 'ACTIVE_DRIFT' 'Session tools state is missing'
-    }
-    if ($SessionStateExists) {
-        $SessionState = Read-JsonFile $SessionPaths.state_path
-        $null = Assert-SessionToolsState `
-            $SessionState $HomeRoot $TargetName $SessionPaths -CheckDestination
+    $SessionSkillRoots = @($SessionManagedPaths | Where-Object {
+        [string]$_ -match '/skills(?:/|$)'
+    })
+    $SessionBaseRoots = @($SessionManagedPaths | Where-Object {
+        [string]$_ -match '/base/(?:VERSION|runtime(?:/|$))'
+    })
+    if ($SessionSkillRoots.Count -gt 0 -and
+        $SessionBaseRoots.Count -gt 0) {
+        $SessionPaths = Get-SessionToolsPaths `
+            $HomeRoot $TargetName $State.managed_surface
+        $SessionStateExists = Test-Path -LiteralPath (
+            $SessionPaths.state_path
+        ) -PathType Leaf
+        $SessionStateRequired = @($State.installed_files).path -ccontains (
+            [string]$SessionPaths.runtime_relative
+        )
+        if ($SessionStateRequired -and -not $SessionStateExists) {
+            Throw-Foundation 'ACTIVE_DRIFT' 'Session tools state is missing'
+        }
+        if ($SessionStateExists) {
+            $SessionState = Read-JsonFile $SessionPaths.state_path
+            $null = Assert-SessionToolsState `
+                $SessionState $HomeRoot $TargetName $SessionPaths `
+                -CheckDestination
+        }
     }
     Test-BundledOfficeCliState $HomeRoot
     if ($State.desired_state -is [Management.Automation.PSCustomObject]) {
