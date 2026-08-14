@@ -4485,8 +4485,29 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
         "PROVIDER_LIVE": "PASS",
         "PROGRAM_RELEASE": "3/3",
         "INTERNAL_UNSIGNED_RELEASE": "PASS",
+        "PUBLIC_UNSIGNED_RELEASE": "NOT_PASS",
         "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
     }
+
+    public_unsigned = _build_gui_bundle(
+        tmp_path / "public-unsigned",
+        package_source,
+        evidence,
+        "PublicUnsigned",
+    )
+    public_manifest = json.loads(
+        (public_unsigned / "bundle-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert public_manifest["distribution_mode"] == "public_unsigned"
+    assert public_manifest["signature"] == "unsigned-public"
+    assert public_manifest["public_distribution_allowed"] is True
+    assert public_manifest["internal_distribution_allowed"] is False
+    assert public_manifest["windows_warning_expected"] is True
+    assert public_manifest["verdicts"]["PUBLIC_UNSIGNED_RELEASE"] == (
+        "PASS"
+    )
 
     public_signed = subprocess.run(
         [
@@ -4516,6 +4537,38 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     assert "requires a code-signing certificate" in (
         public_signed.stdout + public_signed.stderr
     ).lower()
+
+
+def test_owner_public_unsigned_embedded_contract_self_test_passes(
+    tmp_path: Path,
+) -> None:
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "owner-public-unsigned",
+        package_source,
+        evidence,
+        "PublicUnsigned",
+        edition="Owner",
+    )
+    executable = bundle / "LLMFoundationInstaller.exe"
+    self_test = subprocess.run(
+        [str(executable), "--self-test-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+    assert json.loads(self_test.stdout)["engine_validated"] is True
 
 
 def test_employee_distribution_requires_immutable_foundation_package(

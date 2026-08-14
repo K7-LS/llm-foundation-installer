@@ -146,7 +146,11 @@ namespace LlmFoundationInstaller
             {
                 ValidateExact(
                     "K-7 AI Foundation Owner",
+#if K7_OWNER_DISTRIBUTION_ALLOWED
+                    true,
+#else
                     false,
+#endif
                     new[] { "claude", "codex", "opencode" },
                     new[] { "claude", "codex", "opencode" },
                     "SignalConsole",

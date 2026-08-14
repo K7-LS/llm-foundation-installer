@@ -6,10 +6,10 @@ from pathlib import Path
 
 
 PRODUCT_FILES = {
-    "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
-    "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
+    "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
+    "launch_center": "K7-AI-Launch-Center-Employee-PublicUnsigned.exe",
 }
-FALLBACK_FILE = "K7-AI-Launch-Center-Employee-InternalUnsigned.cmd"
+FALLBACK_FILE = "K7-AI-Launch-Center-Employee-PublicUnsigned.cmd"
 RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
 
 
@@ -40,7 +40,7 @@ def employee_bundle(root: Path) -> Path:
         root / FALLBACK_FILE,
         (
             '@echo off\r\nstart "" '
-            '"%~dp0K7-AI-Foundation-Employee-InternalUnsigned.exe" '
+            '"%~dp0K7-AI-Foundation-Employee-PublicUnsigned.exe" '
             "--launch-center-ui\r\n"
         ).encode("utf-8"),
     )
@@ -53,7 +53,7 @@ def employee_bundle(root: Path) -> Path:
         "theme_id": "K7Signal",
         "owner_controlled": False,
         "distribution_allowed": True,
-        "distribution_mode": "InternalUnsigned",
+        "distribution_mode": "PublicUnsigned",
         "targets": ["claude", "codex", "opencode"],
         "verdicts": {
             "FULL_RELEASE_CLAUDE": "PASS",
@@ -62,7 +62,8 @@ def employee_bundle(root: Path) -> Path:
             "TECHNICAL_READY": "PASS",
             "PROVIDER_LIVE": "PASS",
             "PROGRAM_RELEASE": "3/3",
-            "INTERNAL_UNSIGNED_RELEASE": "PASS",
+            "INTERNAL_UNSIGNED_RELEASE": "NOT_PASS",
+            "PUBLIC_UNSIGNED_RELEASE": "PASS",
             "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
         },
         "runtime": {

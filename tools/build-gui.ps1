@@ -11,7 +11,7 @@ param(
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
     [string]$ProviderEligibilityEvidence,
-    [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
+    [ValidateSet('Preview', 'InternalUnsigned', 'PublicUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
@@ -1120,6 +1120,7 @@ $IncludedTargets = @('claude', 'codex', 'opencode')
 $RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
 $NeedsAcceptedFoundation = $IsPackagedRelease
+$IsPublicUnsigned = $DistributionMode -ceq 'PublicUnsigned'
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
 try {
@@ -1320,7 +1321,7 @@ $EditionContract = if ($Edition -ceq 'Owner') {
     [ordered]@{
         edition_id = 'Owner'
         display_name = 'K-7 AI Foundation Owner'
-        distribution_allowed = $false
+        distribution_allowed = [bool]$IsPublicUnsigned
         included_target_ids = @('claude', 'codex', 'opencode')
         required_target_ids = @('claude', 'codex', 'opencode')
         theme_id = 'SignalConsole'
@@ -1564,6 +1565,9 @@ $CompilerArguments = @(
     "/resource:$EngineExtraIndexPath,FoundationEngine.extra-files.json",
     "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
 )
+if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
+    $CompilerArguments += '/define:K7_OWNER_DISTRIBUTION_ALLOWED'
+}
 $CompilerArguments += @($EngineExtraIndex | ForEach-Object {
     "/resource:$($_.source_path),$($_.resource_name)"
 })
@@ -1621,6 +1625,8 @@ Remove-Item -LiteralPath @(
 
 $SignatureState = if ($DistributionMode -ceq 'InternalUnsigned') {
     'unsigned-internal'
+} elseif ($IsPublicUnsigned) {
+    'unsigned-public'
 } else {
     'unsigned-preview'
 }
@@ -1745,6 +1751,12 @@ $InternalReady = (
     $DistributionMode -ceq 'InternalUnsigned' -and
     $TechnicalReady
 )
+$PublicUnsignedReady = (
+    $IsPublicUnsigned -and
+    [bool]$EditionContract.distribution_allowed -and
+    $TechnicalReady -and
+    $ProviderReady
+)
 $PublicSignedReady = (
     $DistributionMode -ceq 'PublicSigned' -and
     $SignatureState -ceq 'valid-authenticode' -and
@@ -1778,8 +1790,13 @@ $Verdicts = [ordered]@{
     } else {
         'NOT_PASS'
     }
+    PUBLIC_UNSIGNED_RELEASE = if ($PublicUnsignedReady) {
+        'PASS'
+    } else {
+        'NOT_PASS'
+    }
     PUBLIC_SIGNED_RELEASE = if (
-        $DistributionMode -ceq 'InternalUnsigned'
+        $DistributionMode -ceq 'InternalUnsigned' -or $IsPublicUnsigned
     ) {
         if ($ProviderReady) {
             'DEFERRED_UNSIGNED'
@@ -1809,6 +1826,7 @@ $Manifest = [ordered]@{
     distribution_mode = switch ($DistributionMode) {
         'Preview' { 'preview' }
         'InternalUnsigned' { 'internal_unsigned' }
+        'PublicUnsigned' { 'public_unsigned' }
         'PublicSigned' { 'public_signed' }
     }
     embedded_foundation = $true
@@ -1816,12 +1834,16 @@ $Manifest = [ordered]@{
     signature = $SignatureState
     employee_release = ($Edition -ceq 'Employee' -and $IsPackagedRelease)
     employee_distribution_allowed = [bool](
-        $Edition -ceq 'Employee' -and $InternalReady
+        $Edition -ceq 'Employee' -and (
+            $InternalReady -or $PublicUnsignedReady
+        )
     )
     internal_distribution_allowed = [bool]$InternalReady
-    public_distribution_allowed = [bool]$PublicSignedReady
+    public_distribution_allowed = [bool](
+        $PublicUnsignedReady -or $PublicSignedReady
+    )
     windows_warning_expected = (
-        $DistributionMode -ceq 'InternalUnsigned'
+        $DistributionMode -ceq 'InternalUnsigned' -or $IsPublicUnsigned
     )
     verdicts = $Verdicts
     provider_eligibility = $ProviderEligibilityManifest

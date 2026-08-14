@@ -115,7 +115,7 @@ def _validate_stable_root(
         or manifest.get("version") != installer_release.VERSION
         or manifest.get("tag") != TAG
         or manifest.get("channel") != "stable"
-        or manifest.get("distribution_mode") != "InternalUnsigned"
+        or manifest.get("distribution_mode") != "PublicUnsigned"
         or manifest.get("verdicts") != EXPECTED_VERDICTS
         or manifest.get("evidence_body_sha256")
         != evidence_body_sha256(manifest)

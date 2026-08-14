@@ -44,7 +44,7 @@ EXPECTED_STABLE_VERDICTS = {
     **installer_release.EXPECTED_BUNDLE_VERDICTS,
     "INSTALLER_HUB_CANARY": "PASS",
     "HOME_PC_CANARY": "PASS",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
+    "EMPLOYEE_INSTALLER_PUBLIC_UNSIGNED": "PASS",
     "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
 }
 
@@ -129,7 +129,7 @@ def _validate_draft(draft: Path) -> dict[str, Any]:
         or manifest.get("version") != installer_release.VERSION
         or manifest.get("tag") != installer_release.TAG
         or manifest.get("channel") != "draft"
-        or manifest.get("distribution_mode") != "InternalUnsigned"
+        or manifest.get("distribution_mode") != "PublicUnsigned"
         or manifest.get("verdicts") != EXPECTED_DRAFT_VERDICTS
         or manifest.get("evidence_body_sha256")
         != installer_release.evidence_body_sha256(manifest)
@@ -257,7 +257,7 @@ def finalize_employee_release(
         "target": "employee_edition",
         "version": installer_release.VERSION,
         "tag": installer_release.TAG,
-        "distribution_mode": "InternalUnsigned",
+        "distribution_mode": "PublicUnsigned",
         "products": {
             product: _record(path)
             for product, path in product_paths.items()
@@ -357,7 +357,7 @@ def main() -> int:
     print(
         json.dumps(
             {
-                "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
+                "PUBLIC_UNSIGNED_RELEASE": "PASS",
                 "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
                 "products": {
                     product: _record(path)["sha256"]
