@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.2'
+$script:EngineVersion = '0.5.3'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -479,7 +479,7 @@ function Assert-StringArray {
     foreach ($Value in @($Values)) {
         $IsTomlIdentity = $AllowTomlIdentity -and
             [string]$Value -cmatch (
-                '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.-]+$'
+                '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.@+-]+$'
             )
         if ($Value -isnot [string] -or
             (-not $IsTomlIdentity -and
@@ -2412,6 +2412,16 @@ function Get-UnknownEntries {
     return @(Sort-OrdinalStrings @($Unknown))
 }
 
+function Convert-TomlSectionIdentity {
+    param([Parameter(Mandatory = $true)][string]$Section)
+    if ($Section -cmatch (
+            '^([A-Za-z0-9_-]+)\."([A-Za-z0-9_.@+-]+)"$'
+        )) {
+        return [string]$Matches[1] + '.' + [string]$Matches[2]
+    }
+    return $Section
+}
+
 function Get-TomlUnknownEntries {
     param(
         [Parameter(Mandatory = $true)]$Manifest,
@@ -2441,16 +2451,17 @@ function Get-TomlUnknownEntries {
         foreach ($Line in @([regex]::Split($Existing, '\r?\n'))) {
             if ($Line -match '^\s*\[([^\[\]]+)\]') {
                 $Section = [string]$Matches[1]
-                $Root = ($Section -split '\.', 2)[0]
+                $Identity = Convert-TomlSectionIdentity $Section
+                $Root = ($Identity -split '\.', 2)[0]
                 $IsProtected = @($Protected | Where-Object {
-                    $Section -ceq $_ -or $Section.StartsWith(
+                    $Identity -ceq $_ -or $Identity.StartsWith(
                         [string]$_ + '.', [StringComparison]::Ordinal
                     )
                 }).Count -gt 0
                 if ($Owned -contains $Root -and -not $IsProtected -and
-                    -not $AllowedEntries.Contains($Section) -and
-                    $Section -cne 'plugins') {
-                    $Unknown += ('toml:' + $Relative + '#' + $Section)
+                    -not $AllowedEntries.Contains($Identity) -and
+                    $Identity -cne 'plugins') {
+                    $Unknown += ('toml:' + $Relative + '#' + $Identity)
                 }
             } elseif ($Section -ceq 'plugins' -and
                 $Line -match '^\s*([A-Za-z0-9_-]+)\s*=') {
@@ -2493,7 +2504,9 @@ function Get-UnknownEntryDetails {
                     $Section = ''
                     foreach ($Line in [regex]::Split((Read-Utf8TextFile $TomlPath), '\r?\n')) {
                         if ($Line -match '^\s*\[([^\[\]]+)\]') {
-                            $Section = [string]$Matches[1]
+                            $Section = Convert-TomlSectionIdentity (
+                                [string]$Matches[1]
+                            )
                         } elseif ($Section -ceq $WantedSection -and
                             $Line -match '^\s*(command|url)\s*=\s*["'']([^"'']+)["'']') {
                             $LaunchCommand = [string]$Matches[2]
@@ -2546,7 +2559,7 @@ function Get-ValidatedLocalExceptions {
     foreach ($PathValue in @(Sort-OrdinalStrings $Requested)) {
         $Path = [string]$PathValue
         $IsTomlIdentity = $Path -cmatch (
-            '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.-]+$'
+            '^toml:\.[A-Za-z0-9._/-]+#[A-Za-z0-9_.@+-]+$'
         )
         if ((-not $IsTomlIdentity -and -not (Test-PortablePath $Path)) -or
             -not $UnknownSet.Contains($Path)) {
