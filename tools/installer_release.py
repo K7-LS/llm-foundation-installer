@@ -12,6 +12,7 @@ from typing import Any
 VERSION = "0.4.0"
 TAG = "employee-v0.4.0"
 TARGETS = ("claude", "codex", "opencode")
+SELF_TEST_TARGETS = ("codex", "claude", "opencode")
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
     "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
@@ -54,14 +55,16 @@ EXPECTED_BUNDLE_VERDICTS = {
     "FULL_RELEASE_CLAUDE": "PASS",
     "FULL_RELEASE_CODEX": "PASS",
     "FULL_RELEASE_OPENCODE": "PASS",
+    "TECHNICAL_READY": "PASS",
+    "PROVIDER_LIVE": "PASS",
     "PROGRAM_RELEASE": "3/3",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-    "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+    "INTERNAL_UNSIGNED_RELEASE": "PASS",
+    "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
 }
 EXPECTED_DRAFT_VERDICTS = {
     **EXPECTED_BUNDLE_VERDICTS,
     "INSTALLER_HUB_CANARY": "PASS",
-    "CLEAN_PC_PILOT": "PENDING",
+    "HOME_PC_CANARY": "PENDING",
     "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
 }
 INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0

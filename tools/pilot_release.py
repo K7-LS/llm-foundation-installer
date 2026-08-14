@@ -43,7 +43,7 @@ EXPECTED_DRAFT_VERDICTS = installer_release.EXPECTED_DRAFT_VERDICTS
 EXPECTED_STABLE_VERDICTS = {
     **installer_release.EXPECTED_BUNDLE_VERDICTS,
     "INSTALLER_HUB_CANARY": "PASS",
-    "CLEAN_PC_PILOT": "PASS",
+    "HOME_PC_CANARY": "PASS",
     "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
     "RELEASE_INTEGRITY": "PENDING_PUBLICATION",
 }
@@ -192,7 +192,9 @@ def _validate_pilot(evidence: dict[str, Any], draft: Path) -> None:
         and evidence.get("draft_release_manifest_sha256")
         == _record(draft / "release-manifest.json")["sha256"]
         and isinstance(machine, dict)
-        and machine.get("clean_windows_x64") is True
+        and machine.get("environment_kind") == "owner-attested-home-pc"
+        and machine.get("owner_authorized") is True
+        and machine.get("windows_x64") is True
         and isinstance(machine.get("windows_build"), int)
         and not isinstance(machine.get("windows_build"), bool)
         and machine["windows_build"] >= 19041
@@ -207,12 +209,14 @@ def _validate_pilot(evidence: dict[str, Any], draft: Path) -> None:
             "personal_data_included": False,
             "machine_identifier_included": False,
         }
-        and evidence.get("CLEAN_PC_PILOT") == "PASS"
+        and evidence.get("HOME_PC_CANARY") == "PASS"
         and evidence.get("evidence_body_sha256")
         == installer_release.evidence_body_sha256(evidence)
     )
     if not valid:
-        raise ValueError("clean-PC Employee pilot evidence is invalid or unbound")
+        raise ValueError(
+            "home-PC Employee pilot/canary evidence is invalid or unbound"
+        )
 
 
 def finalize_employee_release(
@@ -337,7 +341,7 @@ def finalize_employee_release(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Finalize employee-v0.4.0 after an accepted clean-PC pilot "
+            "Finalize employee-v0.4.0 after an owner-accepted home-PC canary "
             "without rebuilding either executable or the runtime."
         )
     )
@@ -354,7 +358,7 @@ def main() -> int:
         json.dumps(
             {
                 "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-                "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+                "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
                 "products": {
                     product: _record(path)["sha256"]
                     for product, path in result.product_paths.items()

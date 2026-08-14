@@ -59,9 +59,11 @@ def employee_bundle(root: Path) -> Path:
             "FULL_RELEASE_CLAUDE": "PASS",
             "FULL_RELEASE_CODEX": "PASS",
             "FULL_RELEASE_OPENCODE": "PASS",
+            "TECHNICAL_READY": "PASS",
+            "PROVIDER_LIVE": "PASS",
             "PROGRAM_RELEASE": "3/3",
-            "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-            "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+            "INTERNAL_UNSIGNED_RELEASE": "PASS",
+            "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
         },
         "runtime": {
             "id": "sing-box",

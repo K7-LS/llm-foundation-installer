@@ -475,9 +475,61 @@ def _accepted_foundation(root: Path) -> Path:
         )
         + "\n"
     ).encode("utf-8")
+    shared_payloads = {
+        "shared-tools/officecli/officecli.exe": b"officecli-private",
+        "shared-tools/officecli/officecli-shim.exe": b"officecli-shim",
+        "shared-tools/officecli/officecli-command-policy.json": b"{}\n",
+        "shared-tools/officecli/k7-officecli-pdf.exe": b"pdf-exporter",
+        "shared-tools/officecli/officecli_csv_batch.py": b"pass\n",
+    }
+    shared_records = {
+        name: {
+            "path": name,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        for name, payload in shared_payloads.items()
+    }
+    shared_lock = {
+        "schema_version": 1,
+        "tools": [
+            {
+                "id": "officecli",
+                "version": "1.0.143",
+                "compatibility_epoch": "officecli-managed-v1",
+                "source_url": "https://example.invalid/officecli.exe",
+                "private_exe": shared_records[
+                    "shared-tools/officecli/officecli.exe"
+                ],
+                "shim": shared_records[
+                    "shared-tools/officecli/officecli-shim.exe"
+                ],
+                "policy": shared_records[
+                    "shared-tools/officecli/officecli-command-policy.json"
+                ],
+                "pdf_exporter": shared_records[
+                    "shared-tools/officecli/k7-officecli-pdf.exe"
+                ],
+                "csv_batch_adapter": shared_records[
+                    "shared-tools/officecli/officecli_csv_batch.py"
+                ],
+                "environment": {
+                    "OFFICECLI_NO_AUTO_INSTALL": "1",
+                    "OFFICECLI_SKIP_UPDATE": "1",
+                },
+            }
+        ],
+    }
+    archive_files = {
+        **engine_files,
+        **shared_payloads,
+        "shared-tools.lock.json": (
+            json.dumps(shared_lock, separators=(",", ":")) + "\n"
+        ).encode("utf-8"),
+    }
     asset = package_root / f"foundation-engine-{FOUNDATION_VERSION}.zip"
     with zipfile.ZipFile(asset, "w") as archive:
-        for name, payload in sorted(engine_files.items()):
+        for name, payload in sorted(archive_files.items()):
             archive.writestr(name, payload)
     engine_records = {
         name: {

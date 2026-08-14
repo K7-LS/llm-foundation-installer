@@ -61,7 +61,10 @@ def test_pilot_evidence_is_pii_free_and_binds_every_executable_and_runtime(
         confirmations=_confirmations(),
     )
 
-    assert evidence["CLEAN_PC_PILOT"] == "PASS"
+    assert evidence["HOME_PC_CANARY"] == "PASS"
+    assert evidence["machine"]["environment_kind"] == (
+        "owner-attested-home-pc"
+    )
     assert evidence["products"] == {
         key: record(draft / filename)
         for key, filename in PRODUCT_FILES.items()

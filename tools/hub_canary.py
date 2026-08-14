@@ -165,7 +165,8 @@ def _verify_product(
     )
     if (
         self_test.get("version") != installer_release.VERSION
-        or self_test.get("targets") != list(installer_release.TARGETS)
+        or self_test.get("targets")
+        != list(installer_release.SELF_TEST_TARGETS)
         or self_test.get("engine_validated") is not True
         or self_test.get("automatic_network") is not False
         or self_test.get("telemetry") is not False

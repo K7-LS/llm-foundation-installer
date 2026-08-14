@@ -896,24 +896,93 @@ function Export-AcceptedFoundationEngine {
     try {
         $Entries = @($Archive.Entries)
         $Names = @($Entries.FullName | Sort-Object)
-        if ($Entries.Count -ne 3 -or
-            ($Names -join ',') -cne (
-                'engine-manifest.json,foundation.ps1,VERSION'
+        $CoreNames = @(
+            $Foundation.engine_files.PSObject.Properties.Name | Sort-Object
+        )
+        $LockEntry = $Archive.GetEntry('shared-tools.lock.json')
+        if ($null -eq $LockEntry -or $LockEntry.Length -gt 1048576) {
+            throw 'Foundation engine archive inventory differs'
+        }
+        $LockReader = New-Object IO.StreamReader(
+            $LockEntry.Open(),
+            [Text.Encoding]::UTF8,
+            $true,
+            4096,
+            $false
+        )
+        try {
+            $SharedLock = $LockReader.ReadToEnd() | ConvertFrom-Json
+        } catch {
+            throw 'Foundation shared-tools lock is invalid'
+        } finally {
+            $LockReader.Dispose()
+        }
+        if ([int]$SharedLock.schema_version -ne 1 -or
+            @($SharedLock.tools).Count -ne 1 -or
+            [string]$SharedLock.tools[0].id -cne 'officecli' -or
+            [string]$SharedLock.tools[0].version -cne '1.0.143') {
+            throw 'Foundation shared-tools lock is invalid'
+        }
+        $SharedRecords = @{}
+        foreach ($Field in @(
+                'private_exe',
+                'shim',
+                'policy',
+                'pdf_exporter',
+                'csv_batch_adapter'
             )) {
+            $Property = $SharedLock.tools[0].PSObject.Properties[$Field]
+            if ($null -eq $Property) {
+                throw 'Foundation shared-tools lock is invalid'
+            }
+            $SharedRecord = $Property.Value
+            $SharedPath = [string]$SharedRecord.path
+            if ($SharedPath -notmatch (
+                    '^shared-tools/officecli/[A-Za-z0-9._-]+$'
+                ) -or
+                [string]$SharedRecord.sha256 -notmatch '^[a-f0-9]{64}$' -or
+                ($SharedRecord.bytes -isnot [int] -and
+                    $SharedRecord.bytes -isnot [long]) -or
+                [long]$SharedRecord.bytes -lt 1 -or
+                [long]$SharedRecord.bytes -gt 67108864 -or
+                $SharedRecords.ContainsKey($SharedPath)) {
+                throw 'Foundation shared-tools lock is invalid'
+            }
+            $SharedRecords[$SharedPath] = $SharedRecord
+        }
+        $ExpectedNames = @(
+            $CoreNames +
+                @('shared-tools.lock.json') +
+                @($SharedRecords.Keys) |
+                Sort-Object
+        )
+        if ($Entries.Count -ne $ExpectedNames.Count -or
+            ($Names -join ',') -cne ($ExpectedNames -join ',')) {
             throw 'Foundation engine archive inventory differs'
         }
         foreach ($Entry in $Entries) {
-            $Record = $Foundation.engine_files.PSObject.Properties[
+            $CoreProperty = $Foundation.engine_files.PSObject.Properties[
                 $Entry.FullName
-            ].Value
-            if ($null -eq $Record -or
-                [long]$Entry.Length -ne [long]$Record.bytes -or
-                [long]$Entry.Length -gt 16777216) {
+            ]
+            $Record = if ($null -ne $CoreProperty) {
+                $CoreProperty.Value
+            } elseif ($SharedRecords.ContainsKey($Entry.FullName)) {
+                $SharedRecords[$Entry.FullName]
+            } else {
+                $null
+            }
+            if (($Entry.FullName -cne 'shared-tools.lock.json' -and
+                    $null -eq $Record) -or
+                ($null -ne $Record -and
+                    [long]$Entry.Length -ne [long]$Record.bytes)) {
                 throw "Foundation engine archive entry differs: $(
                     $Entry.FullName
                 )"
             }
             $DestinationPath = Join-Path $Destination $Entry.FullName
+            [IO.Directory]::CreateDirectory(
+                [IO.Path]::GetDirectoryName($DestinationPath)
+            ) | Out-Null
             $InputStream = $Entry.Open()
             $OutputStream = [IO.File]::Open(
                 $DestinationPath,
@@ -927,12 +996,13 @@ function Export-AcceptedFoundationEngine {
                 $OutputStream.Dispose()
                 $InputStream.Dispose()
             }
-            if ((Get-Sha256 $DestinationPath) -cne (
-                    [string]$Record.sha256
-                ) -or
-                (Get-Item -LiteralPath $DestinationPath).Length -ne (
-                    [long]$Record.bytes
-                )) {
+            if ($null -ne $Record -and (
+                    (Get-Sha256 $DestinationPath) -cne (
+                        [string]$Record.sha256
+                    ) -or
+                    (Get-Item -LiteralPath $DestinationPath).Length -ne (
+                        [long]$Record.bytes
+                    ))) {
                 throw "Foundation engine extracted bytes differ: $(
                     $Entry.FullName
                 )"
