@@ -40,6 +40,24 @@ def test_partial_release_set_is_rejected(tmp_path):
         MODULE.validate(payload)
 
 
+def test_public_unsigned_requires_all_pass_and_owner_warning(tmp_path):
+    payload = MODULE.build(
+        "PublicUnsigned",
+        components(tmp_path),
+        ["TECHNICAL_READY=PASS", "PROVIDER_LIVE=PASS"],
+    )
+    assert payload["signed"] is False
+    assert payload["publication_allowed"] is True
+    assert payload["public_distribution_allowed"] is True
+    assert payload["owner_authorized_public_unsigned"] is True
+    assert payload["windows_warning_expected"] is True
+    MODULE.validate(payload)
+
+    payload["gates"]["PROVIDER_LIVE"] = "BLOCKED"
+    with pytest.raises(ValueError, match="partial public unsigned"):
+        MODULE.validate(payload)
+
+
 def test_stable_is_fail_closed_on_any_nonpass_gate(tmp_path):
     payload = MODULE.build("InternalUnsigned", components(tmp_path), ["TECHNICAL_READY=PASS"])
     payload["channel"] = "Stable"

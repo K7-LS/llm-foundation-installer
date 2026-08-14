@@ -20,6 +20,7 @@ REQUIRED = (
 )
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 PUBLIC_CHANNELS = {"Stable", "Public"}
+PUBLIC_UNSIGNED_CHANNELS = {"PublicUnsigned"}
 
 
 def sha256(path: Path) -> str:
@@ -36,7 +37,11 @@ def validate(payload: dict, *, verify_files: bool = True, base_dir: Path | None 
     if payload.get("release_set_id") != "K-7":
         raise ValueError("release_set_id must be K-7")
     channel = payload.get("channel")
-    if channel not in {"InternalUnsigned", *PUBLIC_CHANNELS}:
+    if channel not in {
+        "InternalUnsigned",
+        *PUBLIC_UNSIGNED_CHANNELS,
+        *PUBLIC_CHANNELS,
+    }:
         raise ValueError("unknown release channel")
     components = payload.get("components")
     if not isinstance(components, list):
@@ -70,6 +75,21 @@ def validate(payload: dict, *, verify_files: bool = True, base_dir: Path | None 
             raise ValueError("stable/public release must be signed and publishable")
         if payload.get("public_distribution_allowed") is not True:
             raise ValueError("stable/public release must allow public distribution")
+    elif channel in PUBLIC_UNSIGNED_CHANNELS:
+        if any(value != "PASS" for value in gates.values()):
+            raise ValueError("partial public unsigned releases are forbidden")
+        if (
+            payload.get("signed") is not False
+            or payload.get("publication_allowed") is not True
+            or payload.get("internal_distribution_allowed") is not False
+            or payload.get("public_distribution_allowed") is not True
+            or payload.get("owner_authorized_public_unsigned") is not True
+            or payload.get("windows_warning_expected") is not True
+        ):
+            raise ValueError(
+                "PublicUnsigned requires owner authorization and an explicit "
+                "Windows warning"
+            )
     elif (
         payload.get("signed") is not False
         or payload.get("publication_allowed") is not True
@@ -108,9 +128,16 @@ def build(channel: str, components: list[list[str]], gates: list[str]) -> dict:
         "release_set_id": "K-7",
         "channel": channel,
         "signed": False,
-        "publication_allowed": channel == "InternalUnsigned",
+        "publication_allowed": channel in {
+            "InternalUnsigned",
+            *PUBLIC_UNSIGNED_CHANNELS,
+        },
         "internal_distribution_allowed": channel == "InternalUnsigned",
-        "public_distribution_allowed": False,
+        "public_distribution_allowed": channel in PUBLIC_UNSIGNED_CHANNELS,
+        "owner_authorized_public_unsigned": (
+            channel in PUBLIC_UNSIGNED_CHANNELS
+        ),
+        "windows_warning_expected": channel in PUBLIC_UNSIGNED_CHANNELS,
         "components": sorted(rows, key=lambda row: row["id"]),
         "gates": dict(sorted(gate_map.items())),
     }
@@ -122,7 +149,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     builder = sub.add_parser("build")
-    builder.add_argument("--channel", required=True, choices=["InternalUnsigned", "Stable", "Public"])
+    builder.add_argument(
+        "--channel",
+        required=True,
+        choices=["InternalUnsigned", "PublicUnsigned", "Stable", "Public"],
+    )
     builder.add_argument("--component", nargs=3, action="append", required=True, metavar=("ID", "VERSION", "PATH"))
     builder.add_argument("--gate", action="append", default=[])
     builder.add_argument("--output", type=Path, required=True)
