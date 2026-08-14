@@ -530,6 +530,35 @@ def test_release_binding_accepts_valid_acceptance_evidence_hash(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+def test_release_binding_accepts_valid_candidate_promotion_hash(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    home = tmp_path / f"promotion-hash-{Path(executable).stem}"
+    home.mkdir()
+    package = _modern_package(
+        tmp_path / f"promotion-hash-{Path(executable).stem}.zip"
+    )
+    manifest = _write_release_manifest(
+        package,
+        mutate=lambda release: release.update(
+            {"promoted_from_candidate_manifest_sha256": "e" * 64}
+        ),
+    )
+
+    accepted = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        release_manifest=manifest,
+        release_manifest_sha256=_sha256(manifest.read_bytes()),
+    )
+
+    assert accepted.returncode == 0, accepted.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 @pytest.mark.parametrize(
     "case",
     [
