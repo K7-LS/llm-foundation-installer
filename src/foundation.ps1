@@ -1463,6 +1463,9 @@ function Assert-ReleaseManifestBinding {
     if (Test-ObjectProperty $Release 'acceptance_evidence_sha256') {
         $Properties += 'acceptance_evidence_sha256'
     }
+    if (Test-ObjectProperty $Release 'promoted_from_candidate_manifest_sha256') {
+        $Properties += 'promoted_from_candidate_manifest_sha256'
+    }
     Assert-ExactProperties $Release $Properties 'release manifest'
     Assert-ExactProperties $Release.client @(
         'id',
@@ -1543,6 +1546,15 @@ function Assert-ReleaseManifestBinding {
                 '^[0-9a-f]{64}$') {
             Throw-Foundation 'INVALID_PACKAGE' (
                 'Release acceptance evidence hash is invalid'
+            )
+        }
+    }
+    if (Test-ObjectProperty $Release 'promoted_from_candidate_manifest_sha256') {
+        if ($Release.promoted_from_candidate_manifest_sha256 -isnot [string] -or
+            [string]$Release.promoted_from_candidate_manifest_sha256 -cnotmatch
+                '^[0-9a-f]{64}$') {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Promoted candidate manifest hash is invalid'
             )
         }
     }
