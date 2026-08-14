@@ -218,6 +218,7 @@ def _package(
                         "mcp_servers.k7-autocad-bridge",
                         "mcp_servers.k7-revit-bridge",
                         "plugins.documents",
+                        "plugins.documents@openai-primary-runtime",
                         "plugins.spreadsheets",
                     ],
                 }
@@ -718,6 +719,39 @@ def test_toml_local_exception_is_explicit_and_reconfirmed_every_run(
     assert _json(doctor)["status"] == "CANONICAL_WITH_LOCAL_EXCEPTIONS"
     blocked_again = _run(executable, engine_root, "plan", home, package=package)
     assert blocked_again.returncode == 20
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_quoted_plugin_identifier_is_canonical_and_manifest_owned(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"quoted-plugin-{Path(executable).stem}"
+    home.mkdir()
+    _seed_home(home)
+    required = (
+        b'[plugins."documents@openai-primary-runtime"]\n'
+        b"enabled = true\n"
+    )
+    package = _package(
+        tmp_path / f"quoted-plugin-{Path(executable).stem}.zip",
+        desired_state=True,
+        config_payload=required,
+    )
+
+    installed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package,
+        confirm_remove_unknown=True,
+    )
+    assert installed.returncode == 0, installed.stderr
+    doctor = _run(
+        executable, engine_root, "doctor", home, package=package, strict=True
+    )
+    assert doctor.returncode == 0, doctor.stderr
+    assert _json(doctor)["status"] == "CANONICAL"
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
