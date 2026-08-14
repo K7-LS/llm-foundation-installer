@@ -68,8 +68,18 @@ def validate(payload: dict, *, verify_files: bool = True, base_dir: Path | None 
             raise ValueError("partial stable/public releases are forbidden")
         if payload.get("signed") is not True or payload.get("publication_allowed") is not True:
             raise ValueError("stable/public release must be signed and publishable")
-    elif payload.get("signed") is not False or payload.get("publication_allowed") is not False:
-        raise ValueError("InternalUnsigned must stay unsigned and non-public")
+        if payload.get("public_distribution_allowed") is not True:
+            raise ValueError("stable/public release must allow public distribution")
+    elif (
+        payload.get("signed") is not False
+        or payload.get("publication_allowed") is not True
+        or payload.get("internal_distribution_allowed") is not True
+        or payload.get("public_distribution_allowed") is not False
+    ):
+        raise ValueError(
+            "InternalUnsigned must be publishable only as an unsigned "
+            "internal distribution"
+        )
 
 
 def build(channel: str, components: list[list[str]], gates: list[str]) -> dict:
@@ -98,7 +108,9 @@ def build(channel: str, components: list[list[str]], gates: list[str]) -> dict:
         "release_set_id": "K-7",
         "channel": channel,
         "signed": False,
-        "publication_allowed": False,
+        "publication_allowed": channel == "InternalUnsigned",
+        "internal_distribution_allowed": channel == "InternalUnsigned",
+        "public_distribution_allowed": False,
         "components": sorted(rows, key=lambda row: row["id"]),
         "gates": dict(sorted(gate_map.items())),
     }

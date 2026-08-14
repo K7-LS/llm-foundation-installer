@@ -27,7 +27,9 @@ def test_internal_unsigned_binds_every_component_and_allows_blocked_live_gates(t
         ["TECHNICAL_READY=PASS", "PROVIDER_LIVE=BLOCKED_PROVIDER_ELIGIBILITY", "REVIT_LIVE=BLOCKED_RESTART_REQUIRED"],
     )
     assert payload["signed"] is False
-    assert payload["publication_allowed"] is False
+    assert payload["publication_allowed"] is True
+    assert payload["internal_distribution_allowed"] is True
+    assert payload["public_distribution_allowed"] is False
     MODULE.validate(payload)
 
 
@@ -43,6 +45,7 @@ def test_stable_is_fail_closed_on_any_nonpass_gate(tmp_path):
     payload["channel"] = "Stable"
     payload["signed"] = True
     payload["publication_allowed"] = True
+    payload["public_distribution_allowed"] = True
     payload["gates"]["PROVIDER_LIVE"] = "BLOCKED_PROVIDER_ELIGIBILITY"
     with pytest.raises(ValueError, match="forbidden"):
         MODULE.validate(payload)
