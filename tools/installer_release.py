@@ -374,7 +374,7 @@ def prepare_draft_release(
         "artifacts": artifacts,
         "verdicts": EXPECTED_DRAFT_VERDICTS,
         "requires": {
-            "clean_pc_pilot": True,
+            "owner_attested_home_pc_canary": True,
             "same_product_and_runtime_bytes": True,
             "immutable_release": True,
             "release_attestation": True,
