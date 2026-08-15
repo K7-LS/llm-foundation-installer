@@ -663,6 +663,8 @@ namespace LlmFoundationInstaller
         public string Root { get; private set; }
         public string EnginePath { get; private set; }
         public string PackagePath { get; private set; }
+        public string ReleaseManifestPath { get; private set; }
+        public string ReleaseManifestSha256 { get; private set; }
 
         public static RuntimePayload Prepare(
             TrustedPackage package,
@@ -713,7 +715,19 @@ namespace LlmFoundationInstaller
                 string packagePath;
                 if (String.IsNullOrWhiteSpace(externalPackagePath))
                 {
-                    packagePath = Path.Combine(root, "target-package.zip");
+                    string packageName = Path.GetFileName(
+                        package.asset.relative_path.Replace(
+                            '/',
+                            Path.DirectorySeparatorChar
+                        )
+                    );
+                    if (String.IsNullOrWhiteSpace(packageName))
+                    {
+                        throw new InvalidOperationException(
+                            "Embedded target package name is invalid"
+                        );
+                    }
+                    packagePath = Path.Combine(root, packageName);
                     BundleIntegrity.WriteResource(
                         package.asset.resource_name,
                         packagePath
@@ -731,11 +745,31 @@ namespace LlmFoundationInstaller
                         );
                     }
                 }
+                string releaseManifestPath = Path.Combine(
+                    root,
+                    "release-manifest.json"
+                );
+                if (!BundleIntegrity.ValidateResource(
+                        package.release_manifest.resource_name,
+                        package.release_manifest.sha256,
+                        package.release_manifest.bytes
+                    ))
+                {
+                    throw new InvalidOperationException(
+                        "Embedded release manifest is invalid"
+                    );
+                }
+                BundleIntegrity.WriteResource(
+                    package.release_manifest.resource_name,
+                    releaseManifestPath
+                );
                 return new RuntimePayload
                 {
                     Root = root,
                     EnginePath = engine,
-                    PackagePath = packagePath
+                    PackagePath = packagePath,
+                    ReleaseManifestPath = releaseManifestPath,
+                    ReleaseManifestSha256 = package.release_manifest.sha256
                 };
             }
             catch
@@ -850,6 +884,14 @@ namespace LlmFoundationInstaller
                 externalPackagePath
             ))
             {
+                string effectiveReleaseManifestPath =
+                    String.IsNullOrWhiteSpace(releaseManifestPath)
+                        ? runtime.ReleaseManifestPath
+                        : Path.GetFullPath(releaseManifestPath);
+                string effectiveReleaseManifestSha256 =
+                    String.IsNullOrWhiteSpace(releaseManifestPath)
+                        ? runtime.ReleaseManifestSha256
+                        : releaseManifestSha256;
                 List<string> arguments = new List<string>
                 {
                     "-NoProfile",
@@ -868,12 +910,13 @@ namespace LlmFoundationInstaller
                 {
                     arguments.Add("-Package");
                     arguments.Add(runtime.PackagePath);
-                    if (!String.IsNullOrWhiteSpace(releaseManifestPath))
+                    if (!String.IsNullOrWhiteSpace(
+                            effectiveReleaseManifestPath))
                     {
                         arguments.Add("-ReleaseManifest");
-                        arguments.Add(Path.GetFullPath(releaseManifestPath));
+                        arguments.Add(effectiveReleaseManifestPath);
                         arguments.Add("-ReleaseManifestSha256");
-                        arguments.Add(releaseManifestSha256);
+                        arguments.Add(effectiveReleaseManifestSha256);
                     }
                     List<string> exceptions = localExceptionPaths == null
                         ? new List<string>()

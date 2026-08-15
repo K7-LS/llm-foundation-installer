@@ -79,7 +79,9 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     )
     assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
     assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
-    assert manifest["verdicts"]["CLEAN_PC_PILOT"] == "PENDING"
+    assert manifest["verdicts"]["HOME_PC_CANARY"] == "PENDING"
+    assert manifest["requires"]["owner_attested_home_pc_canary"] is True
+    assert "clean_pc_pilot" not in manifest["requires"]
 
 
 def test_draft_release_rejects_tampered_product(tmp_path: Path):

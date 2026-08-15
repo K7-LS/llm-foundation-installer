@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Employee', 'Owner', 'Simple')]
     [string]$Edition,
-    [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
+    [ValidateSet('Preview', 'InternalUnsigned', 'PublicUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
@@ -51,6 +51,7 @@ $LaunchCenterFallbackName = (
 $ExpectedChildDistributionMode = switch ($DistributionMode) {
     'Preview' { 'preview' }
     'InternalUnsigned' { 'internal_unsigned' }
+    'PublicUnsigned' { 'public_unsigned' }
     'PublicSigned' { 'public_signed' }
 }
 if ($DistributionMode -ceq 'InternalUnsigned' -and

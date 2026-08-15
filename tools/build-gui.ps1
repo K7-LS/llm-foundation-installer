@@ -11,7 +11,7 @@ param(
     [string]$PackageRoot,
     [string]$FoundationPackageRoot,
     [string]$ProviderEligibilityEvidence,
-    [ValidateSet('Preview', 'InternalUnsigned', 'PublicSigned')]
+    [ValidateSet('Preview', 'InternalUnsigned', 'PublicUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
@@ -896,24 +896,93 @@ function Export-AcceptedFoundationEngine {
     try {
         $Entries = @($Archive.Entries)
         $Names = @($Entries.FullName | Sort-Object)
-        if ($Entries.Count -ne 3 -or
-            ($Names -join ',') -cne (
-                'engine-manifest.json,foundation.ps1,VERSION'
+        $CoreNames = @(
+            $Foundation.engine_files.PSObject.Properties.Name | Sort-Object
+        )
+        $LockEntry = $Archive.GetEntry('shared-tools.lock.json')
+        if ($null -eq $LockEntry -or $LockEntry.Length -gt 1048576) {
+            throw 'Foundation engine archive inventory differs'
+        }
+        $LockReader = New-Object IO.StreamReader(
+            $LockEntry.Open(),
+            [Text.Encoding]::UTF8,
+            $true,
+            4096,
+            $false
+        )
+        try {
+            $SharedLock = $LockReader.ReadToEnd() | ConvertFrom-Json
+        } catch {
+            throw 'Foundation shared-tools lock is invalid'
+        } finally {
+            $LockReader.Dispose()
+        }
+        if ([int]$SharedLock.schema_version -ne 1 -or
+            @($SharedLock.tools).Count -ne 1 -or
+            [string]$SharedLock.tools[0].id -cne 'officecli' -or
+            [string]$SharedLock.tools[0].version -cne '1.0.143') {
+            throw 'Foundation shared-tools lock is invalid'
+        }
+        $SharedRecords = @{}
+        foreach ($Field in @(
+                'private_exe',
+                'shim',
+                'policy',
+                'pdf_exporter',
+                'csv_batch_adapter'
             )) {
+            $Property = $SharedLock.tools[0].PSObject.Properties[$Field]
+            if ($null -eq $Property) {
+                throw 'Foundation shared-tools lock is invalid'
+            }
+            $SharedRecord = $Property.Value
+            $SharedPath = [string]$SharedRecord.path
+            if ($SharedPath -notmatch (
+                    '^shared-tools/officecli/[A-Za-z0-9._-]+$'
+                ) -or
+                [string]$SharedRecord.sha256 -notmatch '^[a-f0-9]{64}$' -or
+                ($SharedRecord.bytes -isnot [int] -and
+                    $SharedRecord.bytes -isnot [long]) -or
+                [long]$SharedRecord.bytes -lt 1 -or
+                [long]$SharedRecord.bytes -gt 67108864 -or
+                $SharedRecords.ContainsKey($SharedPath)) {
+                throw 'Foundation shared-tools lock is invalid'
+            }
+            $SharedRecords[$SharedPath] = $SharedRecord
+        }
+        $ExpectedNames = @(
+            $CoreNames +
+                @('shared-tools.lock.json') +
+                @($SharedRecords.Keys) |
+                Sort-Object
+        )
+        if ($Entries.Count -ne $ExpectedNames.Count -or
+            ($Names -join ',') -cne ($ExpectedNames -join ',')) {
             throw 'Foundation engine archive inventory differs'
         }
         foreach ($Entry in $Entries) {
-            $Record = $Foundation.engine_files.PSObject.Properties[
+            $CoreProperty = $Foundation.engine_files.PSObject.Properties[
                 $Entry.FullName
-            ].Value
-            if ($null -eq $Record -or
-                [long]$Entry.Length -ne [long]$Record.bytes -or
-                [long]$Entry.Length -gt 16777216) {
+            ]
+            $Record = if ($null -ne $CoreProperty) {
+                $CoreProperty.Value
+            } elseif ($SharedRecords.ContainsKey($Entry.FullName)) {
+                $SharedRecords[$Entry.FullName]
+            } else {
+                $null
+            }
+            if (($Entry.FullName -cne 'shared-tools.lock.json' -and
+                    $null -eq $Record) -or
+                ($null -ne $Record -and
+                    [long]$Entry.Length -ne [long]$Record.bytes)) {
                 throw "Foundation engine archive entry differs: $(
                     $Entry.FullName
                 )"
             }
             $DestinationPath = Join-Path $Destination $Entry.FullName
+            [IO.Directory]::CreateDirectory(
+                [IO.Path]::GetDirectoryName($DestinationPath)
+            ) | Out-Null
             $InputStream = $Entry.Open()
             $OutputStream = [IO.File]::Open(
                 $DestinationPath,
@@ -927,12 +996,13 @@ function Export-AcceptedFoundationEngine {
                 $OutputStream.Dispose()
                 $InputStream.Dispose()
             }
-            if ((Get-Sha256 $DestinationPath) -cne (
-                    [string]$Record.sha256
-                ) -or
-                (Get-Item -LiteralPath $DestinationPath).Length -ne (
-                    [long]$Record.bytes
-                )) {
+            if ($null -ne $Record -and (
+                    (Get-Sha256 $DestinationPath) -cne (
+                        [string]$Record.sha256
+                    ) -or
+                    (Get-Item -LiteralPath $DestinationPath).Length -ne (
+                        [long]$Record.bytes
+                    ))) {
                 throw "Foundation engine extracted bytes differ: $(
                     $Entry.FullName
                 )"
@@ -1050,6 +1120,7 @@ $IncludedTargets = @('claude', 'codex', 'opencode')
 $RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
 $NeedsAcceptedFoundation = $IsPackagedRelease
+$IsPublicUnsigned = $DistributionMode -ceq 'PublicUnsigned'
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
 try {
@@ -1250,7 +1321,7 @@ $EditionContract = if ($Edition -ceq 'Owner') {
     [ordered]@{
         edition_id = 'Owner'
         display_name = 'K-7 AI Foundation Owner'
-        distribution_allowed = $false
+        distribution_allowed = [bool]$IsPublicUnsigned
         included_target_ids = @('claude', 'codex', 'opencode')
         required_target_ids = @('claude', 'codex', 'opencode')
         theme_id = 'SignalConsole'
@@ -1494,6 +1565,9 @@ $CompilerArguments = @(
     "/resource:$EngineExtraIndexPath,FoundationEngine.extra-files.json",
     "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
 )
+if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
+    $CompilerArguments += '/define:K7_OWNER_DISTRIBUTION_ALLOWED'
+}
 $CompilerArguments += @($EngineExtraIndex | ForEach-Object {
     "/resource:$($_.source_path),$($_.resource_name)"
 })
@@ -1551,6 +1625,8 @@ Remove-Item -LiteralPath @(
 
 $SignatureState = if ($DistributionMode -ceq 'InternalUnsigned') {
     'unsigned-internal'
+} elseif ($IsPublicUnsigned) {
+    'unsigned-public'
 } else {
     'unsigned-preview'
 }
@@ -1675,6 +1751,12 @@ $InternalReady = (
     $DistributionMode -ceq 'InternalUnsigned' -and
     $TechnicalReady
 )
+$PublicUnsignedReady = (
+    $IsPublicUnsigned -and
+    [bool]$EditionContract.distribution_allowed -and
+    $TechnicalReady -and
+    $ProviderReady
+)
 $PublicSignedReady = (
     $DistributionMode -ceq 'PublicSigned' -and
     $SignatureState -ceq 'valid-authenticode' -and
@@ -1708,8 +1790,13 @@ $Verdicts = [ordered]@{
     } else {
         'NOT_PASS'
     }
+    PUBLIC_UNSIGNED_RELEASE = if ($PublicUnsignedReady) {
+        'PASS'
+    } else {
+        'NOT_PASS'
+    }
     PUBLIC_SIGNED_RELEASE = if (
-        $DistributionMode -ceq 'InternalUnsigned'
+        $DistributionMode -ceq 'InternalUnsigned' -or $IsPublicUnsigned
     ) {
         if ($ProviderReady) {
             'DEFERRED_UNSIGNED'
@@ -1739,6 +1826,7 @@ $Manifest = [ordered]@{
     distribution_mode = switch ($DistributionMode) {
         'Preview' { 'preview' }
         'InternalUnsigned' { 'internal_unsigned' }
+        'PublicUnsigned' { 'public_unsigned' }
         'PublicSigned' { 'public_signed' }
     }
     embedded_foundation = $true
@@ -1746,12 +1834,16 @@ $Manifest = [ordered]@{
     signature = $SignatureState
     employee_release = ($Edition -ceq 'Employee' -and $IsPackagedRelease)
     employee_distribution_allowed = [bool](
-        $Edition -ceq 'Employee' -and $InternalReady
+        $Edition -ceq 'Employee' -and (
+            $InternalReady -or $PublicUnsignedReady
+        )
     )
     internal_distribution_allowed = [bool]$InternalReady
-    public_distribution_allowed = [bool]$PublicSignedReady
+    public_distribution_allowed = [bool](
+        $PublicUnsignedReady -or $PublicSignedReady
+    )
     windows_warning_expected = (
-        $DistributionMode -ceq 'InternalUnsigned'
+        $DistributionMode -ceq 'InternalUnsigned' -or $IsPublicUnsigned
     )
     verdicts = $Verdicts
     provider_eligibility = $ProviderEligibilityManifest

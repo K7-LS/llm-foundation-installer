@@ -12,11 +12,12 @@ from typing import Any
 VERSION = "0.4.0"
 TAG = "employee-v0.4.0"
 TARGETS = ("claude", "codex", "opencode")
+SELF_TEST_TARGETS = ("codex", "claude", "opencode")
 PRODUCT_FILES = {
-    "installer": "K7-AI-Foundation-Employee-InternalUnsigned.exe",
-    "launch_center": "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
+    "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
+    "launch_center": "K7-AI-Launch-Center-Employee-PublicUnsigned.exe",
 }
-FALLBACK_FILE = "K7-AI-Launch-Center-Employee-InternalUnsigned.cmd"
+FALLBACK_FILE = "K7-AI-Launch-Center-Employee-PublicUnsigned.cmd"
 PRODUCT_ROLES = {
     "installer": "Installer",
     "launch_center": "LaunchCenter",
@@ -54,28 +55,31 @@ EXPECTED_BUNDLE_VERDICTS = {
     "FULL_RELEASE_CLAUDE": "PASS",
     "FULL_RELEASE_CODEX": "PASS",
     "FULL_RELEASE_OPENCODE": "PASS",
+    "TECHNICAL_READY": "PASS",
+    "PROVIDER_LIVE": "PASS",
     "PROGRAM_RELEASE": "3/3",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PASS",
-    "PUBLIC_SIGNED_RELEASE": "DEFERRED_BY_OWNER",
+    "INTERNAL_UNSIGNED_RELEASE": "NOT_PASS",
+    "PUBLIC_UNSIGNED_RELEASE": "PASS",
+    "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
 }
 EXPECTED_DRAFT_VERDICTS = {
     **EXPECTED_BUNDLE_VERDICTS,
     "INSTALLER_HUB_CANARY": "PASS",
-    "CLEAN_PC_PILOT": "PENDING",
-    "EMPLOYEE_INSTALLER_INTERNAL": "PENDING_PILOT",
+    "HOME_PC_CANARY": "PENDING",
+    "EMPLOYEE_INSTALLER_PUBLIC_UNSIGNED": "PENDING_PILOT",
 }
 INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0
 
 В комплекте пять связанных позиций:
 
-- `K7-AI-Foundation-Employee-InternalUnsigned.exe` — установка и обслуживание;
-- `K7-AI-Launch-Center-Employee-InternalUnsigned.exe` — ежедневный запуск;
-- `K7-AI-Launch-Center-Employee-InternalUnsigned.cmd` — резервный запуск
+- `K7-AI-Foundation-Employee-PublicUnsigned.exe` — установка и обслуживание;
+- `K7-AI-Launch-Center-Employee-PublicUnsigned.exe` — ежедневный запуск;
+- `K7-AI-Launch-Center-Employee-PublicUnsigned.cmd` — резервный запуск
   Launch Center через EXE установщика, если отдельный EXE заблокирован;
 - `sing-box-1.13.14-windows-amd64.zip` — среда маршрутов с проверкой хеша;
 - `bundle-manifest.json` — проверяемые SHA-256 и состав комплекта.
 
-Перед запуском сверить каждый файл с `SHA256SUMS`. Подпись пока внутренняя
+Перед запуском сверить каждый файл с `SHA256SUMS`. Публичный выпуск остаётся
 без цифровой подписи, поэтому Windows может показать «Неизвестный издатель»
 или SmartScreen. Администратор не требуется. Версия для сотрудников включает
 Codex, Claude Code и OpenCode. Авторизация Claude выполняется интерактивно в
@@ -156,7 +160,7 @@ def validate_bundle(bundle: Path) -> dict[str, Any]:
         or manifest.get("theme_id") != "K7Signal"
         or manifest.get("owner_controlled") is not False
         or manifest.get("distribution_allowed") is not True
-        or manifest.get("distribution_mode") != "InternalUnsigned"
+        or manifest.get("distribution_mode") != "PublicUnsigned"
         or manifest.get("targets") != list(TARGETS)
         or manifest.get("verdicts") != EXPECTED_BUNDLE_VERDICTS
     ):
@@ -355,7 +359,7 @@ def prepare_draft_release(
         "version": VERSION,
         "tag": TAG,
         "channel": "draft",
-        "distribution_mode": "InternalUnsigned",
+        "distribution_mode": "PublicUnsigned",
         "products": {
             product: artifacts[filename]
             for product, filename in PRODUCT_FILES.items()
@@ -371,7 +375,7 @@ def prepare_draft_release(
         "artifacts": artifacts,
         "verdicts": EXPECTED_DRAFT_VERDICTS,
         "requires": {
-            "clean_pc_pilot": True,
+            "owner_attested_home_pc_canary": True,
             "same_product_and_runtime_bytes": True,
             "immutable_release": True,
             "release_attestation": True,

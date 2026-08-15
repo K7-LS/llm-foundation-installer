@@ -475,9 +475,61 @@ def _accepted_foundation(root: Path) -> Path:
         )
         + "\n"
     ).encode("utf-8")
+    shared_payloads = {
+        "shared-tools/officecli/officecli.exe": b"officecli-private",
+        "shared-tools/officecli/officecli-shim.exe": b"officecli-shim",
+        "shared-tools/officecli/officecli-command-policy.json": b"{}\n",
+        "shared-tools/officecli/k7-officecli-pdf.exe": b"pdf-exporter",
+        "shared-tools/officecli/officecli_csv_batch.py": b"pass\n",
+    }
+    shared_records = {
+        name: {
+            "path": name,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+        }
+        for name, payload in shared_payloads.items()
+    }
+    shared_lock = {
+        "schema_version": 1,
+        "tools": [
+            {
+                "id": "officecli",
+                "version": "1.0.143",
+                "compatibility_epoch": "officecli-managed-v1",
+                "source_url": "https://example.invalid/officecli.exe",
+                "private_exe": shared_records[
+                    "shared-tools/officecli/officecli.exe"
+                ],
+                "shim": shared_records[
+                    "shared-tools/officecli/officecli-shim.exe"
+                ],
+                "policy": shared_records[
+                    "shared-tools/officecli/officecli-command-policy.json"
+                ],
+                "pdf_exporter": shared_records[
+                    "shared-tools/officecli/k7-officecli-pdf.exe"
+                ],
+                "csv_batch_adapter": shared_records[
+                    "shared-tools/officecli/officecli_csv_batch.py"
+                ],
+                "environment": {
+                    "OFFICECLI_NO_AUTO_INSTALL": "1",
+                    "OFFICECLI_SKIP_UPDATE": "1",
+                },
+            }
+        ],
+    }
+    archive_files = {
+        **engine_files,
+        **shared_payloads,
+        "shared-tools.lock.json": (
+            json.dumps(shared_lock, separators=(",", ":")) + "\n"
+        ).encode("utf-8"),
+    }
     asset = package_root / f"foundation-engine-{FOUNDATION_VERSION}.zip"
     with zipfile.ZipFile(asset, "w") as archive:
-        for name, payload in sorted(engine_files.items()):
+        for name, payload in sorted(archive_files.items()):
             archive.writestr(name, payload)
     engine_records = {
         name: {
@@ -4433,8 +4485,29 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
         "PROVIDER_LIVE": "PASS",
         "PROGRAM_RELEASE": "3/3",
         "INTERNAL_UNSIGNED_RELEASE": "PASS",
+        "PUBLIC_UNSIGNED_RELEASE": "NOT_PASS",
         "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
     }
+
+    public_unsigned = _build_gui_bundle(
+        tmp_path / "public-unsigned",
+        package_source,
+        evidence,
+        "PublicUnsigned",
+    )
+    public_manifest = json.loads(
+        (public_unsigned / "bundle-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert public_manifest["distribution_mode"] == "public_unsigned"
+    assert public_manifest["signature"] == "unsigned-public"
+    assert public_manifest["public_distribution_allowed"] is True
+    assert public_manifest["internal_distribution_allowed"] is False
+    assert public_manifest["windows_warning_expected"] is True
+    assert public_manifest["verdicts"]["PUBLIC_UNSIGNED_RELEASE"] == (
+        "PASS"
+    )
 
     public_signed = subprocess.run(
         [
@@ -4464,6 +4537,38 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     assert "requires a code-signing certificate" in (
         public_signed.stdout + public_signed.stderr
     ).lower()
+
+
+def test_owner_public_unsigned_embedded_contract_self_test_passes(
+    tmp_path: Path,
+) -> None:
+    package_source = tmp_path / "package-source"
+    for target in ("codex", "claude", "opencode"):
+        _accepted_package(package_source, target)
+
+    evidence = _provider_eligibility_evidence(
+        tmp_path / "provider-eligibility-evidence.json"
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "owner-public-unsigned",
+        package_source,
+        evidence,
+        "PublicUnsigned",
+        edition="Owner",
+    )
+    executable = bundle / "LLMFoundationInstaller.exe"
+    self_test = subprocess.run(
+        [str(executable), "--self-test-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+
+    assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+    assert json.loads(self_test.stdout)["engine_validated"] is True
 
 
 def test_employee_distribution_requires_immutable_foundation_package(

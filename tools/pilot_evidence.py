@@ -47,7 +47,7 @@ def create_pilot_evidence(
     windows_build: int,
     confirmations: dict[str, bool],
 ) -> dict[str, object]:
-    """Record explicit, PII-free clean-PC Employee pilot confirmations."""
+    """Record explicit, PII-free owner-accepted home-PC confirmations."""
 
     draft = draft.resolve()
     output = output.resolve()
@@ -109,7 +109,9 @@ def create_pilot_evidence(
             required_paths["manifest"]
         )["sha256"],
         "machine": {
-            "clean_windows_x64": True,
+            "environment_kind": "owner-attested-home-pc",
+            "owner_authorized": True,
+            "windows_x64": True,
             "windows_build": windows_build,
             "admin_used": False,
         },
@@ -123,7 +125,7 @@ def create_pilot_evidence(
             "personal_data_included": False,
             "machine_identifier_included": False,
         },
-        "CLEAN_PC_PILOT": "PASS",
+        "HOME_PC_CANARY": "PASS",
     }
     evidence["evidence_body_sha256"] = evidence_body_sha256(evidence)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -136,17 +138,15 @@ def create_pilot_evidence(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Create PII-free Employee clean-PC pilot evidence only after "
+            "Create PII-free owner-attested Employee home-PC canary evidence "
+            "only after "
             "every required check has been explicitly confirmed."
         )
     )
     parser.add_argument("--draft", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--windows-build", required=True, type=int)
-    parser.add_argument(
-        "--confirm-clean-windows-x64",
-        action="store_true",
-    )
+    parser.add_argument("--confirm-home-pc-canary", action="store_true")
     parser.add_argument("--confirm-no-admin", action="store_true")
     for name in pilot_release.REQUIRED_PILOT_CHECKS:
         parser.add_argument(
@@ -156,11 +156,12 @@ def main() -> int:
         )
     arguments = parser.parse_args()
     if (
-        not arguments.confirm_clean_windows_x64
+        not arguments.confirm_home_pc_canary
         or not arguments.confirm_no_admin
     ):
         raise SystemExit(
-            "clean Windows x64 and no-admin use must be explicitly confirmed"
+            "owner-accepted home-PC canary and no-admin use must be "
+            "explicitly confirmed"
         )
     confirmations = {
         name: bool(getattr(arguments, "confirm_" + name))
@@ -175,7 +176,7 @@ def main() -> int:
     print(
         json.dumps(
             {
-                "CLEAN_PC_PILOT": evidence["CLEAN_PC_PILOT"],
+                "HOME_PC_CANARY": evidence["HOME_PC_CANARY"],
                 "output": str(arguments.output.resolve()),
             },
             sort_keys=True,
