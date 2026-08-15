@@ -22,6 +22,9 @@ import pilot_release  # noqa: E402
 REPOSITORY = "daniileliseev1337/llm-foundation-installer"
 TAG = installer_release.TAG
 EXPECTED_VERDICTS = pilot_release.EXPECTED_STABLE_VERDICTS
+GITHUB_NORMALIZED_ASSET_NAMES = {
+    "-.md": "ИНСТРУКЦИЯ-СОТРУДНИКУ.md",
+}
 
 
 def _json_bytes(value: object) -> bytes:
@@ -150,7 +153,7 @@ def _validate_stable_root(
 def _validate_remote_assets(
     release_api: dict[str, Any],
     local_paths: list[Path],
-) -> None:
+) -> dict[str, str]:
     rows = release_api.get("assets")
     if not isinstance(rows, list):
         raise ValueError("GitHub release asset inventory is missing")
@@ -164,14 +167,19 @@ def _validate_remote_assets(
         if (
             not isinstance(name, str)
             or not name
-            or name in remote
             or not isinstance(size, int)
             or isinstance(size, bool)
             or not isinstance(digest, str)
             or not digest.startswith("sha256:")
         ):
             raise ValueError("GitHub release asset inventory is invalid")
-        remote[name] = (size, digest.removeprefix("sha256:").lower())
+        canonical_name = GITHUB_NORMALIZED_ASSET_NAMES.get(name, name)
+        if canonical_name in remote:
+            raise ValueError("GitHub release asset inventory is invalid")
+        remote[canonical_name] = (
+            size,
+            digest.removeprefix("sha256:").lower(),
+        )
     local = {
         path.name: (
             path.stat().st_size,
@@ -181,6 +189,12 @@ def _validate_remote_assets(
     }
     if remote != local:
         raise ValueError("GitHub release asset inventory differs")
+    return {
+        GITHUB_NORMALIZED_ASSET_NAMES.get(row["name"], row["name"]): row[
+            "name"
+        ]
+        for row in rows
+    }
 
 
 def build_release_verification(
@@ -202,7 +216,10 @@ def build_release_verification(
         or release_api.get("immutable") is not True
     ):
         raise ValueError("GitHub release state is not immutable stable")
-    _validate_remote_assets(release_api, local_paths)
+    published_asset_names = _validate_remote_assets(
+        release_api,
+        local_paths,
+    )
     expected_names = {path.name for path in local_paths}
     if set(asset_attestation_outputs) != expected_names:
         raise ValueError("asset attestation inventory differs")
@@ -238,6 +255,7 @@ def build_release_verification(
         },
         "release_attestation": "PASS",
         "assets": assets,
+        "published_asset_names": published_asset_names,
         "verification_commands": {
             "gh_version": gh_version.splitlines()[0],
             "release_output_sha256": _attestation_digest(

@@ -130,6 +130,32 @@ def test_verifier_binds_immutable_employee_release_and_every_asset(
     )
 
 
+def test_verifier_accepts_exact_github_normalized_guide_name(
+    tmp_path: Path,
+):
+    root = _stable_release(tmp_path)
+    release_api = _release_api(root)
+    guide = next(
+        row
+        for row in release_api["assets"]
+        if row["name"] == "ИНСТРУКЦИЯ-СОТРУДНИКУ.md"
+    )
+    guide["name"] = "-.md"
+
+    evidence = verifier.build_release_verification(
+        stable_root=root,
+        release_api=release_api,
+        release_attestation_output=b'{"verificationResult":"success"}\n',
+        asset_attestation_outputs=_attestations(root),
+        gh_version="gh version 2.96.0",
+    )
+
+    assert evidence["RELEASE_INTEGRITY"] == "PASS"
+    assert evidence["published_asset_names"][
+        "ИНСТРУКЦИЯ-СОТРУДНИКУ.md"
+    ] == "-.md"
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
