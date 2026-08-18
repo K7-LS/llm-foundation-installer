@@ -169,8 +169,9 @@
                   <Button x:Name="SaveConnection" Content="Сохранить" Padding="10,6" />
                   <Button x:Name="TestConnection" Content="Сохранить и проверить" Padding="10,6" Margin="8,0,0,0" />
                   <Button x:Name="StopRoute" Content="Остановить маршрут" Padding="10,6" Margin="8,0,0,0" IsEnabled="False" />
+                  <Button x:Name="ResetRoute" Content="Сбросить маршрут" Padding="10,6" Margin="8,0,0,0" />
                 </StackPanel>
-                <TextBlock x:Name="ConnectionStatus" Text="Выберите маршрут подключения." Foreground="#91AAAD" FontSize="11" Margin="0,8,0,0" />
+                <TextBlock x:Name="ConnectionStatus" Text="Выберите маршрут подключения." Foreground="#91AAAD" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
               </StackPanel>
             </Grid>
             <Border Grid.Row="3" Height="5" Background="#17383D" CornerRadius="2">

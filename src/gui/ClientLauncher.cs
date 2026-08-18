@@ -646,7 +646,8 @@ namespace LlmFoundationInstaller
             SingBoxSessionResult active = StopActiveRoute();
             SingBoxSessionResult sessions =
                 SingBoxSession.ResetManagedSessions(home);
-            ProxyRecoveryResult proxy = SystemProxyLease.Recover(home);
+            ProxyRecoveryResult proxy =
+                SystemProxyLease.ResetPreservingExternalChanges(home);
             List<string> lifecycle = new List<string>();
             if (active.lifecycle != null)
             {
@@ -947,6 +948,7 @@ namespace LlmFoundationInstaller
                 "SYSTEM_PROXY_RECOVERY_FAILED",
                 "SYSTEM_PROXY_STATE_INVALID",
                 "SYSTEM_PROXY_STATE_REMOVE_FAILED",
+                "SYSTEM_PROXY_STATE_ARCHIVE_FAILED",
                 "SYSTEM_PROXY_REFRESH_FAILED",
                 "SYSTEM_PROXY_WATCHDOG_START_FAILED",
                 "OWNED_SESSION_MISMATCH",

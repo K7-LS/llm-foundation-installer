@@ -153,10 +153,11 @@
             <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="6" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,8,0,0" Text="Тип, адрес и порт — единый профиль одного прокси. При смене HTTP/HTTPS замените также адрес и порт. Затем сохраните и проверьте; Launch Center сам управляет sing-box." />
           </Grid>
           <Grid Grid.Row="3">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBlock x:Name="ConnectionStatus" Text="НАПРЯМУЮ / только локальное состояние" Foreground="{StaticResource Muted}" VerticalAlignment="Center" FontFamily="Cascadia Mono" FontSize="11" />
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <TextBlock x:Name="ConnectionStatus" Text="НАПРЯМУЮ / только локальное состояние" Foreground="{StaticResource Muted}" VerticalAlignment="Center" FontFamily="Cascadia Mono" FontSize="11" TextWrapping="Wrap" />
             <Button x:Name="TestConnection" Grid.Column="1" Content="ПРОВЕРИТЬ" Style="{StaticResource SecondaryButton}" Margin="0,0,9,0" />
-            <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить и проверить" Style="{StaticResource SecondaryButton}" />
+            <Button x:Name="SaveConnection" Grid.Column="2" Content="Сохранить и проверить" Style="{StaticResource SecondaryButton}" Margin="0,0,9,0" />
+            <Button x:Name="ResetRoute" Grid.Column="3" Content="Сбросить маршрут" Style="{StaticResource SecondaryButton}" />
           </Grid>
         </Grid>
       </Border>

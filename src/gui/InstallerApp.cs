@@ -1875,8 +1875,7 @@ namespace LlmFoundationInstaller
                 }
                 if (evidenceStatus != null)
                 {
-                    evidenceStatus.Text = result.reason ??
-                        "Точный клиент проверен";
+                    evidenceStatus.Text = LaunchResultMessage(result);
                     evidenceStatus.Foreground = new SolidColorBrush(
                         result.status == "PASS"
                             ? Color.FromRgb(119, 203, 185)
@@ -1919,6 +1918,42 @@ namespace LlmFoundationInstaller
                     "на время сеанса он может затронуть другие приложения";
             }
             return "Proxy передаётся только процессу выбранного клиента";
+        }
+
+        internal static string LaunchResultMessage(
+            LauncherSessionResult result
+        )
+        {
+            if (result == null || String.IsNullOrWhiteSpace(result.reason))
+            {
+                return "Точный клиент проверен";
+            }
+            if (String.Equals(
+                    result.reason,
+                    "APPX_ALREADY_RUNNING",
+                    StringComparison.Ordinal))
+            {
+                return "Codex уже запущен. Полностью закройте Codex и прежний " +
+                    "K7 launcher, затем повторите запуск.";
+            }
+            if (String.Equals(
+                    result.reason,
+                    "SYSTEM_PROXY_CHANGED_EXTERNALLY",
+                    StringComparison.Ordinal))
+            {
+                return "Системный proxy изменён после прежнего запуска. " +
+                    "Нажмите «Сбросить маршрут»: текущие настройки будут " +
+                    "сохранены, зависшая запись — архивирована.";
+            }
+            if (String.Equals(
+                    result.reason,
+                    "SYSTEM_PROXY_LEASE_BUSY",
+                    StringComparison.Ordinal))
+            {
+                return "Маршрут уже занят другим Launch Center. Закройте его " +
+                    "или остановите маршрут и повторите запуск.";
+            }
+            return result.reason;
         }
 
         internal static void ApplyResolutionFeedback(
@@ -3469,9 +3504,18 @@ namespace LlmFoundationInstaller
                                 );
                             }
                         );
+                        bool externalProxyPreserved = reset.lifecycle != null &&
+                            reset.lifecycle.Contains(
+                                "EXTERNAL_PROXY_PRESERVED"
+                            );
                         contract.Status.Text = reset.cleanup_verified
-                            ? "Сброс завершён. Управляемые сессии SingBox закрыты, " +
-                                "системный прокси восстановлен. Можно запускать заново."
+                            ? (externalProxyPreserved
+                                ? "Сброс завершён. Текущий внешний proxy " +
+                                    "сохранён, зависшая запись K-7 архивирована. " +
+                                    "Можно запускать заново."
+                                : "Сброс завершён. Управляемые сессии " +
+                                    "SingBox закрыты, системный proxy " +
+                                    "восстановлен. Можно запускать заново.")
                             : "Сброс выполнен не полностью (" +
                                 (reset.reason ?? "RESET_FAILED") +
                                 "). Закройте другой Launch Center и повторите.";
@@ -4587,6 +4631,15 @@ namespace LlmFoundationInstaller
                             port,
                             args[3]
                         );
+                    }
+                    else if (args[1] == "reset" &&
+                        args.Length == 5)
+                    {
+                        proxyResult = SystemProxyLease
+                            .ResetPreservingExternalChanges(
+                                args[2],
+                                args[3]
+                            );
                     }
                     else
                     {

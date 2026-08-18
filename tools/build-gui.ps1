@@ -17,6 +17,7 @@ param(
     [string]$RuntimeSourcesLock,
     [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
+    [switch]$AllowLegacyTestCompiler,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
@@ -1089,11 +1090,23 @@ $Compiler = @(
         } |
         Select-Object -Unique
 ) | Select-Object -First 1
+$DeterministicCompiler = $true
 if ([string]::IsNullOrWhiteSpace($Compiler)) {
-    throw (
-        'A Roslyn C# compiler is required for a deterministic GUI build. ' +
-        'Install Microsoft Visual Studio Build Tools with MSBuild.'
+    $LegacyCompiler = Join-Path $WindowsRoot (
+        'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     )
+    if ($AllowLegacyTestCompiler -and $AllowLocalTestSources -and
+        $DistributionMode -ceq 'Preview' -and
+        (Test-Path -LiteralPath $LegacyCompiler -PathType Leaf)) {
+        $Compiler = $LegacyCompiler
+        $DeterministicCompiler = $false
+    }
+    else {
+        throw (
+            'A Roslyn C# compiler is required for a deterministic GUI build. ' +
+            'Install Microsoft Visual Studio Build Tools with MSBuild.'
+        )
+    }
 }
 
 $AssemblyRoots = @(
@@ -1119,7 +1132,9 @@ $AvailableTargets = @($AllPackages.target | Sort-Object)
 $IncludedTargets = @('claude', 'codex', 'opencode')
 $RequiredTargets = @('claude', 'codex', 'opencode')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
-$NeedsAcceptedFoundation = $IsPackagedRelease
+$NeedsAcceptedFoundation = $IsPackagedRelease -or (
+    $AllowLocalTestSources -and $null -ne $AcceptedFoundation
+)
 $IsPublicUnsigned = $DistributionMode -ceq 'PublicUnsigned'
 $IsPublicSigned = $DistributionMode -ceq 'PublicSigned'
 $ClientSources = $null
@@ -1548,7 +1563,6 @@ $CompilerArguments = @(
     '/platform:anycpu',
     '/optimize+',
     '/checked+',
-    '/deterministic+',
     '/codepage:65001',
     '/utf8output',
     "/out:$Executable",
@@ -1565,6 +1579,9 @@ $CompilerArguments = @(
     "/resource:$EngineExtraIndexPath,FoundationEngine.extra-files.json",
     "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
 )
+if ($DeterministicCompiler) {
+    $CompilerArguments += '/deterministic+'
+}
 if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
     $CompilerArguments += '/define:K7_OWNER_DISTRIBUTION_ALLOWED'
 }
