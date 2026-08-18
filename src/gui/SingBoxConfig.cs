@@ -13,6 +13,7 @@ namespace LlmFoundationInstaller
         public int schema_version { get; set; }
         public List<string> exact_domains { get; set; }
         public List<string> common_suffixes { get; set; }
+        public Dictionary<string, List<string>> process_names { get; set; }
         public Dictionary<string, List<string>> targets { get; set; }
     }
 
@@ -121,12 +122,16 @@ namespace LlmFoundationInstaller
             }
             RoutingDomainCatalog routing = LoadRouting();
             List<string> targetSuffixes;
+            List<string> targetProcessNames;
             if (!routing.targets.TryGetValue(
-                    targetId,
-                    out targetSuffixes))
+                    targetId, out targetSuffixes) ||
+                !routing.process_names.TryGetValue(
+                    targetId, out targetProcessNames) ||
+                targetProcessNames == null ||
+                targetProcessNames.Count == 0)
             {
                 throw new ArgumentException(
-                    "Launch target has no reviewed routing domain set"
+                    "Launch target has no reviewed routing scope"
                 );
             }
             List<string> suffixes = routing.common_suffixes
@@ -164,6 +169,12 @@ namespace LlmFoundationInstaller
                     { "ip_is_private", true },
                     { "action", "route" },
                     { "outbound", "direct" }
+                },
+                new Dictionary<string, object>
+                {
+                    { "process_name", targetProcessNames },
+                    { "action", "route" },
+                    { "outbound", "upstream" }
                 },
                 new Dictionary<string, object>
                 {
@@ -282,6 +293,7 @@ namespace LlmFoundationInstaller
                     if (value == null ||
                         value.schema_version != 1 ||
                         value.targets == null ||
+                        value.process_names == null ||
                         value.exact_domains == null ||
                         value.common_suffixes == null)
                     {

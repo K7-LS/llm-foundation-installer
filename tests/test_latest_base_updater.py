@@ -73,3 +73,9 @@ def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
     assert 'arguments.Add("-ConfirmRemoveUnknown")' in app
     assert "row.local_exception_paths" in app
     assert "row.confirm_remove_unknown" in app
+    assert "IsLegacyFoundationDirectory" in app
+    assert "применить рекомендуемый вариант" in app
+    assert "локальные " in app
+    assert '"настройки не удаляются.' in app
+    assert "ShowOwnedMessage" in app
+    assert "ожидает решения по старой базе" in app

@@ -14,6 +14,33 @@
     "sentry.io",
     "statsig.com"
   ],
+  "process_names": {
+    "chrome-browser": [
+      "chrome.exe"
+    ],
+    "codex-cli": [
+      "codex.exe",
+      "node.exe"
+    ],
+    "codex-desktop": [
+      "ChatGPT.exe",
+      "OpenAI.exe",
+      "codex.exe",
+      "codex-code-mode-host.exe"
+    ],
+    "claude-code": [
+      "claude.exe",
+      "node.exe"
+    ],
+    "opencode-cli": [
+      "opencode.exe",
+      "node.exe"
+    ],
+    "opencode-desktop": [
+      "OpenCode.exe",
+      "opencode.exe"
+    ]
+  },
   "targets": {
     "chrome-browser": [],
     "codex-cli": [

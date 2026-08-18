@@ -581,14 +581,9 @@ namespace LlmFoundationInstaller
             if (appliedServer == null ||
                 !appliedServer.exists ||
                 appliedServer.kind != (int)RegistryValueKind.String ||
-                String.IsNullOrWhiteSpace(appliedText) ||
-                !appliedText.StartsWith(
-                    "127.0.0.1:",
-                    StringComparison.Ordinal) ||
-                !Int32.TryParse(
-                    appliedText.Substring("127.0.0.1:".Length),
-                    out appliedPort) ||
-                appliedPort < 1 || appliedPort > 65535)
+                !TryParseManagedLoopbackProxy(
+                    appliedText,
+                    out appliedPort))
             {
                 return Failed("SYSTEM_PROXY_STATE_INVALID");
             }
@@ -743,7 +738,9 @@ namespace LlmFoundationInstaller
             return new List<ProxyRegistryValue>
             {
                 ReadValue(registrySubkey, "ProxyEnable"),
-                ReadValue(registrySubkey, "ProxyServer")
+                ReadValue(registrySubkey, "ProxyServer"),
+                ReadValue(registrySubkey, "ProxyOverride"),
+                ReadValue(registrySubkey, "AutoConfigURL")
             };
         }
 
@@ -764,13 +761,58 @@ namespace LlmFoundationInstaller
                 {
                     name = "ProxyServer",
                     exists = true,
-                    value = "127.0.0.1:" +
+                    value = "http://127.0.0.1:" +
                         localPort.ToString(
                             System.Globalization.CultureInfo.InvariantCulture
                         ),
                     kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "ProxyOverride",
+                    exists = true,
+                    value = "",
+                    kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "AutoConfigURL",
+                    exists = false,
+                    value = null,
+                    kind = -1
                 }
             };
+        }
+
+        private static bool TryParseManagedLoopbackProxy(
+            string value,
+            out int port
+        )
+        {
+            port = 0;
+            if (String.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+            const string currentPrefix = "http://127.0.0.1:";
+            const string legacyPrefix = "127.0.0.1:";
+            string portText;
+            if (value.StartsWith(currentPrefix, StringComparison.Ordinal))
+            {
+                portText = value.Substring(currentPrefix.Length);
+            }
+            else if (value.StartsWith(
+                legacyPrefix,
+                StringComparison.Ordinal))
+            {
+                portText = value.Substring(legacyPrefix.Length);
+            }
+            else
+            {
+                return false;
+            }
+            return Int32.TryParse(portText, out port) &&
+                port >= 1 && port <= 65535;
         }
 
         private static void ApplyValues(

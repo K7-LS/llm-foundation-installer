@@ -24,7 +24,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
 TEST_REGISTRY_PREFIX = r"Software\K7AITests"
-APPLIED_PROXY = "127.0.0.1:43191"
+APPLIED_PROXY = "http://127.0.0.1:43191"
 
 
 def _write_test_only_client_lock(path: Path) -> None:
@@ -178,6 +178,20 @@ def registry_key() -> str:
             winreg.REG_SZ,
             "sentinel.invalid:8899",
         )
+        winreg.SetValueEx(
+            key,
+            "ProxyOverride",
+            0,
+            winreg.REG_SZ,
+            "sentinel.local",
+        )
+        winreg.SetValueEx(
+            key,
+            "AutoConfigURL",
+            0,
+            winreg.REG_SZ,
+            "https://sentinel.invalid/proxy.pac",
+        )
     try:
         yield subkey
     finally:
@@ -197,7 +211,9 @@ def registry_key() -> str:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, subkey)
 
 
-def _registry_snapshot(subkey: str) -> dict[str, tuple[object, int]]:
+def _registry_snapshot(
+    subkey: str,
+) -> dict[str, tuple[object, int] | None]:
     assert subkey.startswith(TEST_REGISTRY_PREFIX + "\\")
     with winreg.OpenKey(
         winreg.HKEY_CURRENT_USER,
@@ -205,10 +221,18 @@ def _registry_snapshot(subkey: str) -> dict[str, tuple[object, int]]:
         0,
         winreg.KEY_READ,
     ) as key:
-        return {
-            name: winreg.QueryValueEx(key, name)
-            for name in ("ProxyEnable", "ProxyServer")
-        }
+        result: dict[str, tuple[object, int] | None] = {}
+        for name in (
+            "ProxyEnable",
+            "ProxyServer",
+            "ProxyOverride",
+            "AutoConfigURL",
+        ):
+            try:
+                result[name] = winreg.QueryValueEx(key, name)
+            except FileNotFoundError:
+                result[name] = None
+        return result
 
 
 def _run_json(
@@ -261,7 +285,9 @@ def _wait_for_applied(subkey: str, timeout: float = 15.0) -> None:
         snapshot = _registry_snapshot(subkey)
         if snapshot["ProxyEnable"] == (1, winreg.REG_DWORD) and snapshot[
             "ProxyServer"
-        ] == (APPLIED_PROXY, winreg.REG_SZ):
+        ] == (APPLIED_PROXY, winreg.REG_SZ) and snapshot[
+            "ProxyOverride"
+        ] == ("", winreg.REG_SZ) and snapshot["AutoConfigURL"] is None:
             return
         time.sleep(0.05)
     raise AssertionError("test proxy was not applied")
@@ -278,7 +304,7 @@ def _wait_for_any_local_proxy(
         if (
             snapshot["ProxyEnable"] == (1, winreg.REG_DWORD)
             and server[1] == winreg.REG_SZ
-            and str(server[0]).startswith("127.0.0.1:")
+            and str(server[0]).startswith("http://127.0.0.1:")
         ):
             return
         time.sleep(0.05)
@@ -287,7 +313,7 @@ def _wait_for_any_local_proxy(
 
 def _wait_for_snapshot(
     subkey: str,
-    expected: dict[str, tuple[object, int]],
+    expected: dict[str, tuple[object, int] | None],
     timeout: float = 15.0,
 ) -> None:
     deadline = time.monotonic() + timeout
@@ -900,6 +926,69 @@ def test_appx_singbox_restores_proxy_after_success_or_activation_failure(
             / "sessions"
         ).glob("*")
     )
+
+
+def test_appx_singbox_direct_process_inherits_complete_proxy_environment(
+    appx_lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    before = _registry_snapshot(registry_key)
+    home = tmp_path / "home"
+    _save_proxy_profile(appx_lease_bundle, home, tmp_path)
+    environment_dump = tmp_path / "environment.txt"
+    batch = tmp_path / "environment-fixture.cmd"
+    batch.write_text(
+        "@echo off\r\n"
+        "set>\"%K7_APPX_ENVIRONMENT_DUMP%\"\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    environment = dict(os.environ)
+    environment["K7_APPX_FIXTURE_ARGS"] = f'/d /c "{batch}"'
+    environment["K7_APPX_ENVIRONMENT_DUMP"] = str(environment_dump)
+
+    result = subprocess.run(
+        _appx_command(
+            appx_lease_bundle,
+            home,
+            registry_key,
+            "success",
+        ),
+        cwd=appx_lease_bundle,
+        env=environment,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+
+    assert result.stdout.strip(), result.stderr
+    value = json.loads(result.stdout)
+    inherited_lines = environment_dump.read_text(
+        encoding="utf-8",
+        errors="replace",
+    ).splitlines()
+    inherited = {
+        key.lower(): value
+        for key, value in (
+            line.split("=", 1)
+            for line in inherited_lines
+            if "=" in line
+        )
+    }
+    assert result.returncode == 0
+    assert value["status"] == "PASS"
+    assert (
+        "packaged_executable_started_with_proxy_env"
+        in [item.lower() for item in value["lifecycle"]]
+    )
+    assert inherited["http_proxy"].startswith(
+        "http://127.0.0.1:"
+    )
+    assert inherited["https_proxy"] == inherited["http_proxy"]
+    assert inherited["no_proxy"] == "localhost,127.0.0.1,::1"
+    assert _registry_snapshot(registry_key) == before
 
 
 def test_stop_route_restores_proxy_without_killing_appx_client(

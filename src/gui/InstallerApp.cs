@@ -2638,15 +2638,34 @@ namespace LlmFoundationInstaller
                         row,
                         home
                     );
-                    if (result.code == 20 &&
-                        ResolveUnknownDecisions(row, result))
+                    if (result.code == 20)
                     {
-                        result = await RunFoundationAsync(
-                            bundleRoot,
-                            "plan",
-                            row,
-                            home
-                        );
+                        if (ResolveUnknownDecisions(row, result))
+                        {
+                            result = await RunFoundationAsync(
+                                bundleRoot,
+                                "plan",
+                                row,
+                                home
+                            );
+                        }
+                        else if (IsUnknownDecisionRequired(result))
+                        {
+                            SetStatus(
+                                view,
+                                "План для " + row.display_name +
+                                    " ожидает решения по старой базе и " +
+                                    "локальным дополнениям. Данные не " +
+                                    "изменены; нажмите «Сформировать план» " +
+                                    "и подтвердите рекомендуемый вариант.",
+                                "warning"
+                            );
+                            notices.Add(
+                                row.display_name +
+                                ": ожидается решение пользователя."
+                            );
+                            continue;
+                        }
                     }
                     if (result.code != 0)
                     {
@@ -3018,6 +3037,8 @@ namespace LlmFoundationInstaller
                 return false;
             }
             List<string> keep = new List<string>();
+            List<Dictionary<string, object>> entries =
+                new List<Dictionary<string, object>>();
             foreach (object value in unknown)
             {
                 Dictionary<string, object> entry =
@@ -3027,54 +3048,150 @@ namespace LlmFoundationInstaller
                     return false;
                 }
                 object pathValue;
-                object kindValue;
-                object sourceValue;
-                object riskValue;
                 string path = entry.TryGetValue("path", out pathValue)
                     ? Convert.ToString(
                         pathValue,
                         CultureInfo.InvariantCulture
                     )
                     : "";
-                string kind = entry.TryGetValue("kind", out kindValue)
-                    ? Convert.ToString(kindValue, CultureInfo.InvariantCulture)
-                    : "component";
-                string source = entry.TryGetValue("source", out sourceValue)
-                    ? Convert.ToString(sourceValue, CultureInfo.InvariantCulture)
-                    : "unknown";
-                string risk = entry.TryGetValue("risk", out riskValue)
-                    ? Convert.ToString(riskValue, CultureInfo.InvariantCulture)
-                    : "UNREVIEWED";
                 if (String.IsNullOrWhiteSpace(path))
                 {
                     return false;
                 }
-                MessageBoxResult answer = MessageBox.Show(
-                    "Найден компонент вне manifest:\n\n" +
-                    "Путь: " + path + "\n" +
-                    "Тип: " + kind + "\n" +
-                    "Источник: " + source + "\n" +
-                    "Риск: " + risk + "\n\n" +
-                    "Да — удалить из активного профиля с backup.\n" +
-                    "Нет — оставить как локальное исключение " +
-                    "(drift, повторное подтверждение при следующем Sync).\n" +
-                    "Отмена — остановить установку.",
-                    "Sync Base: решение пользователя",
-                    MessageBoxButton.YesNoCancel,
-                    MessageBoxImage.Warning
-                );
-                if (answer == MessageBoxResult.Cancel)
+                entries.Add(entry);
+            }
+            int legacyCount = entries.Count(entry =>
+                IsLegacyFoundationDirectory(EntryText(entry, "path")));
+            int preserveCount = entries.Count - legacyCount;
+            MessageBoxResult recommended = ShowOwnedMessage(
+                "Найдены данные от предыдущей базы и локальные " +
+                    "дополнения:\n\n" +
+                    "• старая управляемая база: " + legacyCount +
+                    " — перенести в backup и заменить;\n" +
+                    "• локальные MCP, плагины и другие дополнения: " +
+                    preserveCount + " — сохранить как исключения.\n\n" +
+                    "Это рекомендуемый безопасный вариант: локальные " +
+                    "настройки не удаляются.\n\n" +
+                    "Да — применить рекомендуемый вариант.\n" +
+                    "Нет — проверить каждый пункт вручную.\n" +
+                    "Отмена — остановить без изменений.",
+                "Sync Base: миграция предыдущей установки",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Warning
+            );
+            if (recommended == MessageBoxResult.Cancel)
+            {
+                return false;
+            }
+            if (recommended == MessageBoxResult.Yes)
+            {
+                keep.AddRange(entries
+                    .Select(entry => EntryText(entry, "path"))
+                    .Where(path =>
+                        !IsLegacyFoundationDirectory(path)));
+            }
+            else
+            {
+                foreach (Dictionary<string, object> entry in entries)
                 {
-                    return false;
-                }
-                if (answer == MessageBoxResult.No)
-                {
-                    keep.Add(path);
+                    string path = EntryText(entry, "path");
+                    string kind = EntryText(entry, "kind", "component");
+                    string source = EntryText(entry, "source", "unknown");
+                    string risk = EntryText(entry, "risk", "UNREVIEWED");
+                    MessageBoxResult answer = ShowOwnedMessage(
+                        "Найден компонент вне manifest:\n\n" +
+                        "Путь: " + path + "\n" +
+                        "Тип: " + kind + "\n" +
+                        "Источник: " + source + "\n" +
+                        "Риск: " + risk + "\n\n" +
+                        "Да — удалить из активного профиля с backup.\n" +
+                        "Нет — оставить как локальное исключение " +
+                        "(drift, повторное подтверждение при следующем Sync).\n" +
+                        "Отмена — остановить установку.",
+                        "Sync Base: решение пользователя",
+                        MessageBoxButton.YesNoCancel,
+                        MessageBoxImage.Warning
+                    );
+                    if (answer == MessageBoxResult.Cancel)
+                    {
+                        return false;
+                    }
+                    if (answer == MessageBoxResult.No)
+                    {
+                        keep.Add(path);
+                    }
                 }
             }
             row.local_exception_paths = keep;
             row.confirm_remove_unknown = true;
             return true;
+        }
+
+        private static bool IsUnknownDecisionRequired(
+            WorkflowRunResult result
+        )
+        {
+            try
+            {
+                Dictionary<string, object> payload =
+                    new JavaScriptSerializer().Deserialize<
+                        Dictionary<string, object>
+                    >(result.output);
+                object status;
+                return payload.TryGetValue("status", out status) &&
+                    String.Equals(
+                        Convert.ToString(
+                            status,
+                            CultureInfo.InvariantCulture
+                        ),
+                        "BLOCKED_USER_DECISION",
+                        StringComparison.Ordinal
+                    );
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string EntryText(
+            Dictionary<string, object> entry,
+            string name,
+            string fallback = ""
+        )
+        {
+            object value;
+            return entry != null && entry.TryGetValue(name, out value)
+                ? Convert.ToString(value, CultureInfo.InvariantCulture)
+                : fallback;
+        }
+
+        private static bool IsLegacyFoundationDirectory(string path)
+        {
+            return !String.IsNullOrWhiteSpace(path) &&
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    path,
+                    @"^\.(?:codex|claude)/base/foundation/" +
+                        @"[0-9]+\.[0-9]+\.[0-9]+$|" +
+                        @"^\.config/opencode/base/foundation/" +
+                        @"[0-9]+\.[0-9]+\.[0-9]+$",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant
+                );
+        }
+
+        private static MessageBoxResult ShowOwnedMessage(
+            string message,
+            string title,
+            MessageBoxButton buttons,
+            MessageBoxImage image
+        )
+        {
+            Window owner = Application.Current == null
+                ? null
+                : Application.Current.MainWindow;
+            return owner == null
+                ? MessageBox.Show(message, title, buttons, image)
+                : MessageBox.Show(owner, message, title, buttons, image);
         }
 
         private static void SetProgress(
