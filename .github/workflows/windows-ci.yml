@@ -137,6 +137,29 @@ jobs:
       - name: Verify standalone products and manifests
         shell: pwsh
         run: |
+          function Invoke-JsonProduct {
+            param(
+              [Parameter(Mandatory = $true)][string]$Executable,
+              [Parameter(Mandatory = $true)][string]$Argument
+            )
+            $token = [Guid]::NewGuid().ToString('N')
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.json"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.txt"
+            $process = Start-Process -FilePath $Executable `
+              -ArgumentList $Argument -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput $stdout `
+              -RedirectStandardError $stderr
+            $raw = Get-Content -LiteralPath $stdout -Raw
+            if ($process.ExitCode -ne 0 -or
+                [string]::IsNullOrWhiteSpace($raw)) {
+              $diagnostic = Get-Content -LiteralPath $stderr -Raw
+              throw (
+                "Product command failed: $Executable $Argument; " +
+                "exit=$($process.ExitCode); stderr=$diagnostic"
+              )
+            }
+            return $raw | ConvertFrom-Json
+          }
           $roots = @(
             '.work/release/employee',
             '.work/release/owner'
@@ -155,13 +178,17 @@ jobs:
               $manifest.products.launch_center.file
             )) {
               $exe = Join-Path $root $product
-              $selfTest = & $exe --self-test-json | ConvertFrom-Json
-              if ($LASTEXITCODE -ne 0 -or $selfTest.status -cne 'PASS') {
+              $selfTest = Invoke-JsonProduct `
+                -Executable $exe -Argument '--self-test-json'
+              if ($selfTest.engine_validated -ne $true -or
+                  $selfTest.version -cne '0.4.0' -or
+                  (@($selfTest.targets | Sort-Object) -join ',') -cne
+                    'claude,codex,opencode') {
                 throw "Self-test failed: $product"
               }
-              $catalog = & $exe --catalog-json | ConvertFrom-Json
-              if ($LASTEXITCODE -ne 0 -or
-                  $catalog.provider_eligibility -cne 'PASS' -or
+              $catalog = Invoke-JsonProduct `
+                -Executable $exe -Argument '--catalog-json'
+              if ($catalog.provider_eligibility -cne 'PASS' -or
                   @($catalog.targets | Where-Object {
                     $_.package_state -cne 'accepted'
                   }).Count -ne 0) {
