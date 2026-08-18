@@ -675,9 +675,9 @@ def test_baseline_adopts_only_exact_unowned_destination(
 def test_foundation_preserves_verified_newer_session_state(
     engine_root: Path, tmp_path: Path, executable: str
 ):
-    home = tmp_path / f"newer-state-{Path(executable).stem}"
+    home = tmp_path / ("p" if Path(executable).stem == "pwsh" else "w")
     home.mkdir()
-    first = _modern_package(tmp_path / "first-modern.zip", version="1.1.0")
+    first = _modern_package(tmp_path / "a.zip", version="1.1.0")
     installed = _run(executable, engine_root, "install", home, package=first)
     assert installed.returncode == 0, installed.stderr
     state_path = home / ".llm-foundation/state/session-tools/codex/state.json"
@@ -685,14 +685,36 @@ def test_foundation_preserves_verified_newer_session_state(
     state["release_tag"] = "codex-v9.0.0"
     state["release_version"] = "9.0.0"
     state["release_manifest_sha256"] = "9" * 64
+    legacy_payload = b"print('legacy session helper')\n"
+    legacy_relative = "x.py"
+    legacy_path = (
+        home
+        / ".agents"
+        / "skills"
+        / state["tools"][0]["id"]
+        / legacy_relative
+    )
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_bytes(legacy_payload)
+    cache_path = legacy_path.parent / "__pycache__" / "x.cpython-312.pyc"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(b"runtime cache\n")
+    state["tools"][0]["files"].append(
+        {
+            "path": legacy_relative,
+            "sha256": _sha256(legacy_payload),
+            "bytes": len(legacy_payload),
+        }
+    )
     state_path.write_bytes(_json_bytes(state))
     expected_state = state_path.read_bytes()
 
-    second = _modern_package(tmp_path / "second-modern.zip", version="1.2.0")
+    second = _modern_package(tmp_path / "b.zip", version="1.2.0")
     upgraded = _run(executable, engine_root, "install", home, package=second)
 
     assert upgraded.returncode == 0, upgraded.stderr
     assert state_path.read_bytes() == expected_state
+    assert cache_path.read_bytes() == b"runtime cache\n"
     doctor = _run(executable, engine_root, "doctor", home, package=second)
     assert doctor.returncode == 0, doctor.stderr
 

@@ -6,6 +6,22 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      build_public_unsigned:
+        description: Build Owner and Employee PublicUnsigned bundles
+        required: true
+        type: boolean
+        default: false
+      build_input_tag:
+        description: Draft release tag containing k7-build-input-0.4.0-r1.zip
+        required: false
+        type: string
+        default: k7-v0.4.0-r1-build-input
+      build_foundation_release:
+        description: Run acceptance and prepare Foundation release assets
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,3 +92,200 @@ jobs:
             $dirty
             throw "Offline tests modified the worktree"
           }
+
+  build-public-unsigned:
+    name: PublicUnsigned Owner and Employee
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.build_public_unsigned
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable build inputs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_INPUT_TAG: ${{ inputs.build_input_tag }}
+        run: |
+          gh release download $env:BUILD_INPUT_TAG `
+            --pattern k7-build-input-0.4.0-r1.zip `
+            --dir .work/input-download
+          Expand-Archive `
+            -LiteralPath .work/input-download/k7-build-input-0.4.0-r1.zip `
+            -DestinationPath .work/build-input
+      - name: Build release editions with Roslyn
+        shell: pwsh
+        run: |
+          $common = @{
+            DistributionMode = 'PublicUnsigned'
+            PackageRoot = '.work/build-input/packages'
+            FoundationPackageRoot = '.work/build-input/foundation'
+            ProviderEligibilityEvidence = (
+              '.work/build-input/evidence/provider-eligibility-evidence.json'
+            )
+            ClientSourcesLock = 'client-sources.lock.json'
+            RuntimeSourcesLock = 'runtime-sources.lock.json'
+            RuntimeArchive = (
+              '.work/build-input/runtime/' +
+              'sing-box-1.13.14-windows-amd64.zip'
+            )
+          }
+          ./tools/build-edition.ps1 `
+            -OutputRoot .work/release/employee `
+            -Edition Employee @common
+          ./tools/build-edition.ps1 `
+            -OutputRoot .work/release/owner `
+            -Edition Owner @common
+      - name: Verify standalone products and manifests
+        shell: pwsh
+        run: |
+          function Invoke-JsonProduct {
+            param(
+              [Parameter(Mandatory = $true)][string]$Executable,
+              [Parameter(Mandatory = $true)][string]$Argument
+            )
+            $token = [Guid]::NewGuid().ToString('N')
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.json"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.txt"
+            $process = Start-Process -FilePath $Executable `
+              -ArgumentList $Argument -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput $stdout `
+              -RedirectStandardError $stderr
+            $raw = Get-Content -LiteralPath $stdout -Raw
+            if ($process.ExitCode -ne 0 -or
+                [string]::IsNullOrWhiteSpace($raw)) {
+              $diagnostic = Get-Content -LiteralPath $stderr -Raw
+              throw (
+                "Product command failed: $Executable $Argument; " +
+                "exit=$($process.ExitCode); stderr=$diagnostic"
+              )
+            }
+            return $raw | ConvertFrom-Json
+          }
+          $roots = @(
+            '.work/release/employee',
+            '.work/release/owner'
+          )
+          foreach ($root in $roots) {
+            $manifest = Get-Content `
+              -LiteralPath "$root/bundle-manifest.json" -Raw |
+                ConvertFrom-Json
+            if ($manifest.distribution_mode -cne 'PublicUnsigned' -or
+                $manifest.verdicts.PUBLIC_UNSIGNED_RELEASE -cne 'PASS' -or
+                $manifest.verdicts.PROGRAM_RELEASE -cne '3/3') {
+              throw "Release manifest is not PublicUnsigned-ready: $root"
+            }
+            foreach ($product in @(
+              $manifest.products.installer.file,
+              $manifest.products.launch_center.file
+            )) {
+              $exe = Join-Path $root $product
+              $selfTest = Invoke-JsonProduct `
+                -Executable $exe -Argument '--self-test-json'
+              if ($selfTest.engine_validated -ne $true -or
+                  $selfTest.version -cne '0.4.0' -or
+                  (@($selfTest.targets | Sort-Object) -join ',') -cne
+                    'claude,codex,opencode') {
+                throw "Self-test failed: $product"
+              }
+              $catalog = Invoke-JsonProduct `
+                -Executable $exe -Argument '--catalog-json'
+              if ($catalog.provider_eligibility -cne 'PASS' -or
+                  @($catalog.targets | Where-Object {
+                    $_.package_state -cne 'accepted'
+                  }).Count -ne 0) {
+                throw "Catalog verification failed: $product"
+              }
+            }
+          }
+      - name: Package immutable release candidates
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .work/artifacts | Out-Null
+          foreach ($edition in @('employee', 'owner')) {
+            $root = ".work/release/$edition"
+            $hashes = Get-ChildItem -LiteralPath $root -File |
+              Sort-Object Name |
+              ForEach-Object {
+                $hash = (Get-FileHash -LiteralPath $_.FullName `
+                  -Algorithm SHA256).Hash.ToLowerInvariant()
+                "$hash  $($_.Name)"
+              }
+            [IO.File]::WriteAllLines(
+              (Join-Path $root 'SHA256SUMS.txt'),
+              $hashes,
+              (New-Object Text.UTF8Encoding($false))
+            )
+            Compress-Archive -Path "$root/*" `
+              -DestinationPath (
+                ".work/artifacts/k7-installer-$edition-" +
+                "0.4.0-r1-publicunsigned.zip"
+              )
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k7-installer-0.4.0-r1-publicunsigned
+          path: .work/artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  build-foundation-release:
+    name: Foundation synthetic acceptance and release assets
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.build_foundation_release
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Run dual-shell Foundation acceptance
+        shell: pwsh
+        run: |
+          python tools/run-acceptance.py `
+            --evidence .work/release/foundation-acceptance.json
+      - name: Prepare exact accepted release bytes
+        shell: pwsh
+        run: |
+          python tools/promote_foundation.py `
+            --engine-root .work/acceptance/engine-ps7 `
+            --acceptance-evidence .work/release/foundation-acceptance.json `
+            --output .work/release/foundation-0.5.4
+      - name: Verify release asset inventory
+        shell: pwsh
+        run: |
+          $root = '.work/release/foundation-0.5.4'
+          $expected = @(
+            'acceptance-evidence.json',
+            'foundation-engine-0.5.4.zip',
+            'release-manifest.json'
+          )
+          $actual = @(Get-ChildItem -LiteralPath $root -File |
+            Sort-Object Name | Select-Object -ExpandProperty Name)
+          if (($actual -join ',') -cne ($expected -join ',')) {
+            throw 'Foundation release inventory differs'
+          }
+          $manifest = Get-Content `
+            -LiteralPath "$root/release-manifest.json" -Raw |
+              ConvertFrom-Json
+          if ($manifest.version -cne '0.5.4' -or
+              $manifest.tag -cne 'foundation-engine-v0.5.4' -or
+              $manifest.channel -cne 'stable') {
+            throw 'Foundation release manifest differs'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: foundation-engine-0.5.4-release
+          path: .work/release/foundation-0.5.4/*
+          if-no-files-found: error
+          retention-days: 14

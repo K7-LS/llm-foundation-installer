@@ -416,6 +416,9 @@ namespace LlmFoundationInstaller
                 start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
                 start.EnvironmentVariables["http_proxy"] = localProxy;
                 start.EnvironmentVariables["https_proxy"] = localProxy;
+                const string noProxy = "localhost,127.0.0.1,::1";
+                start.EnvironmentVariables["NO_PROXY"] = noProxy;
+                start.EnvironmentVariables["no_proxy"] = noProxy;
                 start.EnvironmentVariables[
                     "LLM_FOUNDATION_CONNECTION_MODE"
                 ] = route;
@@ -439,12 +442,16 @@ namespace LlmFoundationInstaller
                         }
                         client = StartTestAppxTarget(
                             target,
+                            start,
                             testFixtureArguments
                         );
                     }
                     else
                     {
-                        client = StartExactTarget(target, start);
+                        client = StartExactProcessTarget(
+                            target,
+                            start
+                        );
                     }
                 }
                 if (client == null)
@@ -454,6 +461,15 @@ namespace LlmFoundationInstaller
                     );
                 }
                 session.lifecycle.Add("EXACT_CLIENT_STARTED");
+                if (String.Equals(
+                        target.launch_mode,
+                        "appx",
+                        StringComparison.Ordinal))
+                {
+                    session.lifecycle.Add(
+                        "PACKAGED_EXECUTABLE_STARTED_WITH_PROXY_ENV"
+                    );
+                }
                 if (target.role == "desktop")
                 {
                     client.WaitForExit();
@@ -646,7 +662,8 @@ namespace LlmFoundationInstaller
             SingBoxSessionResult active = StopActiveRoute();
             SingBoxSessionResult sessions =
                 SingBoxSession.ResetManagedSessions(home);
-            ProxyRecoveryResult proxy = SystemProxyLease.Recover(home);
+            ProxyRecoveryResult proxy =
+                SystemProxyLease.ResetPreservingExternalChanges(home);
             List<string> lifecycle = new List<string>();
             if (active.lifecycle != null)
             {
@@ -766,6 +783,7 @@ namespace LlmFoundationInstaller
 
         private static Process StartTestAppxTarget(
             LaunchTargetResolution target,
+            ProcessStartInfo start,
             string arguments
         )
         {
@@ -781,16 +799,9 @@ namespace LlmFoundationInstaller
                     "TARGET_INTEGRITY_CHANGED"
                 );
             }
-            return Process.Start(new ProcessStartInfo
-            {
-                FileName = target.executable_path,
-                Arguments = arguments ?? "",
-                WorkingDirectory = Path.GetDirectoryName(
-                    target.executable_path
-                ),
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
+            start.Arguments = arguments ?? "";
+            start.CreateNoWindow = true;
+            return Process.Start(start);
         }
 
         private static string QuoteLaunchArgument(string value)
@@ -919,6 +930,26 @@ namespace LlmFoundationInstaller
             return Process.GetProcessById((int)processId);
         }
 
+        private static Process StartExactProcessTarget(
+            LaunchTargetResolution target,
+            ProcessStartInfo start
+        )
+        {
+            if (target == null ||
+                String.IsNullOrWhiteSpace(target.executable_path) ||
+                !File.Exists(target.executable_path) ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(target.executable_path),
+                    target.sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "TARGET_INTEGRITY_CHANGED"
+                );
+            }
+            return Process.Start(start);
+        }
+
         private static string StableSingBoxReason(Exception exception)
         {
             string message = exception == null
@@ -947,6 +978,7 @@ namespace LlmFoundationInstaller
                 "SYSTEM_PROXY_RECOVERY_FAILED",
                 "SYSTEM_PROXY_STATE_INVALID",
                 "SYSTEM_PROXY_STATE_REMOVE_FAILED",
+                "SYSTEM_PROXY_STATE_ARCHIVE_FAILED",
                 "SYSTEM_PROXY_REFRESH_FAILED",
                 "SYSTEM_PROXY_WATCHDOG_START_FAILED",
                 "OWNED_SESSION_MISMATCH",

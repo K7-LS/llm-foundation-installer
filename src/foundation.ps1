@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.3'
+$script:EngineVersion = '0.5.4'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -703,7 +703,8 @@ function Get-SessionToolsRelativePaths {
 function Assert-SessionToolRecords {
     param(
         [Parameter(Mandatory = $true)]$Tools,
-        [Parameter(Mandatory = $true)][string]$Label
+        [Parameter(Mandatory = $true)][string]$Label,
+        [switch]$AllowLegacyFileTypes
     )
     if ($Tools -isnot [Array] -or @($Tools).Count -gt 32) {
         Throw-Foundation 'INVALID_PACKAGE' "$Label tools are invalid"
@@ -716,6 +717,20 @@ function Assert-SessionToolRecords {
     [int64]$ExpandedBytes = 0
     [int]$FileCount = 0
     $Lines = @()
+    $AllowedExtensions = @('.md', '.json', '.yaml', '.yml', '.toml', '.txt')
+    if ($AllowLegacyFileTypes) {
+        $AllowedExtensions += @(
+            '.docx',
+            '.gitkeep',
+            '.graphify_version',
+            '.lsp',
+            '.patch',
+            '.ps1',
+            '.py',
+            '.tmpl',
+            '.xlsx'
+        )
+    }
     foreach ($Tool in @($Tools)) {
         Assert-ExactProperties $Tool @('id', 'files') "$Label tool"
         $ToolId = [string]$Tool.id
@@ -745,7 +760,7 @@ function Assert-SessionToolRecords {
             $Extension = [IO.Path]::GetExtension($Path).ToLowerInvariant()
             if ($Row.path -isnot [string] -or
                 -not (Test-PortablePath $Path) -or
-                $Extension -cnotin @('.md', '.json', '.yaml', '.yml', '.toml', '.txt') -or
+                $Extension -cnotin $AllowedExtensions -or
                 -not $FilePaths.Add($Path) -or
                 ($null -ne $PreviousPath -and
                     [StringComparer]::Ordinal.Compare(
@@ -2158,6 +2173,51 @@ function Assert-ActiveState {
     }
 }
 
+function Convert-LegacyActiveState {
+    param([Parameter(Mandatory = $true)]$State)
+    if ($null -eq $State -or
+        $State -isnot [Management.Automation.PSCustomObject]) {
+        return $State
+    }
+    $LegacyProperties = @(
+        'schema_version',
+        'target',
+        'release_version',
+        'client',
+        'foundation_engine_version',
+        'package_sha256',
+        'managed_surface',
+        'environment',
+        'installed_files',
+        'quarantined_unknown',
+        'snapshot_path',
+        'snapshot_sha256'
+    )
+    $Actual = @($State.PSObject.Properties.Name | Sort-Object)
+    $Expected = @($LegacyProperties | Sort-Object)
+    if (@(
+        Compare-Object -ReferenceObject $Expected -DifferenceObject $Actual
+    ).Count -ne 0) {
+        return $State
+    }
+    return [pscustomobject][ordered]@{
+        schema_version = $State.schema_version
+        target = $State.target
+        release_version = $State.release_version
+        client = $State.client
+        foundation_engine_version = $State.foundation_engine_version
+        package_sha256 = $State.package_sha256
+        managed_surface = $State.managed_surface
+        environment = $State.environment
+        installed_files = $State.installed_files
+        quarantined_unknown = $State.quarantined_unknown
+        local_exceptions = @()
+        desired_state = $false
+        snapshot_path = $State.snapshot_path
+        snapshot_sha256 = $State.snapshot_sha256
+    }
+}
+
 function Assert-PendingState {
     param(
         [Parameter(Mandatory = $true)]$State,
@@ -2350,7 +2410,7 @@ function Read-ActiveState {
         if ($AllowMissing) { return $null }
         Throw-Foundation 'NOT_INSTALLED' 'No active installation exists'
     }
-    $State = Read-JsonFile $Paths.active
+    $State = Convert-LegacyActiveState (Read-JsonFile $Paths.active)
     Assert-ActiveState $State ([string]$Paths.target)
     return $State
 }
@@ -2860,13 +2920,26 @@ function Assert-SessionToolDestinationFiles {
         }
     }
     $Actual = @(Get-SafeTreeFiles $Destination)
-    if ($Actual.Count -ne $Expected.Count) {
+    $Root = [IO.Path]::GetFullPath($Destination)
+    $RelevantActual = @(
+        foreach ($File in $Actual) {
+            $Relative = $File.FullName.Substring($Root.Length).
+                TrimStart('\').Replace('\', '/')
+            if ($Relative -cmatch '(^|/)__pycache__/[^/]+\.pyc$') {
+                continue
+            }
+            [pscustomobject]@{
+                file = $File
+                relative = $Relative
+            }
+        }
+    )
+    if ($RelevantActual.Count -ne $Expected.Count) {
         Throw-Foundation $FailureCode 'Session tool destination has extra files'
     }
-    $Root = [IO.Path]::GetFullPath($Destination)
-    foreach ($File in $Actual) {
-        $Relative = $File.FullName.Substring($Root.Length).
-            TrimStart('\').Replace('\', '/')
+    foreach ($ActualFile in $RelevantActual) {
+        $File = $ActualFile.file
+        $Relative = [string]$ActualFile.relative
         if (-not $Expected.ContainsKey($Relative)) {
             Throw-Foundation $FailureCode (
                 "Session tool destination has an extra file: $Relative"
@@ -2964,7 +3037,8 @@ function Assert-SessionToolsState {
             id = [string]$Tool.id
             files = @($Tool.files)
         }
-        $null = Assert-SessionToolRecords (, $StateToolContract) 'state'
+        $null = Assert-SessionToolRecords `
+            (, $StateToolContract) 'state' -AllowLegacyFileTypes
         if ($CheckDestination) {
             Assert-SessionToolDestinationFiles `
                 $ExpectedDestination `

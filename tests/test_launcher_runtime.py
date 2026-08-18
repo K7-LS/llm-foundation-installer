@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from test_gui import _accepted_foundation
+
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
@@ -52,6 +54,7 @@ def _build(
     runtime_lock: Path,
     client_lock: Path | None = None,
     product_role: str = "LaunchCenter",
+    foundation_root: Path | None = None,
 ) -> Path:
     command = [
             str(POWERSHELL),
@@ -69,9 +72,12 @@ def _build(
             "-RuntimeSourcesLock",
             str(runtime_lock),
             "-AllowLocalTestSources",
+            "-AllowLegacyTestCompiler",
     ]
     if client_lock is not None:
         command.extend(["-ClientSourcesLock", str(client_lock)])
+    if foundation_root is not None:
+        command.extend(["-FoundationPackageRoot", str(foundation_root)])
     result = subprocess.run(
         command,
         cwd=REPOSITORY,
@@ -555,7 +561,15 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
         package.writestr(entry, b"fake-sing-box-runtime\n")
     lock = tmp_path / "runtime.lock.json"
     _write_runtime_lock(lock, archive, entry)
-    bundle = _build(tmp_path / "center", lock)
+    client_lock = tmp_path / "client-sources.lock.json"
+    shutil.copyfile(REPOSITORY / "client-sources.lock.json", client_lock)
+    foundation_root = _accepted_foundation(tmp_path / "foundation-fixture")
+    bundle = _build(
+        tmp_path / "center",
+        lock,
+        client_lock,
+        foundation_root=foundation_root,
+    )
     home = tmp_path / "home"
     home.mkdir()
     profile = tmp_path / "connection.json"
@@ -621,6 +635,16 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
     }
     assert config["outbounds"][1] == {"tag": "direct", "type": "direct"}
     assert config["route"]["final"] == "direct"
+    process_rule = next(
+        rule
+        for rule in config["route"]["rules"]
+        if "process_name" in rule
+    )
+    assert process_rule == {
+        "process_name": ["OpenCode.exe", "opencode.exe"],
+        "action": "route",
+        "outbound": "upstream",
+    }
     serialized_rules = json.dumps(config["route"]["rules"])
     assert "opencode.ai" in serialized_rules
     assert "openai.com" in serialized_rules

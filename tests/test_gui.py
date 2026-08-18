@@ -229,12 +229,30 @@ def _build_gui_bundle(
     provider_eligibility_evidence: Path | None = None,
     distribution_mode: str | None = None,
     client_sources_lock: Path | None = None,
+    runtime_sources_lock: Path | None = None,
     allow_local_test_sources: bool = False,
     foundation_package_root: Path | None = None,
     owner_candidate_root: Path | None = None,
     edition: str = "Owner",
     product_role: str = "Installer",
 ) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if client_sources_lock is None:
+        client_sources_lock = output.parent / (
+            output.name + "-client-sources.lock.json"
+        )
+        shutil.copyfile(
+            REPOSITORY_ROOT / "client-sources.lock.json",
+            client_sources_lock,
+        )
+    if runtime_sources_lock is None:
+        runtime_sources_lock = output.parent / (
+            output.name + "-runtime-sources.lock.json"
+        )
+        shutil.copyfile(
+            REPOSITORY_ROOT / "runtime-sources.lock.json",
+            runtime_sources_lock,
+        )
     arguments = [
         POWERSHELL,
         "-NoProfile",
@@ -248,6 +266,8 @@ def _build_gui_bundle(
         product_role,
         "-OutputRoot",
         str(output),
+        "-RuntimeSourcesLock",
+        str(runtime_sources_lock),
     ]
     if package_root is not None:
         arguments.extend(["-PackageRoot", str(package_root)])
@@ -274,10 +294,10 @@ def _build_gui_bundle(
         )
     if distribution_mode is not None:
         arguments.extend(["-DistributionMode", distribution_mode])
-    if client_sources_lock is not None:
-        arguments.extend(["-ClientSourcesLock", str(client_sources_lock)])
+    arguments.extend(["-ClientSourcesLock", str(client_sources_lock)])
     if allow_local_test_sources:
         arguments.append("-AllowLocalTestSources")
+        arguments.append("-AllowLegacyTestCompiler")
     result = subprocess.run(
         arguments,
         cwd=REPOSITORY_ROOT,
@@ -3379,9 +3399,12 @@ def connection_ui_bundles(
 ) -> dict[tuple[str, str], Path]:
     """Build each real WPF view once for its connection-state contract."""
     root = tmp_path_factory.mktemp("connection-ui")
+    foundation = _accepted_foundation(root)
     return {
         (edition, product_role): _build_gui_bundle(
             root / f"{edition.lower()}-{product_role.lower()}",
+            foundation_package_root=foundation,
+            allow_local_test_sources=True,
             edition=edition,
             product_role=product_role,
         )
@@ -3422,6 +3445,7 @@ def test_four_view_connection_contract(
     assert value["save_enabled"] is True
     assert value["test_enabled"] is True
     assert value["stop_enabled"] is False
+    assert value["reset_enabled"] is True
     assert value["status_text"].startswith(
         "Заполните сервер, порт, логин и пароль"
     )
@@ -3431,13 +3455,22 @@ def test_four_view_connection_contract(
         )
 
 
-@pytest.mark.parametrize("product_role", ["Installer", "LaunchCenter"])
-def test_employee_connection_error_area_wraps_and_offers_managed_reset(
+@pytest.mark.parametrize(
+    ("edition", "product_role"),
+    [
+        ("Employee", "Installer"),
+        ("Owner", "Installer"),
+        ("Employee", "LaunchCenter"),
+        ("Owner", "LaunchCenter"),
+    ],
+)
+def test_connection_error_area_wraps_and_offers_managed_reset(
     connection_ui_bundles: dict[tuple[str, str], Path],
+    edition: str,
     product_role: str,
 ) -> None:
     """A long actionable failure must stay visible and resettable."""
-    bundle = connection_ui_bundles[("Employee", product_role)]
+    bundle = connection_ui_bundles[(edition, product_role)]
     executable = bundle / "LLMFoundationInstaller.exe"
 
     result = subprocess.run(
@@ -3454,6 +3487,18 @@ def test_employee_connection_error_area_wraps_and_offers_managed_reset(
     value = json.loads(result.stdout)
     assert value["status_wrapping"] == "Wrap"
     assert value["reset_enabled"] is True
+
+
+def test_launch_center_explains_running_appx_and_stale_proxy_recovery() -> None:
+    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Codex уже запущен. Полностью закройте Codex" in source
+    assert "Нажмите «Сбросить маршрут»" in source
+    assert "зависшая запись — архивирована" in source
+    assert "Текущий внешний proxy " in source
+    assert "зависшая запись K-7 архивирована" in source
 
 
 def test_employee_launch_center_has_one_singbox_route_with_type_selector(

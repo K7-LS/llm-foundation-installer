@@ -238,6 +238,57 @@ namespace LlmFoundationInstaller
             return Recover(home, DefaultRegistrySubkey);
         }
 
+        public static ProxyRecoveryResult ResetPreservingExternalChanges(
+            string home
+        )
+        {
+            return ResetPreservingExternalChanges(
+                home,
+                DefaultRegistrySubkey
+            );
+        }
+
+        internal static ProxyRecoveryResult ResetPreservingExternalChanges(
+            string home,
+            string registrySubkey
+        )
+        {
+            Mutex mutex = null;
+            bool acquired = false;
+            try
+            {
+                mutex = new Mutex(false, MutexName());
+                try
+                {
+                    acquired = mutex.WaitOne(0, false);
+                }
+                catch (AbandonedMutexException)
+                {
+                    acquired = true;
+                }
+                if (!acquired)
+                {
+                    mutex.Dispose();
+                    return Failed("SYSTEM_PROXY_LEASE_BUSY");
+                }
+                ProxyRecoveryResult result =
+                    ResetStatePreservingExternalChanges(
+                        StatePath(home),
+                        registrySubkey
+                    );
+                ReleaseMutex(mutex, true);
+                return result;
+            }
+            catch
+            {
+                if (mutex != null)
+                {
+                    ReleaseMutex(mutex, acquired);
+                }
+                return Failed("SYSTEM_PROXY_RECOVERY_FAILED");
+            }
+        }
+
         public static ProxyRecoveryResult Watchdog(
             int ownerPid,
             string home
@@ -461,6 +512,126 @@ namespace LlmFoundationInstaller
             return RestoreState(statePath, state);
         }
 
+        private static ProxyRecoveryResult ResetStatePreservingExternalChanges(
+            string statePath,
+            string registrySubkey
+        )
+        {
+            ProxyRecoveryResult restored = RecoverState(
+                statePath,
+                registrySubkey
+            );
+            if (restored.cleanup_verified ||
+                !String.Equals(
+                    restored.reason,
+                    "SYSTEM_PROXY_CHANGED_EXTERNALLY",
+                    StringComparison.Ordinal))
+            {
+                return restored;
+            }
+            SystemProxyLeaseState state;
+            try
+            {
+                state = new JavaScriptSerializer()
+                    .Deserialize<SystemProxyLeaseState>(
+                        File.ReadAllText(
+                            statePath,
+                            new UTF8Encoding(false, true)
+                        )
+                    );
+            }
+            catch
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            if (state == null ||
+                state.schema_version != 1 ||
+                !String.Equals(
+                    state.sid,
+                    CurrentSid(),
+                    StringComparison.Ordinal) ||
+                !String.Equals(
+                    state.registry_subkey,
+                    registrySubkey,
+                    StringComparison.Ordinal) ||
+                (state.phase != "PREPARED" &&
+                    state.phase != "APPLIED") ||
+                state.original == null ||
+                state.applied == null ||
+                IsProcessAlive(state.owner_pid))
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            ProxyRegistryValue appliedServer;
+            try
+            {
+                appliedServer = FindValue(
+                    state.applied,
+                    "ProxyServer"
+                );
+            }
+            catch
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            string appliedText = appliedServer == null
+                ? null
+                : Convert.ToString(appliedServer.value);
+            int appliedPort;
+            if (appliedServer == null ||
+                !appliedServer.exists ||
+                appliedServer.kind != (int)RegistryValueKind.String ||
+                !TryParseManagedLoopbackProxy(
+                    appliedText,
+                    out appliedPort))
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            ProxyRegistryValue currentServer = ReadValue(
+                registrySubkey,
+                "ProxyServer"
+            );
+            if (ValueEquals(currentServer, appliedServer))
+            {
+                return restored;
+            }
+            try
+            {
+                string recoveryRoot = Path.Combine(
+                    Path.GetDirectoryName(statePath),
+                    "recovery",
+                    "proxy-leases"
+                );
+                Directory.CreateDirectory(recoveryRoot);
+                string destination = Path.Combine(
+                    recoveryRoot,
+                    "system-proxy-lease-" +
+                        DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ") +
+                        "-" + Guid.NewGuid().ToString("N") + ".json"
+                );
+                File.Move(statePath, destination);
+                if (File.Exists(statePath) || !File.Exists(destination))
+                {
+                    return Failed("SYSTEM_PROXY_STATE_ARCHIVE_FAILED");
+                }
+                return new ProxyRecoveryResult
+                {
+                    status = "RESTORED",
+                    cleanup_verified = true,
+                    lifecycle = new List<string>
+                    {
+                        "EXTERNAL_PROXY_PRESERVED",
+                        "STALE_PROXY_LEASE_ARCHIVED"
+                    },
+                    reason = null
+                };
+            }
+            catch
+            {
+                return Failed("SYSTEM_PROXY_STATE_ARCHIVE_FAILED");
+            }
+        }
+
         private static ProxyRecoveryResult RestoreState(
             string statePath,
             SystemProxyLeaseState state
@@ -567,7 +738,9 @@ namespace LlmFoundationInstaller
             return new List<ProxyRegistryValue>
             {
                 ReadValue(registrySubkey, "ProxyEnable"),
-                ReadValue(registrySubkey, "ProxyServer")
+                ReadValue(registrySubkey, "ProxyServer"),
+                ReadValue(registrySubkey, "ProxyOverride"),
+                ReadValue(registrySubkey, "AutoConfigURL")
             };
         }
 
@@ -588,13 +761,58 @@ namespace LlmFoundationInstaller
                 {
                     name = "ProxyServer",
                     exists = true,
-                    value = "127.0.0.1:" +
+                    value = "http://127.0.0.1:" +
                         localPort.ToString(
                             System.Globalization.CultureInfo.InvariantCulture
                         ),
                     kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "ProxyOverride",
+                    exists = true,
+                    value = "",
+                    kind = (int)RegistryValueKind.String
+                },
+                new ProxyRegistryValue
+                {
+                    name = "AutoConfigURL",
+                    exists = false,
+                    value = null,
+                    kind = -1
                 }
             };
+        }
+
+        private static bool TryParseManagedLoopbackProxy(
+            string value,
+            out int port
+        )
+        {
+            port = 0;
+            if (String.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+            const string currentPrefix = "http://127.0.0.1:";
+            const string legacyPrefix = "127.0.0.1:";
+            string portText;
+            if (value.StartsWith(currentPrefix, StringComparison.Ordinal))
+            {
+                portText = value.Substring(currentPrefix.Length);
+            }
+            else if (value.StartsWith(
+                legacyPrefix,
+                StringComparison.Ordinal))
+            {
+                portText = value.Substring(legacyPrefix.Length);
+            }
+            else
+            {
+                return false;
+            }
+            return Int32.TryParse(portText, out port) &&
+                port >= 1 && port <= 65535;
         }
 
         private static void ApplyValues(

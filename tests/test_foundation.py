@@ -1133,6 +1133,114 @@ def test_external_client_versions_and_downgrade_fail_closed(
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
+def test_exact_legacy_active_state_is_read_only_planned_and_upgraded(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"legacy-{Path(executable).stem}"
+    home.mkdir()
+    package_v1 = _package(
+        tmp_path / f"legacy-v1-{Path(executable).stem}.zip",
+        version="1.0.0",
+    )
+    installed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package_v1,
+    )
+    assert installed.returncode == 0, installed.stderr
+    active_path = home / ".llm-foundation" / "state" / "codex" / "active.json"
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    active.pop("local_exceptions")
+    active.pop("desired_state")
+    active_path.write_text(
+        json.dumps(active, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    legacy_bytes = active_path.read_bytes()
+    package_v2 = _package(
+        tmp_path / f"legacy-v2-{Path(executable).stem}.zip",
+        version="2.0.0",
+    )
+
+    planned = _run(
+        executable,
+        engine_root,
+        "plan",
+        home,
+        package=package_v2,
+    )
+
+    assert planned.returncode == 0, planned.stderr
+    assert _json(planned)["status"] == "READY"
+    assert active_path.read_bytes() == legacy_bytes
+
+    upgraded = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package_v2,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+    upgraded_active = json.loads(active_path.read_text(encoding="utf-8"))
+    assert upgraded_active["local_exceptions"] == []
+    assert upgraded_active["desired_state"] is False
+    doctor = _run(
+        executable,
+        engine_root,
+        "doctor",
+        home,
+        target="codex",
+    )
+    assert doctor.returncode == 0, doctor.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_partial_legacy_active_state_still_fails_closed(
+    engine_root, tmp_path, executable
+):
+    home = tmp_path / f"partial-{Path(executable).stem}"
+    home.mkdir()
+    package_v1 = _package(
+        tmp_path / f"partial-v1-{Path(executable).stem}.zip",
+        version="1.0.0",
+    )
+    installed = _run(
+        executable,
+        engine_root,
+        "install",
+        home,
+        package=package_v1,
+    )
+    assert installed.returncode == 0, installed.stderr
+    active_path = home / ".llm-foundation" / "state" / "codex" / "active.json"
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    active.pop("desired_state")
+    active_path.write_text(
+        json.dumps(active, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    package_v2 = _package(
+        tmp_path / f"partial-v2-{Path(executable).stem}.zip",
+        version="2.0.0",
+    )
+
+    result = _run(
+        executable,
+        engine_root,
+        "plan",
+        home,
+        package=package_v2,
+    )
+
+    assert result.returncode == 30
+    assert _json(result)["code"] == "INVALID_PACKAGE"
+    assert "active state properties differ" in _json(result)["message"]
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
 @pytest.mark.parametrize(
     ("kind", "expected_code"),
     [
