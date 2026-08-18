@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: k7-v0.4.0-r1-build-input
+      build_foundation_release:
+        description: Run acceptance and prepare Foundation release assets
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -224,5 +229,63 @@ jobs:
         with:
           name: k7-installer-0.4.0-r1-publicunsigned
           path: .work/artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  build-foundation-release:
+    name: Foundation synthetic acceptance and release assets
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.build_foundation_release
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        shell: pwsh
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Run dual-shell Foundation acceptance
+        shell: pwsh
+        run: |
+          python tools/run-acceptance.py `
+            --evidence .work/release/foundation-acceptance.json
+      - name: Prepare exact accepted release bytes
+        shell: pwsh
+        run: |
+          python tools/promote_foundation.py `
+            --engine-root .work/acceptance/engine-ps7 `
+            --acceptance-evidence .work/release/foundation-acceptance.json `
+            --output .work/release/foundation-0.5.4
+      - name: Verify release asset inventory
+        shell: pwsh
+        run: |
+          $root = '.work/release/foundation-0.5.4'
+          $expected = @(
+            'acceptance-evidence.json',
+            'foundation-engine-0.5.4.zip',
+            'release-manifest.json'
+          )
+          $actual = @(Get-ChildItem -LiteralPath $root -File |
+            Sort-Object Name | Select-Object -ExpandProperty Name)
+          if (($actual -join ',') -cne ($expected -join ',')) {
+            throw 'Foundation release inventory differs'
+          }
+          $manifest = Get-Content `
+            -LiteralPath "$root/release-manifest.json" -Raw |
+              ConvertFrom-Json
+          if ($manifest.version -cne '0.5.4' -or
+              $manifest.tag -cne 'foundation-engine-v0.5.4' -or
+              $manifest.channel -cne 'stable') {
+            throw 'Foundation release manifest differs'
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: foundation-engine-0.5.4-release
+          path: .work/release/foundation-0.5.4/*
           if-no-files-found: error
           retention-days: 14
