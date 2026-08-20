@@ -78,7 +78,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "installer_version": "0.4.0",
         "source": {
             "repository": (
-                "https://github.com/daniileliseev1337/"
+                "https://github.com/K7-LS/"
                 "llm-foundation-installer"
             ),
             "commit": "a" * 40,

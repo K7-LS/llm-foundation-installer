@@ -14,9 +14,9 @@ VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(
 ).strip()
 TAG = f"foundation-engine-v{VERSION}"
 REPOSITORY_URL = (
-    "https://github.com/daniileliseev1337/llm-foundation-installer"
+    "https://github.com/K7-LS/llm-foundation-installer"
 )
-REPOSITORY = "daniileliseev1337/llm-foundation-installer"
+REPOSITORY = "K7-LS/llm-foundation-installer"
 CORE_ENGINE_FILES = (
     "VERSION",
     "engine-manifest.json",

@@ -62,7 +62,7 @@ def _git_identity(root: Path) -> dict[str, str]:
             encoding="utf-8",
         ).stdout.strip()
     values["repository"] = (
-        "https://github.com/daniileliseev1337/llm-foundation-installer"
+        "https://github.com/K7-LS/llm-foundation-installer"
     )
     return values
 

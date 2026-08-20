@@ -579,7 +579,7 @@ def _accepted_foundation(root: Path) -> Path:
         "channel": "stable",
         "source": {
             "repository": (
-                "https://github.com/daniileliseev1337/"
+                "https://github.com/K7-LS/"
                 "llm-foundation-installer"
             ),
             "commit": "a" * 40,
@@ -605,7 +605,7 @@ def _accepted_foundation(root: Path) -> Path:
     verification_value = {
         "schema_version": 1,
         "repository": (
-            "daniileliseev1337/llm-foundation-installer"
+            "K7-LS/llm-foundation-installer"
         ),
         "tag": f"foundation-engine-v{FOUNDATION_VERSION}",
         "release_state": {
