@@ -9,9 +9,9 @@ BUILD = ROOT / "tools" / "build-gui.ps1"
 
 def test_latest_base_sources_are_exact_and_native() -> None:
     source = SOURCE.read_text(encoding="utf-8")
-    assert "daniileliseev1337/codex-base" in source
-    assert "daniileliseev1337/claude-base-v2" in source
-    assert "daniileliseev1337/opencode-base" in source
+    assert "K7-LS/codex-base" in source
+    assert "K7-LS/claude-base-v2" in source
+    assert "K7-LS/opencode-base" in source
     assert "/releases/latest" in source
     assert '"codex-v"' in source
     assert '"claude-v"' in source

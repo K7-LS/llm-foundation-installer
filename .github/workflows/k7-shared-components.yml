@@ -26,17 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: daniileliseev1337/codex-base
+          repository: K7-LS/codex-base
           ref: ${{ inputs.codex_ref }}
           path: repos/codex-base
       - uses: actions/checkout@v4
         with:
-          repository: daniileliseev1337/claude-base-v2
+          repository: K7-LS/claude-base-v2
           ref: ${{ inputs.claude_ref }}
           path: repos/claude-base-v2
       - uses: actions/checkout@v4
         with:
-          repository: daniileliseev1337/opencode-base
+          repository: K7-LS/opencode-base
           ref: ${{ inputs.opencode_ref }}
           path: repos/opencode-base
       - uses: actions/setup-python@v5

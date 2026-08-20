@@ -96,7 +96,7 @@ namespace LlmFoundationInstaller
                     new SourceContract
                     {
                         target = "codex",
-                        repository = "daniileliseev1337/codex-base",
+                        repository = "K7-LS/codex-base",
                         tagPrefix = "codex-v",
                         assetPrefix = "codex-base-"
                     }
@@ -106,7 +106,7 @@ namespace LlmFoundationInstaller
                     new SourceContract
                     {
                         target = "claude",
-                        repository = "daniileliseev1337/claude-base-v2",
+                        repository = "K7-LS/claude-base-v2",
                         tagPrefix = "claude-v",
                         assetPrefix = "claude-base-"
                     }
@@ -116,7 +116,7 @@ namespace LlmFoundationInstaller
                     new SourceContract
                     {
                         target = "opencode",
-                        repository = "daniileliseev1337/opencode-base",
+                        repository = "K7-LS/opencode-base",
                         tagPrefix = "opencode-v",
                         assetPrefix = "opencode-base-"
                     }

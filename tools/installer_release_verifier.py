@@ -19,7 +19,7 @@ import installer_release  # noqa: E402
 import pilot_release  # noqa: E402
 
 
-REPOSITORY = "daniileliseev1337/llm-foundation-installer"
+REPOSITORY = "K7-LS/llm-foundation-installer"
 TAG = installer_release.TAG
 EXPECTED_VERDICTS = pilot_release.EXPECTED_STABLE_VERDICTS
 GITHUB_NORMALIZED_ASSET_NAMES = {
