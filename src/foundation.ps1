@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.5'
+$script:EngineVersion = '0.5.6'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -723,6 +723,7 @@ function Assert-SessionToolRecords {
             '.docx',
             '.gitkeep',
             '.graphify_version',
+            '.js',
             '.lsp',
             '.patch',
             '.ps1',

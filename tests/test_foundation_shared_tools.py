@@ -696,6 +696,10 @@ def test_foundation_preserves_verified_newer_session_state(
     )
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path.write_bytes(legacy_payload)
+    script_payload = b"console.log('legacy session helper')\n"
+    script_relative = "y.js"
+    script_path = legacy_path.parent / script_relative
+    script_path.write_bytes(script_payload)
     cache_path = legacy_path.parent / "__pycache__" / "x.cpython-312.pyc"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(b"runtime cache\n")
@@ -706,6 +710,14 @@ def test_foundation_preserves_verified_newer_session_state(
             "bytes": len(legacy_payload),
         }
     )
+    state["tools"][0]["files"].append(
+        {
+            "path": script_relative,
+            "sha256": _sha256(script_payload),
+            "bytes": len(script_payload),
+        }
+    )
+    state["tools"][0]["files"].sort(key=lambda record: record["path"])
     state_path.write_bytes(_json_bytes(state))
     expected_state = state_path.read_bytes()
 
