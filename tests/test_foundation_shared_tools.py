@@ -943,3 +943,36 @@ def test_shared_tools_require_bound_release_manifest_without_baseline(
     assert result.returncode == 30
     assert _json(result)["code"] == "INVALID_PACKAGE"
     assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_rollback_accepts_snapshot_holding_session_tools_state(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    """An upgrade snapshot lists the session-tools state, and may restore it."""
+    home = tmp_path / ("rp" if Path(executable).stem == "pwsh" else "rw")
+    home.mkdir()
+    first = _modern_package(tmp_path / "rollback-a.zip", version="1.1.0")
+    installed = _run(executable, engine_root, "install", home, package=first)
+    assert installed.returncode == 0, installed.stderr
+    state_path = home / ".llm-foundation/state/session-tools/codex/state.json"
+    assert state_path.is_file(), "install must seed the session-tools state"
+
+    second = _modern_package(tmp_path / "rollback-b.zip", version="1.2.0")
+    upgraded = _run(executable, engine_root, "install", home, package=second)
+    assert upgraded.returncode == 0, upgraded.stderr
+
+    active_path = home / ".llm-foundation/state/codex/active.json"
+    snapshot_path = Path(
+        json.loads(active_path.read_text(encoding="utf-8"))["snapshot_path"]
+    )
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert (
+        ".llm-foundation/state/session-tools/codex/state.json"
+        in snapshot["existed"]
+    ), "the upgrade snapshot must record the session-tools state it replaced"
+
+    rollback = _run(executable, engine_root, "rollback", home, target="codex")
+
+    assert rollback.returncode == 0, rollback.stdout + rollback.stderr
+    assert "UNSAFE_PATH" not in rollback.stdout + rollback.stderr

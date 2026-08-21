@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.6'
+$script:EngineVersion = '0.5.7'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -4021,7 +4021,7 @@ function Get-ValidatedSnapshot {
     # culture-aware Sort-Object cmdlet. Accept that legacy order for recovery;
     # new snapshots are emitted in ordinal order by New-Snapshot.
     Assert-StringArray @($Snapshot.existed) 'snapshot existed paths' `
-        -AllowUnsorted
+        -AllowUnsorted -AllowSessionState:$AllowSessionState
     $EnvironmentNames = New-Object 'Collections.Generic.HashSet[string]' (
         [StringComparer]::Ordinal
     )
