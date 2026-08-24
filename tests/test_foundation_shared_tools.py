@@ -976,3 +976,133 @@ def test_rollback_accepts_snapshot_holding_session_tools_state(
 
     assert rollback.returncode == 0, rollback.stdout + rollback.stderr
     assert "UNSAFE_PATH" not in rollback.stdout + rollback.stderr
+
+
+ABSORBED_BASE_PAYLOAD = b"# ru-writing-style is base-owned now\n"
+NOTES_PAYLOAD = b"---\nname: session-notes\ndescription: notes\n---\n"
+
+
+def _absorb_baseline_tool_into_surface(
+    manifest: dict[str, object],
+    entries: dict[str, bytes],
+) -> None:
+    for name in list(entries):
+        if name.startswith("session-tools-baseline/"):
+            del entries[name]
+    entries[".agents/skills/ru-writing-style/SKILL.md"] = ABSORBED_BASE_PAYLOAD
+    exact = manifest["managed_surface"]["exact_directories"]
+    exact.append(".agents/skills/ru-writing-style")
+    exact.sort()
+    tool = {
+        "id": "session-notes",
+        "files": [
+            {
+                "path": "SKILL.md",
+                "sha256": _sha256(NOTES_PAYLOAD),
+                "bytes": len(NOTES_PAYLOAD),
+            }
+        ],
+    }
+    internal = {
+        "schema_version": 1,
+        "target": manifest["target"],
+        "release_tag": f"{manifest['target']}-v{manifest['version']}",
+        "base_version": manifest["version"],
+        "tools": [tool],
+    }
+    internal_bytes = _json_bytes(internal)
+    manifest_path = "session-tools-baseline/session-tools-manifest.json"
+    entries[manifest_path] = internal_bytes
+    entries["session-tools-baseline/tools/session-notes/SKILL.md"] = (
+        NOTES_PAYLOAD
+    )
+    manifest["session_tools_baseline"] = {
+        "manifest_path": manifest_path,
+        "manifest_sha256": _sha256(internal_bytes),
+        "tools": [tool],
+        "retired_tool_ids": [],
+    }
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize("damaged", [False, True])
+def test_upgrade_rebuilds_state_when_surface_absorbs_session_tool(
+    engine_root: Path,
+    tmp_path: Path,
+    executable: str,
+    damaged: bool,
+):
+    """The upgrade absorbs ru-writing-style into the managed surface and ships
+    a new baseline tool; install must rebuild the session-tools state from the
+    package instead of preserving stale ownership records."""
+    stem = f"absorb-{int(damaged)}-{Path(executable).stem}"
+    home = tmp_path / stem
+    home.mkdir()
+    first = _modern_package(tmp_path / f"{stem}-first.zip", version="1.1.0")
+    installed = _run(executable, engine_root, "install", home, package=first)
+    assert installed.returncode == 0, installed.stderr
+    destination = home / ".agents/skills/ru-writing-style/SKILL.md"
+    if damaged:
+        destination.write_bytes(b"# clobbered by a previous install\n")
+
+    second = _modern_package(tmp_path / f"{stem}-second.zip", version="1.2.0")
+    _rewrite_package(second, _absorb_baseline_tool_into_surface)
+    upgraded = _run(executable, engine_root, "install", home, package=second)
+
+    assert upgraded.returncode == 0, upgraded.stderr
+    assert destination.read_bytes() == ABSORBED_BASE_PAYLOAD
+    notes = home / ".agents/skills/session-notes/SKILL.md"
+    assert notes.read_bytes() == NOTES_PAYLOAD
+    state = json.loads(
+        (
+            home / ".llm-foundation/state/session-tools/codex/state.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert [tool["id"] for tool in state["tools"]] == ["session-notes"]
+    assert state["release_tag"] == "codex-v1.2.0"
+    assert state["release_version"] == "1.2.0"
+    doctor = _run(executable, engine_root, "doctor", home, package=second)
+    assert doctor.returncode == 0, doctor.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_upgrade_reinstalls_baseline_payload_over_older_state(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    """When the existing state is older than the package, install must bring
+    the packaged baseline payload and rebuild the state records."""
+    stem = f"refresh-{Path(executable).stem}"
+    home = tmp_path / stem
+    home.mkdir()
+    old_payload = (
+        b"---\nname: ru-writing-style\ndescription: Russian writing\n---\n"
+    )
+    first = _modern_package(tmp_path / f"{stem}-first.zip", version="1.1.0")
+    installed = _run(executable, engine_root, "install", home, package=first)
+    assert installed.returncode == 0, installed.stderr
+
+    new_payload = (
+        b"---\nname: ru-writing-style\ndescription: Russian writing v2\n---\n"
+    )
+    second = _modern_package(
+        tmp_path / f"{stem}-second.zip",
+        version="1.2.0",
+        baseline_payload=new_payload,
+    )
+    upgraded = _run(executable, engine_root, "install", home, package=second)
+
+    assert upgraded.returncode == 0, upgraded.stderr
+    destination = home / ".agents/skills/ru-writing-style/SKILL.md"
+    assert destination.read_bytes() == new_payload
+    state_path = home / ".llm-foundation/state/session-tools/codex/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["release_version"] == "1.2.0"
+    assert state["tools"][0]["files"][0]["sha256"] == _sha256(new_payload)
+    doctor = _run(executable, engine_root, "doctor", home, package=second)
+    assert doctor.returncode == 0, doctor.stderr
+
+    rollback = _run(executable, engine_root, "rollback", home, target="codex")
+    assert rollback.returncode == 0, rollback.stdout + rollback.stderr
+    assert destination.read_bytes() == old_payload
+    restored = json.loads(state_path.read_text(encoding="utf-8"))
+    assert restored["release_version"] == "1.1.0"

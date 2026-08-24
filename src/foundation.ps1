@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.7'
+$script:EngineVersion = '0.5.8'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -3052,6 +3052,42 @@ function Assert-SessionToolsState {
     return $State
 }
 
+function Test-SessionToolCoveredByManagedSurface {
+    param(
+        [Parameter(Mandatory = $true)]$ManagedSurface,
+        [Parameter(Mandatory = $true)][string]$RelativePath
+    )
+    foreach ($RootValue in @($ManagedSurface.exact_directories)) {
+        $Root = [string]$RootValue
+        if ($RelativePath.Equals(
+                $Root,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -or
+            $RelativePath.StartsWith(
+                $Root + '/',
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-SessionToolDestinationMatches {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)]$Files,
+        [Parameter(Mandatory = $true)][string]$HomeRoot
+    )
+    try {
+        Assert-SessionToolDestinationFiles `
+            $Destination $Files $HomeRoot 'INVALID_PACKAGE'
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Get-SessionToolsBaselinePlan {
     param(
         [Parameter(Mandatory = $true)]$Validated,
@@ -3071,11 +3107,86 @@ function Get-SessionToolsBaselinePlan {
     if (Test-Path -LiteralPath $Paths.state_path -PathType Leaf) {
         $State = Read-JsonFile $Paths.state_path
         $null = Assert-SessionToolsState `
-            $State $HomeRoot $TargetName $Paths -CheckDestination
+            $State $HomeRoot $TargetName $Paths
+        try {
+            $StateVersion = [version][string]$State.release_version
+            $PackageVersion = [version][string]$Validated.manifest.version
+        } catch {
+            Throw-Foundation 'INVALID_PACKAGE' (
+                'Session tools state version is invalid'
+            )
+        }
+        $StateTools = @{}
+        $KeptTools = @(
+            foreach ($Tool in @($State.tools)) {
+                $StateTools[[string]$Tool.id] = $Tool
+                $Relative = Get-SessionToolDestinationRelative `
+                    $Paths ([string]$Tool.id)
+                if (-not (Test-SessionToolCoveredByManagedSurface (
+                        $Validated.manifest.managed_surface) $Relative)) {
+                    $Tool
+                }
+            }
+        )
+        if ($StateVersion -ge $PackageVersion -and $KeptTools.Count -gt 0) {
+            foreach ($Tool in $KeptTools) {
+                Assert-SessionToolDestinationFiles `
+                    ([string]$Tool.destination) `
+                    $Tool.files `
+                    $HomeRoot `
+                    'ACTIVE_DRIFT'
+            }
+            $StateChanged = $KeptTools.Count -ne @($State.tools).Count
+            if ($StateChanged) { $State.tools = $KeptTools }
+            return [pscustomobject]@{
+                action = 'PRESERVE'
+                paths = $Paths
+                state = $State
+                state_changed = $StateChanged
+            }
+        }
+        $RefreshActions = @()
+        foreach ($Tool in @(
+            $Validated.session_tools_baseline.manifest.tools
+        )) {
+            $ToolId = [string]$Tool.id
+            $Destination = [IO.Path]::GetFullPath(
+                (Join-Path $Paths.skills_root $ToolId)
+            )
+            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                Throw-Foundation 'INVALID_PACKAGE' (
+                    "Unmanaged session tool collision: $ToolId"
+                )
+            }
+            $Action = 'INSTALL'
+            if (Test-Path -LiteralPath $Destination -PathType Container) {
+                if (Test-SessionToolDestinationMatches `
+                        $Destination $Tool.files $HomeRoot) {
+                    $Action = 'ADOPT'
+                } elseif ($StateTools.ContainsKey($ToolId) -and
+                    (Test-SessionToolDestinationMatches `
+                        $Destination $StateTools[$ToolId].files $HomeRoot)) {
+                    $Action = 'REINSTALL'
+                } elseif ($StateTools.ContainsKey($ToolId)) {
+                    Throw-Foundation 'ACTIVE_DRIFT' (
+                        "Session tool destination differs: $ToolId"
+                    )
+                } else {
+                    Throw-Foundation 'INVALID_PACKAGE' (
+                        "Unmanaged session tool collision: $ToolId"
+                    )
+                }
+            }
+            $RefreshActions += [pscustomobject]@{
+                id = $ToolId
+                destination = $Destination
+                action = $Action
+            }
+        }
         return [pscustomobject]@{
-            action = 'PRESERVE'
+            action = 'REFRESH'
             paths = $Paths
-            state = $State
+            tools = $RefreshActions
         }
     }
     if (Test-Path -LiteralPath $Paths.state_path) {
@@ -3178,13 +3289,19 @@ function Install-SessionToolsBaseline {
         $BaselinePlan.paths.runtime_path `
         $HomeRoot
     Invoke-MutationCheckpoint
-    if ([string]$BaselinePlan.action -ceq 'INITIALIZE') {
+    if ([string]$BaselinePlan.action -ceq 'INITIALIZE' -or
+        [string]$BaselinePlan.action -ceq 'REFRESH') {
         foreach ($Action in @($BaselinePlan.tools)) {
             $Tool = @(
                 $Validated.session_tools_baseline.manifest.tools |
                     Where-Object { [string]$_.id -ceq [string]$Action.id }
             )[0]
-            if ([string]$Action.action -ceq 'INSTALL') {
+            if ([string]$Action.action -ceq 'REINSTALL') {
+                Remove-TreeSafe $Action.destination $HomeRoot
+                Invoke-MutationCheckpoint
+            }
+            if ([string]$Action.action -ceq 'INSTALL' -or
+                [string]$Action.action -ceq 'REINSTALL') {
                 New-SafeDirectory $Action.destination $HomeRoot
                 foreach ($Row in @($Tool.files)) {
                     $PayloadPath = (
@@ -3210,6 +3327,16 @@ function Install-SessionToolsBaseline {
             $BaselinePlan.paths `
             -CheckDestination
         Write-JsonFile $State $BaselinePlan.paths.state_path
+        Invoke-MutationCheckpoint
+    } elseif ([string]$BaselinePlan.action -ceq 'PRESERVE' -and
+        [bool]$BaselinePlan.state_changed) {
+        $null = Assert-SessionToolsState `
+            $BaselinePlan.state `
+            $HomeRoot `
+            ([string]$Validated.manifest.target) `
+            $BaselinePlan.paths `
+            -CheckDestination
+        Write-JsonFile $BaselinePlan.state $BaselinePlan.paths.state_path
         Invoke-MutationCheckpoint
     }
     return [pscustomobject][ordered]@{
