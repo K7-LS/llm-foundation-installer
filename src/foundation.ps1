@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.9'
+$script:EngineVersion = '0.5.10'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -857,8 +857,8 @@ function Assert-SessionToolsBaseline {
         )) {
         Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline identity differs'
     }
-    $Declared = Assert-SessionToolRecords $Baseline.tools 'baseline'
-    $Embedded = Assert-SessionToolRecords $Internal.tools 'session manifest'
+    $Declared = Assert-SessionToolRecords $Baseline.tools 'baseline' -AllowLegacyFileTypes
+    $Embedded = Assert-SessionToolRecords $Internal.tools 'session manifest' -AllowLegacyFileTypes
     if ([string]$Declared.digest -cne [string]$Embedded.digest) {
         Throw-Foundation 'INVALID_PACKAGE' 'Session tools baseline tools differ'
     }

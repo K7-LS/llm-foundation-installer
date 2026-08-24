@@ -260,14 +260,14 @@ jobs:
           python tools/promote_foundation.py `
             --engine-root .work/acceptance/engine-ps7 `
             --acceptance-evidence .work/release/foundation-acceptance.json `
-            --output .work/release/foundation-0.5.9
+            --output .work/release/foundation-0.5.10
       - name: Verify release asset inventory
         shell: pwsh
         run: |
-          $root = '.work/release/foundation-0.5.9'
+          $root = '.work/release/foundation-0.5.10'
           $expected = @(
             'acceptance-evidence.json',
-            'foundation-engine-0.5.9.zip',
+            'foundation-engine-0.5.10.zip',
             'release-manifest.json'
           )
           $actual = @(Get-ChildItem -LiteralPath $root -File |
@@ -278,14 +278,14 @@ jobs:
           $manifest = Get-Content `
             -LiteralPath "$root/release-manifest.json" -Raw |
               ConvertFrom-Json
-          if ($manifest.version -cne '0.5.9' -or
-              $manifest.tag -cne 'foundation-engine-v0.5.9' -or
+          if ($manifest.version -cne '0.5.10' -or
+              $manifest.tag -cne 'foundation-engine-v0.5.10' -or
               $manifest.channel -cne 'stable') {
             throw 'Foundation release manifest differs'
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: foundation-engine-0.5.9-release
-          path: .work/release/foundation-0.5.9/*
+          name: foundation-engine-0.5.10-release
+          path: .work/release/foundation-0.5.10/*
           if-no-files-found: error
           retention-days: 14

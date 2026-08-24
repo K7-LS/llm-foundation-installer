@@ -1230,3 +1230,79 @@ def test_doctor_accepts_session_updater_state_schema_two(
     assert refreshed["release_version"] == "1.2.0"
     doctor = _run(executable, engine_root, "doctor", home, package=second)
     assert doctor.returncode == 0, doctor.stderr
+
+
+PORTABLE_HELPER_PY = b"print('portable helper')\n"
+PORTABLE_TOOLKIT_LSP = b"(defun c:portable-toolkit () (princ))\n"
+
+
+def _give_baseline_tool_portable_payload(
+    manifest: dict[str, object],
+    entries: dict[str, bytes],
+) -> None:
+    prefix = "session-tools-baseline/tools/ru-writing-style/"
+    entries[prefix + "tools/helper.py"] = PORTABLE_HELPER_PY
+    entries[prefix + "tools/toolkit.lsp"] = PORTABLE_TOOLKIT_LSP
+    skill_payload = entries[prefix + "SKILL.md"]
+    tool = {
+        "id": "ru-writing-style",
+        "files": [
+            {
+                "path": "SKILL.md",
+                "sha256": _sha256(skill_payload),
+                "bytes": len(skill_payload),
+            },
+            {
+                "path": "tools/helper.py",
+                "sha256": _sha256(PORTABLE_HELPER_PY),
+                "bytes": len(PORTABLE_HELPER_PY),
+            },
+            {
+                "path": "tools/toolkit.lsp",
+                "sha256": _sha256(PORTABLE_TOOLKIT_LSP),
+                "bytes": len(PORTABLE_TOOLKIT_LSP),
+            },
+        ],
+    }
+    internal = {
+        "schema_version": 1,
+        "target": manifest["target"],
+        "release_tag": f"{manifest['target']}-v{manifest['version']}",
+        "base_version": manifest["version"],
+        "tools": [tool],
+    }
+    internal_bytes = _json_bytes(internal)
+    manifest_path = "session-tools-baseline/session-tools-manifest.json"
+    entries[manifest_path] = internal_bytes
+    manifest["session_tools_baseline"] = {
+        "manifest_path": manifest_path,
+        "manifest_sha256": _sha256(internal_bytes),
+        "tools": [tool],
+        "retired_tool_ids": [],
+    }
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_baseline_accepts_portable_helper_file_types(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    """A baseline tool may carry the portable helper types the skills
+    actually use (.py, .lsp, ...), not only declarative documents."""
+    stem = f"portable-{Path(executable).stem}"
+    home = tmp_path / stem
+    home.mkdir()
+    package = _modern_package(tmp_path / f"{stem}.zip")
+    _rewrite_package(package, _give_baseline_tool_portable_payload)
+
+    installed = _run(executable, engine_root, "install", home, package=package)
+
+    assert installed.returncode == 0, installed.stderr
+    destination = home / ".agents/skills/ru-writing-style"
+    assert (destination / "tools/helper.py").read_bytes() == (
+        PORTABLE_HELPER_PY
+    )
+    assert (destination / "tools/toolkit.lsp").read_bytes() == (
+        PORTABLE_TOOLKIT_LSP
+    )
+    doctor = _run(executable, engine_root, "doctor", home, package=package)
+    assert doctor.returncode == 0, doctor.stderr
