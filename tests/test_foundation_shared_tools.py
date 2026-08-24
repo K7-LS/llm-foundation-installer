@@ -1106,3 +1106,127 @@ def test_upgrade_reinstalls_baseline_payload_over_older_state(
     assert destination.read_bytes() == old_payload
     restored = json.loads(state_path.read_text(encoding="utf-8"))
     assert restored["release_version"] == "1.1.0"
+
+
+def _widen_baseline_to_many_tools(
+    manifest: dict[str, object],
+    entries: dict[str, bytes],
+) -> None:
+    for name in list(entries):
+        if name.startswith("session-tools-baseline/"):
+            del entries[name]
+    tools = []
+    for index in range(39):
+        payload = f"---\nname: tool-{index:02}\ndescription: t{index}\n---\n".encode()
+        tools.append(
+            {
+                "id": f"tool-{index:02}",
+                "files": [
+                    {
+                        "path": "SKILL.md",
+                        "sha256": _sha256(payload),
+                        "bytes": len(payload),
+                    }
+                ],
+            }
+        )
+        entries[f"session-tools-baseline/tools/tool-{index:02}/SKILL.md"] = payload
+    internal = {
+        "schema_version": 1,
+        "target": manifest["target"],
+        "release_tag": f"{manifest['target']}-v{manifest['version']}",
+        "base_version": manifest["version"],
+        "tools": tools,
+    }
+    internal_bytes = _json_bytes(internal)
+    manifest_path = "session-tools-baseline/session-tools-manifest.json"
+    entries[manifest_path] = internal_bytes
+    manifest["session_tools_baseline"] = {
+        "manifest_path": manifest_path,
+        "manifest_sha256": _sha256(internal_bytes),
+        "tools": tools,
+        "retired_tool_ids": [],
+    }
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+def test_baseline_accepts_multi_tool_packages_up_to_the_new_limit(
+    engine_root: Path, tmp_path: Path, executable: str
+):
+    """A release may ship up to 64 session tools; 39 must install cleanly."""
+    home = tmp_path / f"many-{Path(executable).stem}"
+    home.mkdir()
+    package = _modern_package(tmp_path / f"many-{Path(executable).stem}.zip")
+    _rewrite_package(package, _widen_baseline_to_many_tools)
+
+    installed = _run(executable, engine_root, "install", home, package=package)
+
+    assert installed.returncode == 0, installed.stderr
+    state = json.loads(
+        (
+            home / ".llm-foundation/state/session-tools/codex/state.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert len(state["tools"]) == 39
+    assert (home / ".agents/skills/tool-00/SKILL.md").is_file()
+    assert (home / ".agents/skills/tool-38/SKILL.md").is_file()
+    doctor = _run(executable, engine_root, "doctor", home, package=package)
+    assert doctor.returncode == 0, doctor.stderr
+
+
+@pytest.mark.parametrize("executable", POWERSHELLS)
+@pytest.mark.parametrize(
+    ("mutation", "accepted"),
+    [
+        ("schema-two-complete", True),
+        ("schema-two-incomplete", True),
+        ("schema-two-missing-complete", False),
+        ("schema-three", False),
+    ],
+)
+def test_doctor_accepts_session_updater_state_schema_two(
+    engine_root: Path,
+    tmp_path: Path,
+    executable: str,
+    mutation: str,
+    accepted: bool,
+):
+    """The session updater rewrites the state as schema 2 with a complete
+    flag; doctor and a later upgrade install must accept it."""
+    stem = f"schema2-{mutation}-{Path(executable).stem}"
+    home = tmp_path / stem
+    home.mkdir()
+    first = _modern_package(tmp_path / f"{stem}-first.zip", version="1.1.0")
+    installed = _run(executable, engine_root, "install", home, package=first)
+    assert installed.returncode == 0, installed.stderr
+    state_path = home / ".llm-foundation/state/session-tools/codex/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if mutation == "schema-three":
+        state["schema_version"] = 3
+        state["complete"] = True
+    else:
+        state["schema_version"] = 2
+        if mutation != "schema-two-missing-complete":
+            state["complete"] = mutation == "schema-two-complete"
+    state_path.write_bytes(_json_bytes(state))
+
+    doctor = _run(executable, engine_root, "doctor", home, package=first)
+
+    if not accepted:
+        assert doctor.returncode != 0
+        assert _json(doctor)["code"] == "INVALID_PACKAGE"
+        return
+    assert doctor.returncode == 0, doctor.stderr
+
+    second = _modern_package(
+        tmp_path / f"{stem}-second.zip",
+        version="1.2.0",
+        baseline_payload=b"---\nname: ru-writing-style\ndescription: v2\n---\n",
+    )
+    upgraded = _run(executable, engine_root, "install", home, package=second)
+    assert upgraded.returncode == 0, upgraded.stderr
+    refreshed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert refreshed["schema_version"] == 1
+    assert refreshed["release_version"] == "1.2.0"
+    doctor = _run(executable, engine_root, "doctor", home, package=second)
+    assert doctor.returncode == 0, doctor.stderr
