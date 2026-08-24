@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.8'
+$script:EngineVersion = '0.5.9'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -706,7 +706,7 @@ function Assert-SessionToolRecords {
         [Parameter(Mandatory = $true)][string]$Label,
         [switch]$AllowLegacyFileTypes
     )
-    if ($Tools -isnot [Array] -or @($Tools).Count -gt 32) {
+    if ($Tools -isnot [Array] -or @($Tools).Count -gt 64) {
         Throw-Foundation 'INVALID_PACKAGE' "$Label tools are invalid"
     }
     $ToolIds = New-Object 'Collections.Generic.HashSet[string]' (
@@ -777,7 +777,7 @@ function Assert-SessionToolRecords {
             }
             $FileCount++
             $ExpandedBytes += [int64]$Row.bytes
-            if ($FileCount -gt 256 -or $ExpandedBytes -gt 8388608) {
+            if ($FileCount -gt 512 -or $ExpandedBytes -gt 8388608) {
                 Throw-Foundation 'INVALID_PACKAGE' "$Label limits are exceeded"
             }
             $PayloadPath = (
@@ -2957,7 +2957,7 @@ function Assert-SessionToolsState {
         [Parameter(Mandatory = $true)]$Paths,
         [switch]$CheckDestination
     )
-    Assert-ExactProperties $State @(
+    $StateProperties = @(
         'schema_version',
         'target',
         'release_tag',
@@ -2966,10 +2966,21 @@ function Assert-SessionToolsState {
         'session_manifest_sha256',
         'verified_at',
         'tools'
-    ) 'session tools state'
+    )
+    $SchemaVersion = if ($State.schema_version -is [int] -or
+        $State.schema_version -is [long]) {
+        [int64]$State.schema_version
+    } else {
+        [int64]0
+    }
+    if ($SchemaVersion -eq 2) {
+        $StateProperties += 'complete'
+    }
+    Assert-ExactProperties $State $StateProperties 'session tools state'
     if (($State.schema_version -isnot [int] -and
             $State.schema_version -isnot [long]) -or
-        [int64]$State.schema_version -ne 1 -or
+        ($SchemaVersion -ne 1 -and $SchemaVersion -ne 2) -or
+        ($SchemaVersion -eq 2 -and $State.complete -isnot [bool]) -or
         $State.target -isnot [string] -or
         [string]$State.target -cne $TargetName -or
         $State.release_tag -isnot [string] -or
