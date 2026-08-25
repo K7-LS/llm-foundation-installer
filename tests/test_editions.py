@@ -312,8 +312,10 @@ def test_all_products_expose_embedded_interactive_operator_dashboard() -> None:
     ):
         assert marker in source
 
-    build_source = BUILD_SCRIPT.read_text(encoding="utf-8")
-    assert "OperatorGuideDashboard.cs" in build_source
+    build_source = (
+        REPOSITORY / "src" / "gui" / "LlmFoundationInstaller.csproj"
+    ).read_text(encoding="utf-8")
+    assert '<Compile Include="OperatorGuideDashboard.cs" />' in build_source
     for view in (
         "InstallerEmployeeView.xaml",
         "InstallerOwnerView.xaml",

@@ -67,9 +67,10 @@ def test_embedded_package_is_only_explicit_latest_failure_fallback() -> None:
 
 
 def test_latest_base_source_is_compiled_into_every_gui() -> None:
-    build = BUILD.read_text(encoding="utf-8")
-    assert "src\\gui\\BaseReleaseUpdater.cs" in build
-    assert "$BaseReleaseUpdaterSource" in build
+    project = (
+        ROOT / "src" / "gui" / "LlmFoundationInstaller.csproj"
+    ).read_text(encoding="utf-8")
+    assert '<Compile Include="BaseReleaseUpdater.cs" />' in project
 
 
 def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
