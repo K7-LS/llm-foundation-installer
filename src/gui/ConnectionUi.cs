@@ -46,20 +46,18 @@ namespace LlmFoundationInstaller
                     : Visibility.Collapsed;
                 if (isProxy)
                 {
-                    contract.Status.Text =
-                        "Заполните сервер, порт, логин и пароль, затем нажмите " +
-                        "«Сохранить и проверить».";
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(49, 87, 199)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.ProxyGuidance()
                     );
                 }
                 else
                 {
-                    contract.Status.Text = contract.Vpn.IsChecked == true
-                        ? "VPN: прокси не требуется."
-                        : "Напрямую: прокси не используется.";
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(22, 122, 88)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.ModeIdle(
+                            contract.Vpn.IsChecked == true
+                        )
                     );
                 }
             };
@@ -96,10 +94,11 @@ namespace LlmFoundationInstaller
                 }
                 catch (Exception exception)
                 {
-                    contract.Status.Text = "Сохранённый профиль требует внимания: " +
-                        exception.Message;
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(161, 92, 0)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.SavedProfileNeedsAttention(
+                            exception.Message
+                        )
                     );
                     preserveStatus = true;
                 }
@@ -134,11 +133,9 @@ namespace LlmFoundationInstaller
                         : "SingBoxHttp")
                     : contract.Mode;
                 contract.Test.Content = "Проверка…";
-                contract.Status.Text = contract.IsProxy
-                    ? "Запускаем SingBox и проверяем маршрут сквозным запросом…"
-                    : "Проверяем доступ к GitHub через выбранный режим…";
-                contract.Status.Foreground = new SolidColorBrush(
-                    Color.FromRgb(49, 87, 199)
+                ApplyStatus(
+                    contract,
+                    ConnectionStatusModel.Testing(contract.IsProxy)
                 );
                 try
                 {
@@ -160,25 +157,22 @@ namespace LlmFoundationInstaller
                         result as ConnectionProbeResult;
                     if (singBox != null && singBox.status == "PASS")
                     {
-                        contract.Status.Text =
-                            "Маршрут SingBox проверен сквозным запросом.";
-                        contract.Status.Foreground = new SolidColorBrush(
-                            Color.FromRgb(22, 122, 88)
+                        ApplyStatus(
+                            contract,
+                            ConnectionStatusModel.SingBoxRoutePass()
                         );
                     }
                     else if (connection != null &&
                         connection.status == "READY")
                     {
-                        contract.Status.Text = "Соединение проверено: " +
-                            connection.mode +
-                            (connection.uses_proxy
-                                ? " / " + connection.proxy_type
-                                : "") +
-                            " · " + connection.elapsed_ms.ToString(
-                                CultureInfo.InvariantCulture
-                            ) + " мс.";
-                        contract.Status.Foreground = new SolidColorBrush(
-                            Color.FromRgb(22, 122, 88)
+                        ApplyStatus(
+                            contract,
+                            ConnectionStatusModel.ConnectionReady(
+                                connection.mode,
+                                connection.uses_proxy,
+                                connection.proxy_type,
+                                connection.elapsed_ms
+                            )
                         );
                     }
                     else
@@ -188,24 +182,24 @@ namespace LlmFoundationInstaller
                             : (connection != null
                                 ? connection.error
                                 : "CONNECTION_TEST_FAILED");
-                        contract.Status.Text =
-                            DescribeTestFailure(reason) +
-                            (singBox != null &&
-                                singBox.cleanup_verified
-                                ? " Временная сессия SingBox уже очищена; " +
-                                    "следующая проверка начнётся с чистого состояния."
-                                : " Нажмите «Сбросить маршрут» перед повтором.");
-                        contract.Status.Foreground = new SolidColorBrush(
-                            Color.FromRgb(161, 92, 0)
+                        ApplyStatus(
+                            contract,
+                            ConnectionStatusModel.TestFailed(
+                                reason,
+                                singBox != null &&
+                                    singBox.cleanup_verified,
+                                singBox != null
+                            )
                         );
                     }
                 }
                 catch (Exception exception)
                 {
-                    contract.Status.Text = "Проверка не выполнена: " +
-                        exception.Message;
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(161, 92, 0)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.TestException(
+                            exception.Message
+                        )
                     );
                 }
                 finally
@@ -221,10 +215,9 @@ namespace LlmFoundationInstaller
                 contract.Stop.Click += async delegate
                 {
                     contract.Stop.IsEnabled = false;
-                    contract.Status.Text =
-                        "Останавливаем маршрут SingBox и восстанавливаем системный прокси…";
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(49, 87, 199)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.StoppingRoute()
                     );
                     SingBoxSessionResult stopped = await Task.Run(
                         delegate
@@ -232,14 +225,12 @@ namespace LlmFoundationInstaller
                             return ClientLauncher.StopActiveRoute();
                         }
                     );
-                    contract.Status.Text = stopped.cleanup_verified
-                        ? "Маршрут SingBox остановлен. Системный прокси восстановлен."
-                        : "Маршрут остановлен не полностью: " +
-                            (stopped.reason ?? "проверьте системный прокси вручную.");
-                    contract.Status.Foreground = new SolidColorBrush(
-                        stopped.cleanup_verified
-                            ? Color.FromRgb(22, 122, 88)
-                            : Color.FromRgb(161, 92, 0)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.StopResult(
+                            stopped.cleanup_verified,
+                            stopped.reason
+                        )
                     );
                 };
             }
@@ -251,11 +242,9 @@ namespace LlmFoundationInstaller
                     contract.Reset.IsEnabled = false;
                     contract.Test.IsEnabled = false;
                     contract.Save.IsEnabled = false;
-                    contract.Status.Text =
-                        "Сбрасываем только управляемые маршруты SingBox и " +
-                        "восстанавливаем системный прокси…";
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(49, 87, 199)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.ResettingRoutes()
                     );
                     try
                     {
@@ -271,29 +260,22 @@ namespace LlmFoundationInstaller
                             reset.lifecycle.Contains(
                                 "EXTERNAL_PROXY_PRESERVED"
                             );
-                        contract.Status.Text = reset.cleanup_verified
-                            ? (externalProxyPreserved
-                                ? "Сброс завершён. Текущий внешний proxy " +
-                                    "сохранён, зависшая запись K-7 архивирована. " +
-                                    "Можно запускать заново."
-                                : "Сброс завершён. Управляемые сессии " +
-                                    "SingBox закрыты, системный proxy " +
-                                    "восстановлен. Можно запускать заново.")
-                            : "Сброс выполнен не полностью (" +
-                                (reset.reason ?? "RESET_FAILED") +
-                                "). Закройте другой Launch Center и повторите.";
-                        contract.Status.Foreground = new SolidColorBrush(
-                            reset.cleanup_verified
-                                ? Color.FromRgb(22, 122, 88)
-                                : Color.FromRgb(161, 92, 0)
+                        ApplyStatus(
+                            contract,
+                            ConnectionStatusModel.ResetResult(
+                                reset.cleanup_verified,
+                                externalProxyPreserved,
+                                reset.reason
+                            )
                         );
                     }
                     catch (Exception exception)
                     {
-                        contract.Status.Text = "Сброс не выполнен: " +
-                            exception.Message;
-                        contract.Status.Foreground = new SolidColorBrush(
-                            Color.FromRgb(161, 92, 0)
+                        ApplyStatus(
+                            contract,
+                            ConnectionStatusModel.ResetException(
+                                exception.Message
+                            )
                         );
                     }
                     finally
@@ -306,103 +288,28 @@ namespace LlmFoundationInstaller
             }
         }
 
-        internal static string DescribeTestFailure(string reason)
+        private static void ApplyStatus(
+            ConnectionUiContract contract,
+            ConnectionStatus status
+        )
         {
-            string stableReason = String.IsNullOrWhiteSpace(reason)
-                ? "CONNECTION_TEST_FAILED"
-                : reason;
-            string action;
-            if (stableReason == "RUNTIME_BUNDLE_ARCHIVE_MISSING")
+            contract.Status.Text = status.text;
+            contract.Status.Foreground = new SolidColorBrush(
+                StatusToneColor(status.tone)
+            );
+        }
+
+        private static Color StatusToneColor(string tone)
+        {
+            if (tone == ConnectionStatusModel.ToneOk)
             {
-                action = "Распакуйте весь ZIP: архив runtime должен лежать рядом " +
-                    "с запускником.";
+                return Color.FromRgb(22, 122, 88);
             }
-            else if (
-                stableReason == "RUNTIME_ARCHIVE_INTEGRITY_FAILED" ||
-                stableReason == "RUNTIME_EXECUTABLE_INTEGRITY_FAILED" ||
-                stableReason == "RUNTIME_ARCHIVE_INVALID")
+            if (tone == ConnectionStatusModel.ToneWarn)
             {
-                action = "Архив runtime повреждён. Скачайте установщик заново " +
-                    "и полностью распакуйте ZIP.";
+                return Color.FromRgb(161, 92, 0);
             }
-            else if (
-                stableReason == "RUNTIME_INSTALL_FAILED" ||
-                stableReason == "RUNTIME_ALREADY_PRESENT_INVALID" ||
-                stableReason == "RUNTIME_LAYOUT_INVALID" ||
-                stableReason == "RUNTIME_NOT_INSTALLED" ||
-                stableReason == "RUNTIME_VERIFY_FAILED" ||
-                stableReason == "RUNTIME_SOURCE_LOCK_INVALID" ||
-                stableReason == "RUNTIME_ARCHIVE_ENTRY_UNSAFE")
-            {
-                action = "Runtime SingBox не удалось установить. Запустите " +
-                    "проверку из полностью распакованного ZIP.";
-            }
-            else if (stableReason == "CONFIG_CHECK_FAILED")
-            {
-                action = "Проверьте сервер, порт, логин и пароль, сохраните " +
-                    "параметры и повторите проверку.";
-            }
-            else if (
-                stableReason == "LOCAL_PROXY_NOT_READY" ||
-                stableReason == "LOCAL_PORT_UNAVAILABLE" ||
-                stableReason == "RUNTIME_START_FAILED" ||
-                stableReason == "RUNTIME_EXITED_BEFORE_READY")
-            {
-                action = "SingBox не запустил локальный прокси. Закройте другой " +
-                    "VPN или прокси и повторите проверку.";
-            }
-            else if (stableReason == "ROUTE_PROBE_FAILED")
-            {
-                action = "SingBox запущен, но запрос через него не прошёл. " +
-                    "Проверьте сервер, порт, логин, пароль и доступность прокси.";
-            }
-            else if (stableReason == "PROXY_AUTH_FAILED")
-            {
-                action = "Прокси отклонил авторизацию. Проверьте логин и пароль.";
-            }
-            else if (stableReason == "PROXY_ACCESS_DENIED")
-            {
-                action = "Прокси запретил запрос. Проверьте доступ для этого " +
-                    "сервера и учётной записи.";
-            }
-            else if (stableReason == "PROXY_TLS_FAILED")
-            {
-                action = "Не удалось установить защищённое соединение с прокси. " +
-                    "Проверьте, что выбран тип HTTPS и порт действительно TLS.";
-            }
-            else if (stableReason == "PROXY_DNS_FAILED")
-            {
-                action = "Имя прокси-сервера не разрешается. Проверьте адрес.";
-            }
-            else if (stableReason == "PROXY_TIMEOUT")
-            {
-                action = "Прокси не ответил за 15 секунд. Проверьте порт и " +
-                    "доступность сервера.";
-            }
-            else if (stableReason == "PROXY_CONNECT_FAILED")
-            {
-                action = "Соединение с прокси не установлено. Проверьте адрес, " +
-                    "порт и блокировку сети.";
-            }
-            else if (stableReason == "PROXY_UPSTREAM_FAILED")
-            {
-                action = "Локальный SingBox запустился, но внешний прокси закрыл " +
-                    "соединение. Проверьте тип HTTP/HTTPS, порт и учётные данные.";
-            }
-            else if (
-                stableReason == "SESSION_CLEANUP_FAILED" ||
-                stableReason == "SECRET_CONFIG_REMOVE_FAILED")
-            {
-                action = "Не удалось безопасно очистить временную сессию SingBox. " +
-                    "Закройте Launch Center, убедитесь, что sing-box.exe завершён, " +
-                    "и запустите проверку снова.";
-            }
-            else
-            {
-                action = "Повторите проверку. Если ошибка сохраняется, запустите " +
-                    "Launch Center из полностью распакованного ZIP.";
-            }
-            return "Проверка не пройдена (" + stableReason + "). " + action;
+            return Color.FromRgb(49, 87, 199);
         }
 
         internal static object TestConnection(
@@ -550,13 +457,9 @@ namespace LlmFoundationInstaller
                         secure.Length > 0 ? secure : null
                     );
                     contract.ProxyPassword.Clear();
-                    contract.Status.Text = result.profile.mode == "VPN"
-                        ? "VPN сохранён: отсутствие прокси не является ошибкой."
-                        : (result.profile.mode == "Direct"
-                            ? "Прямое подключение сохранено: прокси отключён."
-                            : "Прокси сохранён; пароль защищён Windows DPAPI.");
-                    contract.Status.Foreground = new SolidColorBrush(
-                        Color.FromRgb(22, 122, 88)
+                    ApplyStatus(
+                        contract,
+                        ConnectionStatusModel.Saved(result.profile.mode)
                     );
                 }
                 return true;
@@ -564,9 +467,9 @@ namespace LlmFoundationInstaller
             catch (Exception exception)
             {
                 error = exception.Message;
-                contract.Status.Text = "Не сохранено: " + error;
-                contract.Status.Foreground = new SolidColorBrush(
-                    Color.FromRgb(161, 92, 0)
+                ApplyStatus(
+                    contract,
+                    ConnectionStatusModel.SaveFailed(error)
                 );
                 return false;
             }
