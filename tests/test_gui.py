@@ -23,6 +23,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 FOUNDATION_VERSION = (REPOSITORY_ROOT / "VERSION").read_text(
     encoding="utf-8"
 ).strip()
+
+
+def _gui_source() -> str:
+    """Весь GUI-код одной строкой: типы разнесены по модулям (Ф2)."""
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((REPOSITORY_ROOT / "src" / "gui").glob("*.cs"))
+    )
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
 POWERSHELLS = [
     value
@@ -1003,9 +1011,7 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     ).strip()
     assert app_version == "0.4.0"
     assert engine_version == FOUNDATION_VERSION
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     assert '[assembly: AssemblyVersion("0.4.0.0")]' in source
     assert '[assembly: AssemblyFileVersion("0.4.0.0")]' in source
     assert manifest["version"] == app_version
@@ -3148,9 +3154,7 @@ def test_target_plan_passes_detected_codex_version_to_foundation(
     assert foundation.returncode == 0, foundation.stdout + foundation.stderr
     assert json.loads(foundation.stdout)["status"] == "READY"
 
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     assert "row.detected_version = verified.clients" in source
     assert "cli.version;" not in source
 
@@ -3367,9 +3371,7 @@ def test_singbox_connection_ui_contract_is_consistent_in_both_editions(
 
 
 def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
-    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
-        encoding="utf-8"
-    )
+    source = _gui_source()
 
     update_mode = source.split("Action updateMode = delegate", 1)[1].split(
         "RoutedEventHandler checkedHandler", 1
@@ -3384,9 +3386,7 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
 
 
 def test_connection_ui_contract_diagnostics_are_localized_for_users():
-    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
-        encoding="utf-8"
-    )
+    source = _gui_source()
 
     assert "Не найдены элементы маршрута прокси" in source
     assert "Не найден элемент подключения: " in source
@@ -3499,9 +3499,7 @@ def test_connection_error_area_wraps_and_offers_managed_reset(
 
 
 def test_launch_center_explains_running_appx_and_stale_proxy_recovery() -> None:
-    source = (REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs").read_text(
-        encoding="utf-8"
-    )
+    source = _gui_source()
 
     assert "Codex уже запущен. Полностью закройте Codex" in source
     assert "Нажмите «Сбросить маршрут»" in source
@@ -5636,9 +5634,7 @@ def test_connection_route_probe_dispatches_proxy_to_singbox(
 
 
 def test_connection_route_failure_messages_are_russian_and_actionable() -> None:
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     compact = " ".join(source.split())
 
     assert "DescribeTestFailure(reason)" in compact
@@ -5757,9 +5753,7 @@ def test_gui_source_contains_no_reverse_flow_or_secret_collection():
 
 
 def test_gui_install_workflow_is_non_blocking_and_locally_reported():
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     for required in (
         "RunPlanAndInstallAsync",
         "await RunFoundationAsync",
@@ -5788,9 +5782,7 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
 
 
 def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     for required in (
         "ClientBootstrap.PlanTarget",
         "verified.clients.First",
@@ -5828,9 +5820,7 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
 
 
 def test_legacy_owner_candidate_runtime_path_is_removed():
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
 
     assert "IsInstallableTarget" in source
     assert 'row.package_state == "owner_candidate"' not in source
@@ -5971,9 +5961,7 @@ def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
 
 
 def test_installer_ui_makes_provider_policy_boundary_visible():
-    source = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    source = _gui_source()
     for resource in (
         "InstallerEmployeeView.xaml",
         "InstallerOwnerView.xaml",

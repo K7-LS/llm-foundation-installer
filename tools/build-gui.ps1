@@ -1552,6 +1552,23 @@ $BaseReleaseUpdaterSource = Join-Path (
 $ProductConfigSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\ProductConfig.cs'
+$GuiModuleSources = @(
+    'InstallerModels.cs',
+    'PlatformCompatibility.cs',
+    'ProductCatalog.cs',
+    'ClientDetector.cs',
+    'RuntimePayload.cs',
+    'FoundationWorkflow.cs',
+    'BundleIntegrity.cs',
+    'InstallerView.cs',
+    'LaunchCenterActions.cs',
+    'InstallerActions.cs',
+    'ChromeProxyLauncher.cs',
+    'ConnectionUi.cs',
+    'ConnectionProbe.cs'
+) | ForEach-Object {
+    Join-Path $RepositoryRoot "src\gui\$_"
+}
 $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
@@ -1681,6 +1698,7 @@ $CompilerArguments += @(
     $BaseReleaseUpdaterSource,
     $ProductConfigSource
 )
+$CompilerArguments += $GuiModuleSources
 
 & $Compiler @CompilerArguments
 if ($LASTEXITCODE -ne 0 -or

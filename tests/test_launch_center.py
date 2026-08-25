@@ -486,9 +486,10 @@ def test_connection_ui_uses_known_working_chatgpt_trace_probe() -> None:
             encoding="utf-8"
         )
     )
-    app_source = (
-        REPOSITORY / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    app_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((REPOSITORY / "src" / "gui").glob("*.cs"))
+    )
     session_source = (
         REPOSITORY / "src" / "gui" / "SingBoxSession.cs"
     ).read_text(encoding="utf-8")
@@ -1152,9 +1153,10 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
     source = (
         REPOSITORY / "src" / "gui" / "ClientLauncher.cs"
     ).read_text(encoding="utf-8")
-    installer_source = (
-        REPOSITORY / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
+    installer_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((REPOSITORY / "src" / "gui").glob("*.cs"))
+    )
     proxy_source = (
         REPOSITORY / "src" / "gui" / "SystemProxyLease.cs"
     ).read_text(encoding="utf-8")
