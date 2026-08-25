@@ -72,7 +72,6 @@ def _build(
             "-RuntimeSourcesLock",
             str(runtime_lock),
             "-AllowLocalTestSources",
-            "-AllowLegacyTestCompiler",
     ]
     if client_lock is not None:
         command.extend(["-ClientSourcesLock", str(client_lock)])

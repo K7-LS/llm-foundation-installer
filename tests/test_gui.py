@@ -305,7 +305,6 @@ def _build_gui_bundle(
     arguments.extend(["-ClientSourcesLock", str(client_sources_lock)])
     if allow_local_test_sources:
         arguments.append("-AllowLocalTestSources")
-        arguments.append("-AllowLegacyTestCompiler")
     result = subprocess.run(
         arguments,
         cwd=REPOSITORY_ROOT,

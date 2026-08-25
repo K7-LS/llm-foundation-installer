@@ -18,7 +18,6 @@ param(
     [string]$ProductConfigPath,
     [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
-    [switch]$AllowLegacyTestCompiler,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
@@ -1032,8 +1031,6 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 
 $WindowsRoot = [Environment]::GetFolderPath('Windows')
 # Ф3: компиляция делегирована SDK-style проекту (dotnet build).
-# -AllowLegacyTestCompiler сохранён для совместимости вызовов и не влияет
-# на выбор компилятора.
 $DotnetCli = Get-Command dotnet -ErrorAction SilentlyContinue
 if ($null -eq $DotnetCli) {
     throw (
