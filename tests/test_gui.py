@@ -3382,7 +3382,8 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
     assert update_mode.index("contract.ProxySettings.Visibility") < update_mode.index(
         "if (isProxy)"
     )
-    assert "Заполните сервер, порт, логин и пароль" in update_mode
+    assert "ConnectionStatusModel.ProxyGuidance()" in update_mode
+    assert "Заполните сервер, порт, логин и пароль" in source
 
 
 def test_connection_ui_contract_diagnostics_are_localized_for_users():

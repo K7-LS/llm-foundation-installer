@@ -41,6 +41,7 @@
     <Compile Include="ClientLauncher.cs" />
     <Compile Include="ConnectionProbe.cs" />
     <Compile Include="ConnectionProfile.cs" />
+    <Compile Include="ConnectionStatusModel.cs" />
     <Compile Include="ConnectionUi.cs" />
     <Compile Include="EditionProfile.cs" />
     <Compile Include="EditionTheme.cs" />

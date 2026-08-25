@@ -65,6 +65,14 @@ namespace LlmFoundationInstaller
                     ));
                     return 0;
                 }
+                if (args.Length == 1 &&
+                    args[0] == "--connection-status-texts-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ConnectionStatusModel.CanonicalCatalog()
+                    ));
+                    return 0;
+                }
                 if (args.Length == 1 && args[0] == "--product-json")
                 {
                     WriteOutput(new JavaScriptSerializer().Serialize(
