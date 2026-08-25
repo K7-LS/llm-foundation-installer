@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Ф3: SDK-style сборка GUI. Оркестрация (staging движка, локи,
+       ресурсы, манифесты, подпись) остаётся в tools/build-gui.ps1;
+       он вызывает dotnet build и передаёт динамику через свойства:
+       K7ResourcesProps  - .props со списком EmbeddedResource (LogicalName),
+       K7ApplicationIcon - иконка, сгенерированная в OutputRoot,
+       K7ExtraDefines    - условные символы (например, Owner-дистрибуция). -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>LLMFoundationInstaller</AssemblyName>
+    <RootNamespace>LlmFoundationInstaller</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <DebugType>none</DebugType>
+    <Deterministic>true</Deterministic>
+    <Optimize>true</Optimize>
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="'$(K7ApplicationIcon)' != ''">$(K7ApplicationIcon)</ApplicationIcon>
+    <DefineConstants Condition="'$(K7ExtraDefines)' != ''">$(DefineConstants);$(K7ExtraDefines)</DefineConstants>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="BaseReleaseUpdater.cs" />
+    <Compile Include="BundleIntegrity.cs" />
+    <Compile Include="ChromeProxyLauncher.cs" />
+    <Compile Include="ClientBootstrap.cs" />
+    <Compile Include="ClientDetector.cs" />
+    <Compile Include="ClientLauncher.cs" />
+    <Compile Include="ConnectionProbe.cs" />
+    <Compile Include="ConnectionProfile.cs" />
+    <Compile Include="ConnectionUi.cs" />
+    <Compile Include="EditionProfile.cs" />
+    <Compile Include="EditionTheme.cs" />
+    <Compile Include="FoundationWorkflow.cs" />
+    <Compile Include="InstallerActions.cs" />
+    <Compile Include="InstallerApp.cs" />
+    <Compile Include="InstallerModels.cs" />
+    <Compile Include="InstallerView.cs" />
+    <Compile Include="LaunchCenterActions.cs" />
+    <Compile Include="LaunchRoutePreferences.cs" />
+    <Compile Include="LaunchTarget.cs" />
+    <Compile Include="OperatorGuideDashboard.cs" />
+    <Compile Include="PlatformCompatibility.cs" />
+    <Compile Include="ProductCatalog.cs" />
+    <Compile Include="ProductConfig.cs" />
+    <Compile Include="RuntimeBootstrap.cs" />
+    <Compile Include="RuntimePayload.cs" />
+    <Compile Include="SingBoxConfig.cs" />
+    <Compile Include="SingBoxSession.cs" />
+    <Compile Include="SystemProxyLease.cs" />
+    <Compile Include="VsCodeIntegration.cs" />
+  </ItemGroup>
+  <Import Project="$(K7ResourcesProps)" Condition="'$(K7ResourcesProps)' != '' And Exists('$(K7ResourcesProps)')" />
+</Project>

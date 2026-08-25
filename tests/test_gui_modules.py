@@ -60,9 +60,9 @@ def test_installer_app_keeps_only_program_and_assembly_metadata():
     assert len(source.splitlines()) < 1300
 
 
-def test_build_script_compiles_every_module():
-    build_script = (
-        REPOSITORY / "tools" / "build-gui.ps1"
+def test_build_project_compiles_every_module():
+    project = (
+        GUI / "LlmFoundationInstaller.csproj"
     ).read_text(encoding="utf-8")
     for module in EXPECTED_MODULES:
-        assert module in build_script, module
+        assert f'<Compile Include="{module}" />' in project, module

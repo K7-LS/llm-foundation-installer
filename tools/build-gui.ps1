@@ -103,23 +103,6 @@ if (Test-Path -LiteralPath $OutputRoot) {
     throw 'OutputRoot must not exist'
 }
 
-function Get-AssemblyPath {
-    param(
-        [Parameter(Mandatory = $true)][string[]]$Roots,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-    foreach ($Root in $Roots) {
-        $Match = Get-ChildItem -LiteralPath $Root -Recurse -Filter $Name `
-            -ErrorAction SilentlyContinue |
-            Sort-Object FullName |
-            Select-Object -First 1
-        if ($null -ne $Match) {
-            return $Match.FullName
-        }
-    }
-    throw "Required framework assembly is missing: $Name"
-}
-
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     $Stream = [IO.File]::OpenRead($Path)
@@ -1048,80 +1031,16 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 }
 
 $WindowsRoot = [Environment]::GetFolderPath('Windows')
-$CompilerCandidates = New-Object System.Collections.Generic.List[string]
-$VsWhere = Join-Path ${env:ProgramFiles(x86)} (
-    'Microsoft Visual Studio\Installer\vswhere.exe'
-)
-if (Test-Path -LiteralPath $VsWhere -PathType Leaf) {
-    $VsInstallations = @(
-        & $VsWhere -products '*' -requires Microsoft.Component.MSBuild `
-            -property installationPath
+# Ф3: компиляция делегирована SDK-style проекту (dotnet build).
+# -AllowLegacyTestCompiler сохранён для совместимости вызовов и не влияет
+# на выбор компилятора.
+$DotnetCli = Get-Command dotnet -ErrorAction SilentlyContinue
+if ($null -eq $DotnetCli) {
+    throw (
+        'The dotnet SDK is required for a deterministic GUI build. ' +
+        'Install the .NET SDK (8.0 or newer).'
     )
-    foreach ($VsInstallation in $VsInstallations) {
-        if (-not [string]::IsNullOrWhiteSpace($VsInstallation)) {
-            $CompilerCandidates.Add(
-                (Join-Path $VsInstallation (
-                    'MSBuild\Current\Bin\Roslyn\csc.exe'
-                ))
-            )
-        }
-    }
 }
-foreach ($VisualStudioRoot in @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'),
-    (Join-Path $env:ProgramFiles 'Microsoft Visual Studio')
-)) {
-    if (Test-Path -LiteralPath $VisualStudioRoot -PathType Container) {
-        @(
-            Get-ChildItem -Path (
-                Join-Path $VisualStudioRoot (
-                    '*\*\MSBuild\Current\Bin\Roslyn\csc.exe'
-                )
-            ) -File -ErrorAction SilentlyContinue |
-                Sort-Object -Property FullName -Descending
-        ) | ForEach-Object {
-            $CompilerCandidates.Add($_.FullName)
-        }
-    }
-}
-$Compiler = @(
-    $CompilerCandidates |
-        Where-Object {
-            Test-Path -LiteralPath $_ -PathType Leaf
-        } |
-        Select-Object -Unique
-) | Select-Object -First 1
-$DeterministicCompiler = $true
-if ([string]::IsNullOrWhiteSpace($Compiler)) {
-    $LegacyCompiler = Join-Path $WindowsRoot (
-        'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    )
-    if ($AllowLegacyTestCompiler -and $AllowLocalTestSources -and
-        $DistributionMode -ceq 'Preview' -and
-        (Test-Path -LiteralPath $LegacyCompiler -PathType Leaf)) {
-        $Compiler = $LegacyCompiler
-        $DeterministicCompiler = $false
-    }
-    else {
-        throw (
-            'A Roslyn C# compiler is required for a deterministic GUI build. ' +
-            'Install Microsoft Visual Studio Build Tools with MSBuild.'
-        )
-    }
-}
-
-$AssemblyRoots = @(
-    (Join-Path $WindowsRoot 'Microsoft.NET\assembly\GAC_MSIL'),
-    (Join-Path $WindowsRoot 'Microsoft.NET\assembly\GAC_64')
-)
-$References = @(
-    (Get-AssemblyPath $AssemblyRoots 'PresentationFramework.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'PresentationCore.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'WindowsBase.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'System.Xaml.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'System.IO.Compression.dll'),
-    (Get-AssemblyPath $AssemblyRoots 'System.IO.Compression.FileSystem.dll')
-)
 
 $AcceptedPackages = @(Read-AcceptedPackages $PackageRoot $DistributionMode)
 $AcceptedFoundation = Read-AcceptedFoundation $FoundationPackageRoot
@@ -1522,53 +1441,6 @@ $TrustedResource = Join-Path $OutputRoot '.trusted-packages.json'
 )
 
 $Executable = Join-Path $OutputRoot 'LLMFoundationInstaller.exe'
-$Source = Join-Path $RepositoryRoot 'src\gui\InstallerApp.cs'
-$EditionSource = Join-Path $RepositoryRoot 'src\gui\EditionProfile.cs'
-$EditionThemeSource = Join-Path $RepositoryRoot 'src\gui\EditionTheme.cs'
-$LaunchTargetSource = Join-Path $RepositoryRoot 'src\gui\LaunchTarget.cs'
-$VsCodeIntegrationSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\VsCodeIntegration.cs'
-$ClientLauncherSource = Join-Path $RepositoryRoot 'src\gui\ClientLauncher.cs'
-$RuntimeBootstrapSource = Join-Path $RepositoryRoot 'src\gui\RuntimeBootstrap.cs'
-$SingBoxConfigSource = Join-Path $RepositoryRoot 'src\gui\SingBoxConfig.cs'
-$SingBoxSessionSource = Join-Path $RepositoryRoot 'src\gui\SingBoxSession.cs'
-$SystemProxyLeaseSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\SystemProxyLease.cs'
-$OperatorGuideSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\OperatorGuideDashboard.cs'
-$ConnectionSource = Join-Path $RepositoryRoot 'src\gui\ConnectionProfile.cs'
-$LaunchRoutePreferencesSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\LaunchRoutePreferences.cs'
-$ClientBootstrapSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\ClientBootstrap.cs'
-$BaseReleaseUpdaterSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\BaseReleaseUpdater.cs'
-$ProductConfigSource = Join-Path (
-    $RepositoryRoot
-) 'src\gui\ProductConfig.cs'
-$GuiModuleSources = @(
-    'InstallerModels.cs',
-    'PlatformCompatibility.cs',
-    'ProductCatalog.cs',
-    'ClientDetector.cs',
-    'RuntimePayload.cs',
-    'FoundationWorkflow.cs',
-    'BundleIntegrity.cs',
-    'InstallerView.cs',
-    'LaunchCenterActions.cs',
-    'InstallerActions.cs',
-    'ChromeProxyLauncher.cs',
-    'ConnectionUi.cs',
-    'ConnectionProbe.cs'
-) | ForEach-Object {
-    Join-Path $RepositoryRoot "src\gui\$_"
-}
 $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
@@ -1627,84 +1499,98 @@ $ApplicationManifest = Join-Path $RepositoryRoot 'src\gui\app.manifest'
 $ApplicationIcon = Join-Path $OutputRoot '.installer.ico'
 & (Join-Path $RepositoryRoot 'tools\build-icon.ps1') `
     -OutputPath $ApplicationIcon | Out-Null
-$CompilerArguments = @(
-    '/nologo',
-    '/target:winexe',
-    '/platform:anycpu',
-    '/optimize+',
-    '/checked+',
-    '/codepage:65001',
-    '/utf8output',
-    "/out:$Executable",
-    "/win32manifest:$ApplicationManifest",
-    "/win32icon:$ApplicationIcon",
-    "/resource:$EditionResource,EditionProfile.json",
-    "/resource:$ProductConfigPath,ProductConfig.json",
-    "/resource:$TrustedResource,TrustedPackages.json",
-    "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
-    "/resource:$EffectiveRuntimeSourcesPath,RuntimeSources.lock.json",
-    "/resource:$RoutingDomains,LauncherRoutingDomains.json",
-    "/resource:$(Join-Path $EngineRoot 'foundation.ps1'),FoundationEngine.foundation.ps1",
-    "/resource:$(Join-Path $EngineRoot 'engine-manifest.json'),FoundationEngine.engine-manifest.json",
-    "/resource:$(Join-Path $EngineRoot 'VERSION'),FoundationEngine.VERSION",
-    "/resource:$EngineExtraIndexPath,FoundationEngine.extra-files.json",
-    "/resource:$(Join-Path $RepositoryRoot 'APP_VERSION'),FoundationInstaller.VERSION"
-)
-if ($DeterministicCompiler) {
-    $CompilerArguments += '/deterministic+'
-}
-if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
-    $CompilerArguments += '/define:K7_OWNER_DISTRIBUTION_ALLOWED'
-}
-$CompilerArguments += @($EngineExtraIndex | ForEach-Object {
-    "/resource:$($_.source_path),$($_.resource_name)"
-})
-$CompilerArguments += @(
-    foreach ($View in $Views) {
-        "/resource:$View,$([IO.Path]::GetFileName($View))"
-    }
-)
-$CompilerArguments += @(
-    foreach ($Package in $AllPackages) {
-        foreach ($Record in @(Get-PackageRecords $Package)) {
-            $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
-            $SourcePath = Join-Path $Package.source_directory $Name
-            "/resource:$SourcePath,$($Record.resource_name)"
+$EmbeddedResources = New-Object System.Collections.Generic.List[object]
+$AddResource = {
+    param([string]$SourcePath, [string]$LogicalName)
+    $EmbeddedResources.Add(
+        [pscustomobject]@{
+            path = [IO.Path]::GetFullPath($SourcePath)
+            logical_name = $LogicalName
         }
-    }
-)
-if ($null -ne $ProviderEligibility) {
-    $CompilerArguments += (
-        "/resource:$($ProviderEligibility.path)," +
-        'ProviderEligibilityEvidence.json'
-    )
+    ) | Out-Null
 }
-$CompilerArguments += $References | ForEach-Object { "/reference:$_" }
-$CompilerArguments += @(
-    $Source,
-    $EditionSource,
-    $EditionThemeSource,
-    $LaunchTargetSource,
-    $VsCodeIntegrationSource,
-    $ClientLauncherSource,
-    $RuntimeBootstrapSource,
-    $SingBoxConfigSource,
-    $SingBoxSessionSource,
-    $SystemProxyLeaseSource,
-    $OperatorGuideSource,
-    $ConnectionSource,
-    $LaunchRoutePreferencesSource,
-    $ClientBootstrapSource,
-    $BaseReleaseUpdaterSource,
-    $ProductConfigSource
+& $AddResource $EditionResource 'EditionProfile.json'
+& $AddResource $ProductConfigPath 'ProductConfig.json'
+& $AddResource $TrustedResource 'TrustedPackages.json'
+& $AddResource $EffectiveClientSourcesPath 'ClientSources.lock.json'
+& $AddResource $EffectiveRuntimeSourcesPath 'RuntimeSources.lock.json'
+& $AddResource $RoutingDomains 'LauncherRoutingDomains.json'
+& $AddResource (Join-Path $EngineRoot 'foundation.ps1') (
+    'FoundationEngine.foundation.ps1'
 )
-$CompilerArguments += $GuiModuleSources
+& $AddResource (Join-Path $EngineRoot 'engine-manifest.json') (
+    'FoundationEngine.engine-manifest.json'
+)
+& $AddResource (Join-Path $EngineRoot 'VERSION') 'FoundationEngine.VERSION'
+& $AddResource $EngineExtraIndexPath 'FoundationEngine.extra-files.json'
+& $AddResource (Join-Path $RepositoryRoot 'APP_VERSION') (
+    'FoundationInstaller.VERSION'
+)
+foreach ($EngineExtra in $EngineExtraIndex) {
+    & $AddResource $EngineExtra.source_path $EngineExtra.resource_name
+}
+foreach ($View in $Views) {
+    & $AddResource $View ([IO.Path]::GetFileName($View))
+}
+foreach ($Package in $AllPackages) {
+    foreach ($Record in @(Get-PackageRecords $Package)) {
+        $Name = [IO.Path]::GetFileName([string]$Record.relative_path)
+        & $AddResource (
+            Join-Path $Package.source_directory $Name
+        ) $Record.resource_name
+    }
+}
+if ($null -ne $ProviderEligibility) {
+    & $AddResource $ProviderEligibility.path 'ProviderEligibilityEvidence.json'
+}
+$ResourcesProps = Join-Path $OutputRoot '.k7-resources.props'
+$PropsLines = New-Object System.Collections.Generic.List[string]
+$PropsLines.Add('<Project>') | Out-Null
+$PropsLines.Add('  <ItemGroup>') | Out-Null
+foreach ($Resource in $EmbeddedResources) {
+    $EscapedPath = [Security.SecurityElement]::Escape($Resource.path)
+    $EscapedName = [Security.SecurityElement]::Escape($Resource.logical_name)
+    $PropsLines.Add(
+        '    <EmbeddedResource Include="' + $EscapedPath +
+        '" LogicalName="' + $EscapedName + '" />'
+    ) | Out-Null
+}
+$PropsLines.Add('  </ItemGroup>') | Out-Null
+$PropsLines.Add('</Project>') | Out-Null
+[IO.File]::WriteAllText(
+    $ResourcesProps,
+    (($PropsLines -join "`n") + "`n"),
+    $Encoding
+)
 
-& $Compiler @CompilerArguments
+$ProjectPath = Join-Path $RepositoryRoot 'src\gui\LlmFoundationInstaller.csproj'
+$BuildScratch = Join-Path $OutputRoot '.msbuild'
+$BuildIntermediate = (Join-Path $BuildScratch 'obj') + '\'
+$BuildOutput = (Join-Path $BuildScratch 'bin') + '\'
+$DotnetArguments = @(
+    'build',
+    $ProjectPath,
+    '--nologo',
+    '-c', 'Release',
+    '-v', 'quiet',
+    "-p:K7ResourcesProps=$ResourcesProps",
+    "-p:K7ApplicationIcon=$ApplicationIcon",
+    "-p:BaseIntermediateOutputPath=$BuildIntermediate",
+    "-p:OutputPath=$BuildOutput"
+)
+if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
+    $DotnetArguments += '-p:K7ExtraDefines=K7_OWNER_DISTRIBUTION_ALLOWED'
+}
+$DotnetOutput = & dotnet @DotnetArguments 2>&1
+$BuiltExecutable = Join-Path $BuildOutput 'LLMFoundationInstaller.exe'
 if ($LASTEXITCODE -ne 0 -or
-    -not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+    -not (Test-Path -LiteralPath $BuiltExecutable -PathType Leaf)) {
+    Write-Output ($DotnetOutput | Out-String)
     throw 'GUI compilation failed'
 }
+[IO.File]::Copy($BuiltExecutable, $Executable, $true)
+Remove-Item -LiteralPath $BuildScratch -Recurse -Force
+Remove-Item -LiteralPath $ResourcesProps -Force
 
 Remove-Item -LiteralPath @(
     $TrustedResource,
