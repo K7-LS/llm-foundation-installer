@@ -40,3 +40,4 @@ def test_build_script_delegates_compilation_to_dotnet():
     assert "csc.exe" not in build_script
     assert "Roslyn" not in build_script
     assert "vswhere.exe" not in build_script
+    assert "AllowLegacyTestCompiler" not in build_script
