@@ -30,6 +30,7 @@
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Security" />
+    <Reference Include="System.Web" />
     <Reference Include="System.Web.Extensions" />
   </ItemGroup>
   <ItemGroup>
@@ -63,6 +64,12 @@
     <Compile Include="SingBoxSession.cs" />
     <Compile Include="SystemProxyLease.cs" />
     <Compile Include="VsCodeIntegration.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="InstallerEmployeeView.xaml" />
+    <Page Include="InstallerOwnerView.xaml" />
+    <Page Include="LaunchCenterEmployeeView.xaml" />
+    <Page Include="LaunchCenterOwnerView.xaml" />
   </ItemGroup>
   <Import Project="$(K7ResourcesProps)" Condition="'$(K7ResourcesProps)' != '' And Exists('$(K7ResourcesProps)')" />
 </Project>
