@@ -26,6 +26,7 @@ def _build(
     edition: str,
     product_role: str,
     client_lock: Path | None = None,
+    runtime_lock: Path | None = None,
 ) -> Path:
     command = [
         str(POWERSHELL),
@@ -49,6 +50,8 @@ def _build(
                 "-AllowLocalTestSources",
             ]
         )
+    if runtime_lock is not None:
+        command.extend(["-RuntimeSourcesLock", str(runtime_lock)])
     result = subprocess.run(
         command,
         cwd=REPOSITORY,
@@ -438,6 +441,101 @@ def test_installer_binary_exposes_launch_center_fallback(
     assert value["app_id"] == "k7-ai-launch-center"
     assert value["product_role"] == "LaunchCenter"
     assert value["edition_id"] == "Employee"
+
+
+def test_employee_installer_names_every_launch_center_component() -> None:
+    installer = ET.parse(
+        REPOSITORY / "src" / "gui" / "InstallerEmployeeView.xaml"
+    )
+    visible_text = {
+        value
+        for element in installer.getroot().iter()
+        for attribute in ("Text", "Content")
+        if (value := element.attrib.get(attribute))
+    }
+
+    assert {
+        "OpenAI Codex",
+        "Codex CLI",
+        "VS Code — Codex",
+        "OpenCode Desktop",
+        "OpenCode CLI",
+    }.issubset(visible_text)
+
+
+def test_employee_views_expose_exact_chrome_proxy_action() -> None:
+    presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xaml = "http://schemas.microsoft.com/winfx/2006/xaml"
+
+    for resource in (
+        "InstallerEmployeeView.xaml",
+        "LaunchCenterEmployeeView.xaml",
+    ):
+        root = ET.parse(REPOSITORY / "src" / "gui" / resource).getroot()
+        button = root.find(
+            f".//{{{presentation}}}Button"
+            f"[@{{{xaml}}}Name='OpenChromeProxy']"
+        )
+        assert button is not None, resource
+        assert button.attrib["Content"] == "ОТКРЫТЬ ХРОМ С ПРОКСИ"
+
+
+def test_connection_ui_uses_known_working_chatgpt_trace_probe() -> None:
+    app_source = (
+        REPOSITORY / "src" / "gui" / "InstallerApp.cs"
+    ).read_text(encoding="utf-8")
+    session_source = (
+        REPOSITORY / "src" / "gui" / "SingBoxSession.cs"
+    ).read_text(encoding="utf-8")
+
+    assert '"https://chatgpt.com/cdn-cgi/trace"' in app_source
+    assert 'targetId == "connection-test"\n                ? "codex-desktop"' in (
+        session_source
+    )
+
+
+def test_installer_binary_exposes_launch_center_fallback(
+    tmp_path: Path,
+) -> None:
+    client_lock = tmp_path / "client-sources.lock.json"
+    _write_test_only_client_lock(client_lock)
+    runtime_lock = tmp_path / "runtime-sources.lock.json"
+    runtime_lock.write_bytes(
+        (REPOSITORY / "runtime-sources.lock.json").read_bytes()
+    )
+    installer = _build(
+        tmp_path / "employee-installer",
+        edition="Employee",
+        product_role="Installer",
+        client_lock=client_lock,
+        runtime_lock=runtime_lock,
+    )
+
+    returncode, value = _run_json(
+        installer,
+        "--launch-center-product-json",
+    )
+
+    assert returncode == 0
+    assert value["app_id"] == "k7-ai-launch-center"
+    assert value["product_role"] == "LaunchCenter"
+    assert value["edition_id"] == "Employee"
+
+    chrome_code, chrome = _run_json(
+        installer,
+        "--chrome-proxy-json",
+    )
+    assert chrome_code == 0
+    assert chrome["executable"] == (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    )
+    assert chrome["arguments"].startswith(
+        '--proxy-server="http://scuf-meta.ru:10894" '
+    )
+    assert chrome["arguments"].endswith(
+        rf'--user-data-dir="{Path.home() / "chrome-proxy"}"'
+    )
+    assert chrome["use_shell_execute"] is False
 
 
 def test_ui_launch_selection_json_shows_vscode_correlation(

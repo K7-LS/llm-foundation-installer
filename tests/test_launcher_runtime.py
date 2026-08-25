@@ -244,7 +244,45 @@ def _compile_fake_singbox(path: Path) -> None:
                             "K7_FAKE_REQUIRE_CURL_PROBE") == "1" &&
                         !Regex.IsMatch(
                             headers,
-                            "(?im)^User-Agent:\\s*curl/"))
+                            "(?im)^User-Agent:\\s*K7-AI-Launch-Center"))
+                    {
+                        byte[] denied = Encoding.ASCII.GetBytes(
+                            "HTTP/1.1 403 Forbidden
+" +
+                            "Content-Length: 0
+" +
+                            "Connection: close
+
+"
+                        );
+                        stream.Write(denied, 0, denied.Length);
+                        stream.Flush();
+                        return;
+                    }
+                    if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_REQUIRE_USER_AGENT") == "1" &&
+                        !Regex.IsMatch(
+                            headers,
+                            "(?im)^User-Agent:\\s*\\S+"))
+                    {
+                        byte[] denied = Encoding.ASCII.GetBytes(
+                            "HTTP/1.1 403 Forbidden
+" +
+                            "Content-Length: 0
+" +
+                            "Connection: close
+
+"
+                        );
+                        stream.Write(denied, 0, denied.Length);
+                        stream.Flush();
+                        return;
+                    }
+                    if (Environment.GetEnvironmentVariable(
+                            "K7_FAKE_REQUIRE_CURL_ACCEPT") == "1" &&
+                        !Regex.IsMatch(
+                            headers,
+                            "(?im)^Accept:\\s*\\*/\\*\\s*$"))
                     {
                         byte[] denied = Encoding.ASCII.GetBytes(
                             "HTTP/1.1 403 Forbidden\r\n" +
@@ -283,8 +321,20 @@ def _compile_fake_singbox(path: Path) -> None:
                     request.Method = "GET";
                     request.Proxy = null;
                     request.Timeout = 5000;
-                    using (HttpWebResponse response =
-                        (HttpWebResponse)request.GetResponse())
+                    HttpWebResponse response = null;
+                    try
+                    {
+                        response = (HttpWebResponse)request.GetResponse();
+                    }
+                    catch (WebException exception)
+                    {
+                        response = exception.Response as HttpWebResponse;
+                        if (response == null)
+                        {
+                            throw;
+                        }
+                    }
+                    using (response)
                     using (Stream input = response.GetResponseStream())
                     using (MemoryStream body = new MemoryStream())
                     {
@@ -821,10 +871,11 @@ def test_singbox_route_probe_forwards_real_local_http_request(
 ) -> None:
     class Upstream(http.server.BaseHTTPRequestHandler):
         received_paths: list[str] = []
+        status_code = 200
 
         def do_GET(self) -> None:
             type(self).received_paths.append(self.path)
-            self.send_response(200)
+            self.send_response(type(self).status_code)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"route-ok")
@@ -939,6 +990,61 @@ def test_singbox_route_probe_forwards_real_local_http_request(
             ).glob("*")
         )
 
+        user_agent_environment = dict(environment)
+        user_agent_environment["K7_FAKE_REQUIRE_USER_AGENT"] = "1"
+        user_agent_environment["K7_FAKE_REQUIRE_CURL_ACCEPT"] = "1"
+        user_agent_required = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=bundle,
+            env=user_agent_environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert user_agent_required.stdout.strip(), user_agent_required.stderr
+        user_agent_value = json.loads(user_agent_required.stdout)
+        assert user_agent_required.returncode == 0
+        assert user_agent_value["status"] == "PASS"
+        assert user_agent_value["cleanup_verified"] is True
+        assert Upstream.received_paths == [
+            "/route-check",
+            "/route-check",
+        ]
+        assert forward_log.read_text(encoding="utf-8").splitlines() == [
+            "/route-check",
+            "/route-check",
+        ]
+
+        Upstream.status_code = 404
+        non_success_status = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--test-singbox-route-json",
+                str(home),
+                "SingBoxHttp",
+                endpoint,
+            ],
+            cwd=bundle,
+            env=environment,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        assert non_success_status.stdout.strip(), non_success_status.stderr
+        non_success_value = json.loads(non_success_status.stdout)
+        assert non_success_status.returncode == 0
+        assert non_success_value["status"] == "PASS"
+        assert non_success_value["cleanup_verified"] is True
+        Upstream.status_code = 200
+
         broken_environment = dict(environment)
         broken_environment["K7_FAKE_PROXY_BROKEN"] = "1"
         failed = subprocess.run(
@@ -963,9 +1069,15 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         assert failed_value["uses_proxy"] is True
         assert failed_value["reason"] == "PROXY_UPSTREAM_FAILED"
         assert failed_value["cleanup_verified"] is True
-        assert Upstream.received_paths == ["/route-check"]
+        assert Upstream.received_paths == [
+            "/route-check",
+            "/route-check",
+            "/route-check",
+        ]
         assert forward_log.read_text(encoding="utf-8").splitlines() == [
-            "/route-check"
+            "/route-check",
+            "/route-check",
+            "/route-check",
         ]
         assert sentinel not in failed.stdout
         assert sentinel not in failed.stderr
