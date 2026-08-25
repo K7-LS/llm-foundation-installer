@@ -3,8 +3,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "gui" / "BaseReleaseUpdater.cs"
-APP = ROOT / "src" / "gui" / "InstallerApp.cs"
 BUILD = ROOT / "tools" / "build-gui.ps1"
+
+
+def _app() -> str:
+    """GUI-код одной строкой: типы разнесены по модулям (Ф2)."""
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src" / "gui").glob("*.cs"))
+    )
 
 
 def test_latest_base_sources_are_exact_and_native() -> None:
@@ -38,7 +45,7 @@ def test_latest_base_is_fail_closed_before_cache_activation() -> None:
 
 
 def test_installer_resolves_latest_before_client_and_foundation_plan() -> None:
-    app = APP.read_text(encoding="utf-8")
+    app = _app()
     workflow = app.split("foreach (TargetRow row in selected)", 1)[1]
     assert workflow.index("RunBaseReleaseResolveAsync") < workflow.index(
         "RunClientPlanAsync"
@@ -52,7 +59,7 @@ def test_installer_resolves_latest_before_client_and_foundation_plan() -> None:
 
 def test_embedded_package_is_only_explicit_latest_failure_fallback() -> None:
     source = SOURCE.read_text(encoding="utf-8")
-    app = APP.read_text(encoding="utf-8")
+    app = _app()
     assert 'status = "EMBEDDED_FALLBACK"' in source
     assert "used_embedded_fallback = true" in source
     assert "использован проверенный embedded fallback" in app
@@ -66,7 +73,7 @@ def test_latest_base_source_is_compiled_into_every_gui() -> None:
 
 
 def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
-    app = APP.read_text(encoding="utf-8")
+    app = _app()
     assert '"BLOCKED_USER_DECISION"' in app
     assert 'MessageBoxButton.YesNoCancel' in app
     assert 'arguments.Add("-LocalExceptionPath")' in app

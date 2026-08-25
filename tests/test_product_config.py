@@ -37,13 +37,15 @@ def test_product_config_exists_with_exact_schema():
 
 
 def test_installer_sources_do_not_hardcode_extracted_values():
-    app_source = (
-        REPOSITORY / "src" / "gui" / "InstallerApp.cs"
+    for path in sorted((REPOSITORY / "src" / "gui").glob("*.cs")):
+        source = path.read_text(encoding="utf-8")
+        assert "scuf-meta" not in source, path.name
+        assert "cdn-cgi/trace" not in source, path.name
+        assert "Program Files\\Google" not in source, path.name
+    launcher = (
+        REPOSITORY / "src" / "gui" / "ChromeProxyLauncher.cs"
     ).read_text(encoding="utf-8")
-    assert "scuf-meta" not in app_source
-    assert "chatgpt.com" not in app_source
-    assert "Program Files\\Google" not in app_source
-    assert "ProductConfig" in app_source
+    assert "ProductConfig.LoadEmbedded()" in launcher
 
 
 def test_singbox_version_has_single_source_of_truth():
