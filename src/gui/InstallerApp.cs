@@ -1329,6 +1329,7 @@ namespace LlmFoundationInstaller
                     bundleRoot,
                     loadConnectionState
                 );
+                ChromeProxyLauncher.Bind(view);
                 return view;
             }
         }
@@ -3374,6 +3375,76 @@ namespace LlmFoundationInstaller
         }
     }
 
+    internal static class ChromeProxyLauncher
+    {
+        private const string ChromePath =
+            @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        private const string ProxyServer =
+            "http://scuf-meta.ru:10894";
+
+        public static void Bind(UserControl view)
+        {
+            Button button = view.FindName("OpenChromeProxy") as Button;
+            if (button == null)
+            {
+                return;
+            }
+            button.Click += delegate
+            {
+                try
+                {
+                    Process.Start(CreateStartInfo());
+                }
+                catch (Exception exception)
+                {
+                    MessageBox.Show(
+                        "Chrome не запущен: " + exception.Message,
+                        "K-7 AI — Chrome с прокси",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning
+                    );
+                }
+            };
+        }
+
+        public static Dictionary<string, object> Describe()
+        {
+            ProcessStartInfo start = CreateStartInfo();
+            return new Dictionary<string, object>
+            {
+                { "executable", start.FileName },
+                { "arguments", start.Arguments },
+                { "use_shell_execute", start.UseShellExecute }
+            };
+        }
+
+        private static ProcessStartInfo CreateStartInfo()
+        {
+            if (!File.Exists(ChromePath))
+            {
+                throw new FileNotFoundException(
+                    "Google Chrome не найден в стандартной папке.",
+                    ChromePath
+                );
+            }
+            string profile = Path.Combine(
+                Environment.GetFolderPath(
+                    Environment.SpecialFolder.UserProfile
+                ),
+                "chrome-proxy"
+            );
+            return new ProcessStartInfo
+            {
+                FileName = ChromePath,
+                Arguments =
+                    "--proxy-server=\"" + ProxyServer + "\" " +
+                    "--user-data-dir=\"" +
+                    profile.Replace("\"", "\\\"") + "\"",
+                UseShellExecute = false
+            };
+        }
+    }
+
     internal static class ConnectionUi
     {
         public static bool TrySaveCurrent(
@@ -3504,7 +3575,7 @@ namespace LlmFoundationInstaller
                                 bundleRoot,
                                 UserHome(),
                                 route,
-                                "https://api.github.com/meta"
+                                "https://chatgpt.com/cdn-cgi/trace"
                             );
                         }
                     );
@@ -4360,6 +4431,14 @@ namespace LlmFoundationInstaller
                             edition,
                             bundleRoot
                         )
+                    ));
+                    return 0;
+                }
+                if (args.Length == 1 &&
+                    args[0] == "--chrome-proxy-json")
+                {
+                    WriteOutput(new JavaScriptSerializer().Serialize(
+                        ChromeProxyLauncher.Describe()
                     ));
                     return 0;
                 }

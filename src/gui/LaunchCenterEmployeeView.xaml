@@ -98,6 +98,7 @@
           <TextBlock Text="Что запускаем сегодня?" FontFamily="Bahnschrift SemiCondensed" FontSize="31" FontWeight="SemiBold" Margin="0,5,0,0" />
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+          <Button x:Name="OpenChromeProxy" Content="ОТКРЫТЬ ХРОМ С ПРОКСИ" Height="34" Padding="14,0" Margin="0,0,9,0" Background="#FFFFFF" Foreground="#071E22" BorderBrush="#D7DFDE" BorderThickness="1" FontFamily="Cascadia Mono" FontSize="10" FontWeight="SemiBold" />
           <Button x:Name="OpenGuideDashboard" Content="Инструкция" Height="34" Padding="14,0" Margin="0,0,9,0" Background="#FFFFFF" Foreground="#071E22" BorderBrush="#D7DFDE" BorderThickness="1" FontWeight="SemiBold" />
           <Border Background="#E3F4F0" CornerRadius="18" Padding="14,7">
             <TextBlock Text="● ЛОКАЛЬНО ГОТОВО" Foreground="#146B5A" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" />

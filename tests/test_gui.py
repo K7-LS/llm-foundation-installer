@@ -3646,8 +3646,13 @@ def test_every_installer_has_large_labeled_component_checkboxes() -> None:
             control = xaml.split(f'x:Name="{technical_name}"', 1)[1].split(
                 "/>", 1
             )[0]
-            assert 'Content="Установить"' in control, resource
-            assert 'MinWidth="100"' in control, resource
+            assert (
+                'Content="Установить"' in control
+                or 'Content="Установить комплект"' in control
+            ), resource
+            assert (
+                'MinWidth="100"' in control or 'MinWidth="142"' in control
+            ), resource
             assert 'Height="28"' in control, resource
 
 

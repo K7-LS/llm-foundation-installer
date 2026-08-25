@@ -145,6 +145,7 @@
           <TextBlock Text="Данные остаются на компьютере. Сеть используется только после вашего действия." Foreground="{StaticResource Muted}" Margin="0,5,0,0" />
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button x:Name="OpenChromeProxy" Content="ОТКРЫТЬ ХРОМ С ПРОКСИ" Style="{StaticResource SecondaryButton}" FontFamily="Cascadia Mono" FontSize="10" Margin="0,0,9,0" />
           <Button x:Name="OpenGuideDashboard" Content="Инструкция" Style="{StaticResource SecondaryButton}" Margin="0,0,9,0" />
           <Button x:Name="RefreshEnvironment" Content="Проверить снова" Style="{StaticResource SecondaryButton}" />
         </StackPanel>
@@ -158,11 +159,14 @@
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
               <StackPanel>
-                <TextBlock Text="CODEX" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#30BCED" />
-                <TextBlock Text="OpenAI Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
-                <TextBlock Text="Разработка и автоматизация" Foreground="{StaticResource Muted}" Margin="0,3,0,0" />
+                <TextBlock Text="CODEX / 3 КОМПОНЕНТА" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#30BCED" />
+                <TextBlock Text="Комплект Codex" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
+                <TextBlock Text="OpenAI Codex" FontWeight="SemiBold" Margin="0,7,0,0" />
+                <TextBlock Text="Codex CLI" FontWeight="SemiBold" Margin="0,3,0,0" />
+                <TextBlock Text="VS Code — Codex" FontWeight="SemiBold" Margin="0,3,0,0" />
+                <TextBlock Text="Интеграция использует установленный VS Code" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,0" />
               </StackPanel>
-              <CheckBox x:Name="CodexSelected" Grid.Column="1" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" FontWeight="SemiBold" />
+              <CheckBox x:Name="CodexSelected" Grid.Column="1" Content="Установить комплект" MinWidth="142" Height="28" IsEnabled="False" FontWeight="SemiBold" />
             </Grid>
             <Border x:Name="CodexStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="8" Padding="10,7" Margin="0,15,0,0">
               <TextBlock x:Name="CodexStatus" Text="Пакет проверяется" Foreground="{StaticResource Warning}" FontSize="12" FontWeight="SemiBold" />
@@ -192,11 +196,13 @@
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
               <StackPanel>
-                <TextBlock Text="OPENCODE" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#146B5A" />
-                <TextBlock Text="OpenCode" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
-                <TextBlock Text="Быстрый CLI-инструмент" Foreground="{StaticResource Muted}" Margin="0,3,0,0" />
+                <TextBlock Text="OPENCODE / 2 КОМПОНЕНТА" FontFamily="Cascadia Mono" FontSize="11" FontWeight="Bold" Foreground="#146B5A" />
+                <TextBlock Text="Комплект OpenCode" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,5,0,0" />
+                <TextBlock Text="OpenCode Desktop" FontWeight="SemiBold" Margin="0,7,0,0" />
+                <TextBlock Text="OpenCode CLI" FontWeight="SemiBold" Margin="0,3,0,0" />
+                <TextBlock Text="Графический клиент и командная строка" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,2,0,0" />
               </StackPanel>
-              <CheckBox x:Name="OpenCodeSelected" Grid.Column="1" Content="Установить" MinWidth="100" Height="28" IsEnabled="False" FontWeight="SemiBold" />
+              <CheckBox x:Name="OpenCodeSelected" Grid.Column="1" Content="Установить комплект" MinWidth="142" Height="28" IsEnabled="False" FontWeight="SemiBold" />
             </Grid>
             <Border x:Name="OpenCodeStatusBadge" Grid.Row="1" Background="{StaticResource WarningSoft}" CornerRadius="8" Padding="10,7" Margin="0,15,0,0">
               <TextBlock x:Name="OpenCodeStatus" Text="Пакет проверяется" Foreground="{StaticResource Warning}" FontSize="12" FontWeight="SemiBold" />

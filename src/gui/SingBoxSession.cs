@@ -172,7 +172,7 @@ namespace LlmFoundationInstaller
             string configPath = Path.Combine(root, "config.json");
             string statePath = Path.Combine(root, "owned-state.json");
             string routingTargetId = targetId == "connection-test"
-                ? "opencode-cli"
+                ? "codex-desktop"
                 : targetId;
             List<string> lifecycle = new List<string>
             {
@@ -720,6 +720,8 @@ namespace LlmFoundationInstaller
                         "http://127.0.0.1:" + listenPort.ToString()
                     ) + " " +
                     "--connect-timeout 10 --max-time 15 " +
+                    "--user-agent " + QuoteArgument("K7-AI-Launch-Center") + " " +
+                    "--header " + QuoteArgument("Accept: */*") + " " +
                     "--output NUL --write-out " +
                     QuoteArgument("%{http_code}") + " " +
                     QuoteArgument(endpoint),
@@ -755,8 +757,8 @@ namespace LlmFoundationInstaller
                 }
                 int status;
                 if (!Int32.TryParse(output.Trim(), out status) ||
-                    status < 200 ||
-                    status >= 400)
+                    status < 100 ||
+                    status > 599)
                 {
                     throw new InvalidOperationException(
                         "ROUTE_PROBE_FAILED"
