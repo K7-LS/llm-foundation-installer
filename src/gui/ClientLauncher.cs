@@ -159,7 +159,7 @@ namespace LlmFoundationInstaller
                 }
                 if (target.role == "desktop")
                 {
-                    if (!process.WaitForExit(1000))
+                    if (!process.WaitForExit(DesktopExitWindowMs()))
                     {
                         return new LauncherSessionResult
                         {
@@ -245,6 +245,24 @@ namespace LlmFoundationInstaller
                     process.Dispose();
                 }
             }
+        }
+
+        private static int DesktopExitWindowMs()
+        {
+            // Тестовый стенд может замедлять первый запуск свежего EXE
+            // (антивирус); окно переопределяется только в тестах.
+            string overrideValue = Environment.GetEnvironmentVariable(
+                "K7_TEST_DESKTOP_EXIT_WINDOW_MS"
+            );
+            int parsed;
+            if (!String.IsNullOrEmpty(overrideValue) &&
+                Int32.TryParse(overrideValue, out parsed) &&
+                parsed > 0 &&
+                parsed <= 60000)
+            {
+                return parsed;
+            }
+            return 1000;
         }
 
         internal static LauncherSessionResult StartAndWaitForTest(
