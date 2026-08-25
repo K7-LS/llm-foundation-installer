@@ -1262,6 +1262,7 @@ def test_direct_vpn_launch_exact_process_without_proxy_environment(
             "HTTPS_PROXY": "http://sentinel.invalid:8080",
             "ALL_PROXY": "socks5://sentinel.invalid:1080",
             "K7_SYSTEM_PROXY_TEST_SUBKEY": process_only_registry_key,
+            "K7_TEST_DESKTOP_EXIT_WINDOW_MS": "15000",
         }
     )
     registry_before = _proxy_registry_snapshot(
