@@ -247,13 +247,9 @@ def _compile_fake_singbox(path: Path) -> None:
                             "(?im)^User-Agent:\\s*K7-AI-Launch-Center"))
                     {
                         byte[] denied = Encoding.ASCII.GetBytes(
-                            "HTTP/1.1 403 Forbidden
-" +
-                            "Content-Length: 0
-" +
-                            "Connection: close
-
-"
+                            "HTTP/1.1 403 Forbidden\r\n" +
+                            "Content-Length: 0\r\n" +
+                            "Connection: close\r\n\r\n"
                         );
                         stream.Write(denied, 0, denied.Length);
                         stream.Flush();
@@ -266,13 +262,9 @@ def _compile_fake_singbox(path: Path) -> None:
                             "(?im)^User-Agent:\\s*\\S+"))
                     {
                         byte[] denied = Encoding.ASCII.GetBytes(
-                            "HTTP/1.1 403 Forbidden
-" +
-                            "Content-Length: 0
-" +
-                            "Connection: close
-
-"
+                            "HTTP/1.1 403 Forbidden\r\n" +
+                            "Content-Length: 0\r\n" +
+                            "Connection: close\r\n\r\n"
                         );
                         stream.Write(denied, 0, denied.Length);
                         stream.Flush();
@@ -998,7 +990,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
                 str(bundle / "LLMFoundationInstaller.exe"),
                 "--test-singbox-route-json",
                 str(home),
-                "SingBoxHttp",
+                route,
                 endpoint,
             ],
             cwd=bundle,
@@ -1028,7 +1020,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
                 str(bundle / "LLMFoundationInstaller.exe"),
                 "--test-singbox-route-json",
                 str(home),
-                "SingBoxHttp",
+                route,
                 endpoint,
             ],
             cwd=bundle,
