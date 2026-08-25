@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "chrome_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "chrome_proxy_url": "http://scuf-meta.ru:10894",
+  "connection_probe_url": "https://chatgpt.com/cdn-cgi/trace",
+  "singbox_version": "1.13.14"
+}

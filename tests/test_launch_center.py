@@ -481,6 +481,11 @@ def test_employee_views_expose_exact_chrome_proxy_action() -> None:
 
 
 def test_connection_ui_uses_known_working_chatgpt_trace_probe() -> None:
+    config = json.loads(
+        (REPOSITORY / "src" / "gui" / "product-config.json").read_text(
+            encoding="utf-8"
+        )
+    )
     app_source = (
         REPOSITORY / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
@@ -488,7 +493,11 @@ def test_connection_ui_uses_known_working_chatgpt_trace_probe() -> None:
         REPOSITORY / "src" / "gui" / "SingBoxSession.cs"
     ).read_text(encoding="utf-8")
 
-    assert '"https://chatgpt.com/cdn-cgi/trace"' in app_source
+    assert config["connection_probe_url"] == (
+        "https://chatgpt.com/cdn-cgi/trace"
+    )
+    assert '"https://chatgpt.com/cdn-cgi/trace"' not in app_source
+    assert "connection_probe_url" in app_source
     assert 'targetId == "connection-test"\n                ? "codex-desktop"' in (
         session_source
     )
@@ -525,12 +534,15 @@ def test_installer_binary_exposes_launch_center_fallback(
         installer,
         "--chrome-proxy-json",
     )
-    assert chrome_code == 0
-    assert chrome["executable"] == (
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    config = json.loads(
+        (REPOSITORY / "src" / "gui" / "product-config.json").read_text(
+            encoding="utf-8"
+        )
     )
+    assert chrome_code == 0
+    assert chrome["executable"] == config["chrome_path"]
     assert chrome["arguments"].startswith(
-        '--proxy-server="http://scuf-meta.ru:10894" '
+        f'--proxy-server="{config["chrome_proxy_url"]}" '
     )
     assert chrome["arguments"].endswith(
         rf'--user-data-dir="{Path.home() / "chrome-proxy"}"'

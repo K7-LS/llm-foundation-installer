@@ -3377,10 +3377,6 @@ namespace LlmFoundationInstaller
 
     internal static class ChromeProxyLauncher
     {
-        private const string ChromePath =
-            @"C:\Program Files\Google\Chrome\Application\chrome.exe";
-        private const string ProxyServer =
-            "http://scuf-meta.ru:10894";
 
         public static void Bind(UserControl view)
         {
@@ -3420,11 +3416,12 @@ namespace LlmFoundationInstaller
 
         private static ProcessStartInfo CreateStartInfo()
         {
-            if (!File.Exists(ChromePath))
+            ProductConfig config = ProductConfig.LoadEmbedded();
+            if (!File.Exists(config.chrome_path))
             {
                 throw new FileNotFoundException(
                     "Google Chrome не найден в стандартной папке.",
-                    ChromePath
+                    config.chrome_path
                 );
             }
             string profile = Path.Combine(
@@ -3435,9 +3432,9 @@ namespace LlmFoundationInstaller
             );
             return new ProcessStartInfo
             {
-                FileName = ChromePath,
+                FileName = config.chrome_path,
                 Arguments =
-                    "--proxy-server=\"" + ProxyServer + "\" " +
+                    "--proxy-server=\"" + config.chrome_proxy_url + "\" " +
                     "--user-data-dir=\"" +
                     profile.Replace("\"", "\\\"") + "\"",
                 UseShellExecute = false
@@ -3575,7 +3572,8 @@ namespace LlmFoundationInstaller
                                 bundleRoot,
                                 UserHome(),
                                 route,
-                                "https://chatgpt.com/cdn-cgi/trace"
+                                ProductConfig.LoadEmbedded()
+                                    .connection_probe_url
                             );
                         }
                     );

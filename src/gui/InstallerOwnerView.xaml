@@ -120,7 +120,7 @@
           <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <StackPanel><TextBlock Text="МАРШРУТ / БЕЗОПАСНЫЙ РЕЖИМ" Style="{StaticResource Mono}" /><TextBlock Text="Настройка локального шлюза" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+            <StackPanel><TextBlock Text="МАРШРУТ / БЕЗОПАСНЫЙ РЕЖИМ" Style="{StaticResource Mono}" /><TextBlock Text="Настройка локального шлюза" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0" /><TextBlock Text="VPN/Proxy — это только транспорт: режим не подтверждает доступность сервиса в регионе и не используется для обхода ограничений." TextWrapping="Wrap" Foreground="{StaticResource Warning}" FontSize="11" Margin="0,4,0,0" /></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <RadioButton x:Name="DirectMode" GroupName="ConnectionMode" Content="НАПРЯМУЮ" IsChecked="True" Foreground="{StaticResource Text}" Margin="0,0,16,0" />
               <RadioButton x:Name="VpnMode" GroupName="ConnectionMode" Content="VPN" Foreground="{StaticResource Text}" Margin="0,0,16,0" />
