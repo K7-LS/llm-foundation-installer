@@ -23,7 +23,7 @@ sys.modules[SPEC.name] = canary
 SPEC.loader.exec_module(canary)
 
 
-def test_hub_canary_accepts_two_products_runtime_and_three_targets(
+def test_hub_canary_accepts_single_exe_runtime_and_three_targets(
     tmp_path: Path,
 ):
     bundle = employee_bundle(tmp_path / "bundle")
@@ -40,11 +40,9 @@ def test_hub_canary_accepts_two_products_runtime_and_three_targets(
     )
 
     assert value["target"] == "employee_edition"
-    assert set(value["products"]) == {"installer", "launch_center"}
-    assert value["products"]["installer"]["sibling_handoff"] == "PASS"
+    assert set(value["products"]) == {"installer"}
     assert (
-        value["products"]["launch_center"]["sibling_handoff"]
-        == "NOT_APPLICABLE"
+        value["products"]["installer"]["launch_center_fallback"] == "PASS"
     )
     assert set(value["targets"]) == {"claude", "codex", "opencode"}
     assert value["runtime"]["status"] == "VERIFIED"
@@ -54,14 +52,14 @@ def test_hub_canary_accepts_two_products_runtime_and_three_targets(
     )
 
 
-def test_hub_canary_rejects_old_single_exe_contract(tmp_path: Path):
+def test_hub_canary_rejects_two_exe_binding_contract(tmp_path: Path):
     bundle = employee_bundle(tmp_path / "bundle")
     expected = canary_value(
         bundle,
         canary.evidence_body_sha256,
     )
     binding = dict(expected["bundle"])
-    binding.pop("launch_center_sha256")
+    binding["launch_center_sha256"] = binding["installer_sha256"]
 
     with pytest.raises(ValueError, match="not accepted"):
         canary.build_hub_canary_evidence(
@@ -97,8 +95,6 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     executable = bundle / canary.installer_release.PRODUCT_FILES["installer"]
-    sibling = bundle / canary.installer_release.PRODUCT_FILES["launch_center"]
-
     def fake_run_json(_executable, arguments, **_kwargs):
         command = arguments[0]
         if command == "--product-json":
@@ -134,12 +130,11 @@ def test_product_verifier_accepts_complete_employee_launch_catalog(
                 "install_enabled": True,
                 "provider_eligibility": "PASS",
             }
-        if command == "--resolve-sibling-json":
+        if command == "--launch-center-product-json":
             return {
-                "status": "RESOLVED",
+                "app_id": "k7-ai-launch-center",
                 "edition_id": "Employee",
                 "product_role": "LaunchCenter",
-                "executable_path": str(sibling),
             }
         raise AssertionError(arguments)
 

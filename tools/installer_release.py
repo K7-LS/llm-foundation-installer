@@ -15,14 +15,16 @@ TARGETS = ("claude", "codex", "opencode")
 SELF_TEST_TARGETS = ("codex", "claude", "opencode")
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
-    "launch_center": "K7-AI-Launch-Center-Employee-PublicUnsigned.exe",
 }
 FALLBACK_FILE = "K7-AI-Launch-Center-Employee-PublicUnsigned.cmd"
 PRODUCT_ROLES = {
     "installer": "Installer",
-    "launch_center": "LaunchCenter",
 }
-RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
+SINGBOX_VERSION = json.loads(
+    (Path(__file__).resolve().parents[1] / "src" / "gui" / "product-config.json")
+    .read_text(encoding="utf-8")
+)["singbox_version"]
+RUNTIME_FILE = f"sing-box-{SINGBOX_VERSION}-windows-amd64.zip"
 EXPECTED_TARGET_LIFECYCLE = {
     "status": "PASS",
     "plan": "READY",
@@ -37,18 +39,12 @@ EXPECTED_PRODUCT_CANARY = {
         "product": "PASS",
         "self_test": "PASS",
         "catalog": "PASS",
-        "sibling_handoff": "PASS",
-    },
-    "launch_center": {
-        "product": "PASS",
-        "self_test": "PASS",
-        "catalog": "PASS",
-        "sibling_handoff": "NOT_APPLICABLE",
+        "launch_center_fallback": "PASS",
     },
 }
 EXPECTED_RUNTIME_CANARY = {
     "id": "sing-box",
-    "version": "1.13.14",
+    "version": SINGBOX_VERSION,
     "status": "VERIFIED",
 }
 EXPECTED_BUNDLE_VERDICTS = {
@@ -72,11 +68,11 @@ INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0
 
 В комплекте пять связанных позиций:
 
-- `K7-AI-Foundation-Employee-PublicUnsigned.exe` — установка и обслуживание;
-- `K7-AI-Launch-Center-Employee-PublicUnsigned.exe` — ежедневный запуск;
-- `K7-AI-Launch-Center-Employee-PublicUnsigned.cmd` — резервный запуск
-  Launch Center через EXE установщика, если отдельный EXE заблокирован;
-- `sing-box-1.13.14-windows-amd64.zip` — среда маршрутов с проверкой хеша;
+- `K7-AI-Foundation-Employee-PublicUnsigned.exe` — единый EXE: установка,
+  обслуживание и Launch Center;
+- `K7-AI-Launch-Center-Employee-PublicUnsigned.cmd` — ярлык ежедневного
+  запуска Launch Center через тот же EXE;
+- архив `sing-box-*-windows-amd64.zip` — среда маршрутов с проверкой хеша;
 - `bundle-manifest.json` — проверяемые SHA-256 и состав комплекта.
 
 Перед запуском сверить каждый файл с `SHA256SUMS`. Публичный выпуск остаётся
@@ -100,11 +96,6 @@ class DraftRelease:
     @property
     def installer_path(self) -> Path:
         return self.product_paths["installer"]
-
-    @property
-    def launch_center_path(self) -> Path:
-        return self.product_paths["launch_center"]
-
 
 def _json_bytes(value: object) -> bytes:
     return (
@@ -210,7 +201,7 @@ def validate_bundle(bundle: Path) -> dict[str, Any]:
     if (
         not isinstance(runtime, dict)
         or runtime.get("id") != "sing-box"
-        or runtime.get("version") != "1.13.14"
+        or runtime.get("version") != SINGBOX_VERSION
         or runtime.get("file") != RUNTIME_FILE
     ):
         raise ValueError("Employee bundle runtime metadata differs")
@@ -234,9 +225,6 @@ def _validate_hub_canary(path: Path, bundle: Path) -> dict[str, Any]:
         )["sha256"],
         "installer_sha256": _file_record(
             bundle / PRODUCT_FILES["installer"]
-        )["sha256"],
-        "launch_center_sha256": _file_record(
-            bundle / PRODUCT_FILES["launch_center"]
         )["sha256"],
         "runtime_sha256": _file_record(
             bundle / RUNTIME_FILE

@@ -246,16 +246,6 @@ namespace LlmFoundationInstaller
                     ));
                     return launched.status == "PASS" ? 0 : 20;
                 }
-                if (args.Length == 2 &&
-                    args[0] == "--resolve-sibling-json")
-                {
-                    SiblingProductResolution sibling =
-                        ProductHandoff.Resolve(edition, args[1]);
-                    WriteOutput(new JavaScriptSerializer().Serialize(
-                        sibling
-                    ));
-                    return sibling.status == "RESOLVED" ? 0 : 20;
-                }
                 if (args.Length == 3 &&
                     args[0] == "--install-runtime-json")
                 {

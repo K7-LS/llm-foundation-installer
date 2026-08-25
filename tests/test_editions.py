@@ -573,22 +573,19 @@ def test_edition_builder_declares_exact_internal_artifact_names() -> None:
     source = EDITION_BUILD_SCRIPT.read_text(encoding="utf-8")
     for name in (
         "K7-AI-Foundation-Employee-InternalUnsigned.exe",
-        "K7-AI-Launch-Center-Employee-InternalUnsigned.exe",
         "K7-AI-Foundation-Owner-InternalUnsigned.exe",
-        "K7-AI-Launch-Center-Owner-InternalUnsigned.exe",
+        "K7-AI-Foundation-Simple-InternalUnsigned.exe",
     ):
         assert name in source
+    assert "K7-AI-Launch-Center-Employee-InternalUnsigned.exe" not in source
 
 
-def test_deterministic_edition_bundle_binds_both_products(
+def test_deterministic_edition_bundle_ships_single_installer_exe(
     tmp_path: Path,
 ) -> None:
     first = _build_edition(tmp_path / "first", "Employee")
     second = _build_edition(tmp_path / "second", "Employee")
-    expected = {
-        "installer": "K7-AI-Foundation-Employee-Preview.exe",
-        "launch_center": "K7-AI-Launch-Center-Employee-Preview.exe",
-    }
+    installer_name = "K7-AI-Foundation-Employee-Preview.exe"
     manifest = json.loads(
         (first / "bundle-manifest.json").read_text(encoding="utf-8")
     )
@@ -601,7 +598,8 @@ def test_deterministic_edition_bundle_binds_both_products(
     assert {
         role: value["file"]
         for role, value in manifest["products"].items()
-    } == expected
+    } == {"installer": installer_name}
+    assert not list(first.glob("K7-AI-Launch-Center-*.exe"))
     fallback_name = "K7-AI-Launch-Center-Employee-Preview.cmd"
     fallback = first / fallback_name
     fallback_record = manifest["launch_center_fallback"]
@@ -618,44 +616,39 @@ def test_deterministic_edition_bundle_binds_both_products(
         'start "" "%~dp0K7-AI-Foundation-Employee-Preview.exe" '
         "--launch-center-ui\n"
     )
-    for role, name in expected.items():
-        first_executable = first / name
-        second_executable = second / name
-        assert first_executable.read_bytes() == second_executable.read_bytes()
-        assert manifest["products"][role]["sha256"] == hashlib.sha256(
-            first_executable.read_bytes()
-        ).hexdigest()
-        self_test = subprocess.run(
-            [str(first_executable), "--self-test-json"],
-            cwd=first,
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            timeout=30,
-        )
-        assert self_test.returncode == 0, self_test.stdout + self_test.stderr
-        assert json.loads(self_test.stdout)["version"] == "0.4.0"
-    assert (first / "bundle-manifest.json").read_bytes() == (
-        second / "bundle-manifest.json"
-    ).read_bytes()
-    handoff = subprocess.run(
-        [
-            str(first / expected["installer"]),
-            "--resolve-sibling-json",
-            str(first),
-        ],
+    first_executable = first / installer_name
+    second_executable = second / installer_name
+    assert first_executable.read_bytes() == second_executable.read_bytes()
+    assert manifest["products"]["installer"]["sha256"] == hashlib.sha256(
+        first_executable.read_bytes()
+    ).hexdigest()
+    self_test = subprocess.run(
+        [str(first_executable), "--self-test-json"],
         cwd=first,
         text=True,
         capture_output=True,
         encoding="utf-8",
         timeout=30,
     )
-    assert handoff.returncode == 0, handoff.stdout + handoff.stderr
-    handoff_value = json.loads(handoff.stdout)
-    assert handoff_value["status"] == "RESOLVED"
-    assert handoff_value["executable_path"] == str(
-        (first / expected["launch_center"]).resolve()
+    assert self_test.returncode == 0, self_test.stdout + self_test.stderr
+    assert json.loads(self_test.stdout)["version"] == "0.4.0"
+    assert (first / "bundle-manifest.json").read_bytes() == (
+        second / "bundle-manifest.json"
+    ).read_bytes()
+    launch_center_product = subprocess.run(
+        [str(first_executable), "--launch-center-product-json"],
+        cwd=first,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=30,
     )
+    assert launch_center_product.returncode == 0, (
+        launch_center_product.stdout + launch_center_product.stderr
+    )
+    embedded = json.loads(launch_center_product.stdout)
+    assert embedded["product_role"] == "LaunchCenter"
+    assert embedded["edition_id"] == "Employee"
 
 
 def test_edition_bundle_carries_hash_bound_runtime_sidecar(

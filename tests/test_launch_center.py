@@ -1304,52 +1304,15 @@ def test_direct_vpn_launch_exact_process_without_proxy_environment(
     ]
 
 
-def test_installer_handoff_requires_matching_edition_and_manifest_hash(
-    tmp_path: Path,
-) -> None:
-    installer = _build(
-        tmp_path / "employee-installer",
-        edition="Employee",
-        product_role="Installer",
+def test_sibling_product_handoff_is_removed_from_single_exe() -> None:
+    """Поставка — единый EXE: LC живёт внутри установщика, соседний
+    Launch Center больше не ищется и не резолвится по хешу."""
+    gui_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((REPOSITORY / "src" / "gui").glob("*.cs"))
     )
-    employee_center = _build(
-        tmp_path / "employee-center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
-    owner_center = _build(
-        tmp_path / "owner-center",
-        edition="Owner",
-        product_role="LaunchCenter",
-    )
-
-    returncode, value = _run_json(
-        installer,
-        "--resolve-sibling-json",
-        str(employee_center),
-    )
-    assert returncode == 0
-    assert value["status"] == "RESOLVED"
-    assert value["edition_id"] == "Employee"
-    assert value["product_role"] == "LaunchCenter"
-    assert value["executable_path"] == str(
-        (employee_center / "LLMFoundationInstaller.exe").resolve()
-    )
-
-    returncode, value = _run_json(
-        installer,
-        "--resolve-sibling-json",
-        str(owner_center),
-    )
-    assert returncode == 20
-    assert value["reason"] == "SIBLING_EDITION_MISMATCH"
-
-    with (employee_center / "LLMFoundationInstaller.exe").open("ab") as stream:
-        stream.write(b"tampered")
-    returncode, value = _run_json(
-        installer,
-        "--resolve-sibling-json",
-        str(employee_center),
-    )
-    assert returncode == 20
-    assert value["reason"] == "SIBLING_INTEGRITY_FAILED"
+    assert "resolve-sibling-json" not in gui_source
+    assert "ProductHandoff" not in gui_source
+    assert "SiblingProductResolution" not in gui_source
+    assert "--launch-center-product-json" in gui_source
+    assert "--launch-center-ui" in gui_source
