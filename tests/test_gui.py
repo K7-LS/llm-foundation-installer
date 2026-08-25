@@ -1773,7 +1773,10 @@ def test_client_download_rejects_valid_signature_from_wrong_publisher(
     signed_fixture = Path(shutil.which("pwsh") or "")
     if not signed_fixture.is_file():
         pytest.skip("PowerShell 7 signed fixture is unavailable")
-    content = signed_fixture.read_bytes()
+    try:
+        content = signed_fixture.read_bytes()
+    except OSError:
+        pytest.skip("PowerShell 7 alias is not a readable signed fixture")
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1837,7 +1840,10 @@ def test_client_download_rejects_publisher_substring_instead_of_exact_name(
     signed_fixture = Path(shutil.which("pwsh") or "")
     if not signed_fixture.is_file():
         pytest.skip("PowerShell 7 signed fixture is unavailable")
-    content = signed_fixture.read_bytes()
+    try:
+        content = signed_fixture.read_bytes()
+    except OSError:
+        pytest.skip("PowerShell 7 alias is not a readable signed fixture")
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1903,7 +1909,10 @@ def test_client_download_accepts_exact_authenticode_simple_name(
     signed_fixture = Path(shutil.which("pwsh") or "")
     if not signed_fixture.is_file():
         pytest.skip("PowerShell 7 signed fixture is unavailable")
-    content = signed_fixture.read_bytes()
+    try:
+        content = signed_fixture.read_bytes()
+    except OSError:
+        pytest.skip("PowerShell 7 alias is not a readable signed fixture")
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -3631,7 +3640,6 @@ def test_launch_center_persists_independent_routes_per_client(
 def test_every_installer_has_large_labeled_component_checkboxes() -> None:
     """Every edition must expose an obvious clickable install selector."""
     for resource in (
-        "InstallerView.xaml",
         "InstallerEmployeeView.xaml",
         "InstallerOwnerView.xaml",
     ):
@@ -5752,9 +5760,6 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
-    xaml = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
-    ).read_text(encoding="utf-8")
     for required in (
         "RunPlanAndInstallAsync",
         "await RunFoundationAsync",
@@ -5766,21 +5771,25 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
         '"reverse_flow", false',
     ):
         assert required in source
-    for required in (
-        'x:Name="InstallProgress"',
-        'x:Name="Step1Badge"',
-        'x:Name="Step4Badge"',
-        'x:Name="CodexStatusBadge"',
+    for resource in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
     ):
-        assert required in xaml
+        xaml = (
+            REPOSITORY_ROOT / "src" / "gui" / resource
+        ).read_text(encoding="utf-8")
+        for required in (
+            'x:Name="InstallProgress"',
+            'x:Name="Step1Badge"',
+            'x:Name="Step4Badge"',
+            'x:Name="CodexStatusBadge"',
+        ):
+            assert required in xaml, resource
 
 
 def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
-    ).read_text(encoding="utf-8")
-    xaml = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
     ).read_text(encoding="utf-8")
     for required in (
         "ClientBootstrap.PlanTarget",
@@ -5792,15 +5801,28 @@ def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
         '"official-client-downloads-only"',
     ):
         assert required in source
+    for resource in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+    ):
+        xaml = (
+            REPOSITORY_ROOT / "src" / "gui" / resource
+        ).read_text(encoding="utf-8")
+        for required in (
+            'x:Name="Step5Badge"',
+            'x:Name="Step6Badge"',
+            'x:Name="Step7Badge"',
+        ):
+            assert required in xaml, resource
+    employee_xaml = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerEmployeeView.xaml"
+    ).read_text(encoding="utf-8")
     for required in (
-        'x:Name="Step5Badge"',
-        'x:Name="Step6Badge"',
-        'x:Name="Step7Badge"',
         'Text="Клиенты"',
         'Text="Авторизация"',
         'Text="Готово"',
     ):
-        assert required in xaml
+        assert required in employee_xaml
     assert "winget search" not in source.lower()
     assert "winget install codex" not in source.lower()
 
@@ -5949,13 +5971,24 @@ def test_employee_guide_does_not_present_connection_modes_as_policy_bypass():
 
 
 def test_installer_ui_makes_provider_policy_boundary_visible():
-    xaml = (
-        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
-    ).read_text(encoding="utf-8").lower()
     source = (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerApp.cs"
     ).read_text(encoding="utf-8")
-    assert "vpn/proxy — это только транспорт" in xaml
-    assert "не подтверждает доступность сервиса в регионе" in xaml
+    for resource in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+    ):
+        xaml = (
+            REPOSITORY_ROOT / "src" / "gui" / resource
+        ).read_text(encoding="utf-8").lower()
+        assert "vpn/proxy — это только транспорт" in xaml, resource
+        assert "не подтверждает доступность сервиса в регионе" in xaml, resource
     assert "допуск провайдера истёк или недействителен" in source
     assert "Установка Claude заблокирована" not in source
+
+
+def test_dead_shared_installer_view_is_removed():
+    """UI собирается только из edition-видов; общий InstallerView.xaml мёртв."""
+    assert not (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
+    ).exists()

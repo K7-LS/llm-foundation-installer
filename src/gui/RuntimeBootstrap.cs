@@ -434,11 +434,13 @@ namespace LlmFoundationInstaller
 
         private static void Validate(RuntimeSourceLock value)
         {
+            string pinnedVersion =
+                ProductConfig.LoadEmbedded().singbox_version;
             if (value == null ||
                 value.schema_version != 1 ||
                 value.runtime == null ||
                 value.runtime.id != "sing-box" ||
-                value.runtime.version != "1.13.14" ||
+                value.runtime.version != pinnedVersion ||
                 value.runtime.archive_kind != "zip" ||
                 value.runtime.executable_name != "sing-box.exe" ||
                 String.IsNullOrWhiteSpace(
@@ -470,8 +472,9 @@ namespace LlmFoundationInstaller
             else if (uri.Scheme != Uri.UriSchemeHttps ||
                 uri.Host != "github.com" ||
                 uri.AbsolutePath !=
-                    "/SagerNet/sing-box/releases/download/v1.13.14/" +
-                    "sing-box-1.13.14-windows-amd64.zip")
+                    "/SagerNet/sing-box/releases/download/v" +
+                    pinnedVersion + "/sing-box-" + pinnedVersion +
+                    "-windows-amd64.zip")
             {
                 throw new InvalidOperationException();
             }

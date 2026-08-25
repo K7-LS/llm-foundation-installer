@@ -15,6 +15,7 @@ param(
     [string]$DistributionMode = 'Preview',
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
+    [string]$ProductConfigPath,
     [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
     [switch]$AllowLegacyTestCompiler,
@@ -1176,6 +1177,41 @@ if ($ClientSourcesTestOnly) {
 elseif (-not $ClientSourcesOfficialOnly) {
     throw 'Non-official client sources must be marked test-only'
 }
+if ([string]::IsNullOrWhiteSpace($ProductConfigPath)) {
+    $ProductConfigPath = Join-Path (
+        $RepositoryRoot
+    ) 'src\gui\product-config.json'
+}
+else {
+    $ProductConfigPath = [IO.Path]::GetFullPath($ProductConfigPath)
+}
+$ProductConfig = $null
+try {
+    $ProductConfig = [IO.File]::ReadAllText(
+        $ProductConfigPath
+    ) | ConvertFrom-Json
+} catch {
+    throw 'ProductConfig JSON is invalid'
+}
+if ($null -eq $ProductConfig -or
+    ($ProductConfig.schema_version -isnot [int] -and
+        $ProductConfig.schema_version -isnot [long]) -or
+    [int]$ProductConfig.schema_version -ne 1 -or
+    -not [IO.Path]::IsPathRooted([string]$ProductConfig.chrome_path) -or
+    [string]$ProductConfig.chrome_path -notmatch '\\chrome\.exe$' -or
+    [string]$ProductConfig.singbox_version -notmatch '^\d+\.\d+\.\d+$') {
+    throw 'ProductConfig schema is invalid'
+}
+$ChromeProxyUri = $null
+if (-not [Uri]::TryCreate(
+        [string]$ProductConfig.chrome_proxy_url,
+        [UriKind]::Absolute,
+        [ref]$ChromeProxyUri
+    ) -or
+    -not [string]::IsNullOrWhiteSpace($ChromeProxyUri.UserInfo) -or
+    $ChromeProxyUri.Scheme -notin @('http', 'https')) {
+    throw 'ProductConfig chrome proxy URL is invalid'
+}
 $RuntimeSources = $null
 try {
     $RuntimeSources = [IO.File]::ReadAllText(
@@ -1189,7 +1225,9 @@ if ($null -eq $RuntimeSources -or
     $RuntimeSources.test_only -isnot [bool] -or
     $null -eq $RuntimeSources.runtime -or
     [string]$RuntimeSources.runtime.id -cne 'sing-box' -or
-    [string]$RuntimeSources.runtime.version -cne '1.13.14' -or
+    [string]$RuntimeSources.runtime.version -cne (
+        [string]$ProductConfig.singbox_version
+    ) -or
     [string]$RuntimeSources.runtime.archive_kind -cne 'zip' -or
     [string]$RuntimeSources.runtime.executable_name -cne 'sing-box.exe' -or
     [string]$RuntimeSources.runtime.sha256 -notmatch '^[0-9A-Fa-f]{64}$') {
@@ -1215,8 +1253,9 @@ if ([bool]$RuntimeSources.test_only) {
 elseif ($RuntimeUri.Scheme -cne 'https' -or
     $RuntimeUri.Host -cne 'github.com' -or
     $RuntimeUri.AbsolutePath -cne (
-        '/SagerNet/sing-box/releases/download/v1.13.14/' +
-        'sing-box-1.13.14-windows-amd64.zip'
+        '/SagerNet/sing-box/releases/download/v' +
+        [string]$ProductConfig.singbox_version + '/sing-box-' +
+        [string]$ProductConfig.singbox_version + '-windows-amd64.zip'
     )) {
     throw 'Official runtime source is not immutable'
 }
@@ -1227,6 +1266,17 @@ $ApprovedHosts = @(
     'openai.com',
     'apps.microsoft.com'
 )
+$ProbeUri = $null
+if (-not [Uri]::TryCreate(
+        [string]$ProductConfig.connection_probe_url,
+        [UriKind]::Absolute,
+        [ref]$ProbeUri
+    ) -or
+    -not [string]::IsNullOrWhiteSpace($ProbeUri.UserInfo) -or
+    $ProbeUri.Scheme -cne 'https' -or
+    $ApprovedHosts -cnotcontains $ProbeUri.Host) {
+    throw 'ProductConfig probe URL is not an approved official endpoint'
+}
 $SeenClientIds = @{}
 foreach ($ClientSource in @($ClientSources.clients)) {
     $ClientId = [string]$ClientSource.id
@@ -1499,6 +1549,9 @@ $ClientBootstrapSource = Join-Path (
 $BaseReleaseUpdaterSource = Join-Path (
     $RepositoryRoot
 ) 'src\gui\BaseReleaseUpdater.cs'
+$ProductConfigSource = Join-Path (
+    $RepositoryRoot
+) 'src\gui\ProductConfig.cs'
 $ClientSourcesBytes = (
     Get-Item -LiteralPath $EffectiveClientSourcesPath
 ).Length
@@ -1569,6 +1622,7 @@ $CompilerArguments = @(
     "/win32manifest:$ApplicationManifest",
     "/win32icon:$ApplicationIcon",
     "/resource:$EditionResource,EditionProfile.json",
+    "/resource:$ProductConfigPath,ProductConfig.json",
     "/resource:$TrustedResource,TrustedPackages.json",
     "/resource:$EffectiveClientSourcesPath,ClientSources.lock.json",
     "/resource:$EffectiveRuntimeSourcesPath,RuntimeSources.lock.json",
@@ -1624,7 +1678,8 @@ $CompilerArguments += @(
     $ConnectionSource,
     $LaunchRoutePreferencesSource,
     $ClientBootstrapSource,
-    $BaseReleaseUpdaterSource
+    $BaseReleaseUpdaterSource,
+    $ProductConfigSource
 )
 
 & $Compiler @CompilerArguments
