@@ -1481,14 +1481,6 @@ $EngineExtraPublic = @($EngineExtraIndex | ForEach-Object {
     (($EngineExtraPublic | ConvertTo-Json -Depth 5) + "`n"),
     $Encoding
 )
-$Views = @(
-    'InstallerEmployeeView.xaml',
-    'InstallerOwnerView.xaml',
-    'LaunchCenterEmployeeView.xaml',
-    'LaunchCenterOwnerView.xaml'
-) | ForEach-Object {
-    Join-Path $RepositoryRoot "src\gui\$_"
-}
 $RoutingDomains = Join-Path (
     $RepositoryRoot
 ) 'src\gui\launcher-routing-domains.json'
@@ -1525,9 +1517,6 @@ $AddResource = {
 )
 foreach ($EngineExtra in $EngineExtraIndex) {
     & $AddResource $EngineExtra.source_path $EngineExtra.resource_name
-}
-foreach ($View in $Views) {
-    & $AddResource $View ([IO.Path]::GetFileName($View))
 }
 foreach ($Package in $AllPackages) {
     foreach ($Record in @(Get-PackageRecords $Package)) {

@@ -31,6 +31,24 @@ def test_sdk_project_keeps_build_contracts():
     assert "app.manifest" in project
 
 
+def test_views_are_compiled_pages_not_loose_resources():
+    project = CSPROJ.read_text(encoding="utf-8")
+    for view in (
+        "InstallerEmployeeView.xaml",
+        "InstallerOwnerView.xaml",
+        "LaunchCenterEmployeeView.xaml",
+        "LaunchCenterOwnerView.xaml",
+    ):
+        assert f'<Page Include="{view}" />' in project, view
+    build_script = (
+        REPOSITORY / "tools" / "build-gui.ps1"
+    ).read_text(encoding="utf-8")
+    assert "View.xaml" not in build_script
+    loader = (GUI / "InstallerView.cs").read_text(encoding="utf-8")
+    assert "XamlReader" not in loader
+    assert "LoadComponent" in loader
+
+
 def test_build_script_delegates_compilation_to_dotnet():
     build_script = (
         REPOSITORY / "tools" / "build-gui.ps1"

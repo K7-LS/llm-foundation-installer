@@ -28,17 +28,21 @@ namespace LlmFoundationInstaller
         {
             EditionProfile edition = EditionProfile.LoadEmbedded();
             string viewResource = EditionTheme.ViewResource(edition);
-            Stream resource = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream(viewResource);
-            if (resource == null)
+            UserControl view;
+            try
             {
-                throw new InvalidOperationException(
-                    "Product UI resource is missing: " + viewResource
+                view = (UserControl)Application.LoadComponent(
+                    new Uri("/" + viewResource, UriKind.Relative)
                 );
             }
-            using (resource)
+            catch (IOException exception)
             {
-                UserControl view = (UserControl)XamlReader.Load(resource);
+                throw new InvalidOperationException(
+                    "Product UI resource is missing: " + viewResource,
+                    exception
+                );
+            }
+            {
                 if (edition.product_role == "Installer")
                 {
                     ApplyCatalog(
