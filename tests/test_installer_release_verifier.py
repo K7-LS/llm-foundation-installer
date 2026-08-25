@@ -184,10 +184,10 @@ def test_verifier_rejects_nonstable_or_wrong_release(
         )
 
 
-def test_verifier_rejects_changed_launch_center(tmp_path: Path):
+def test_verifier_rejects_changed_installer_exe(tmp_path: Path):
     root = _stable_release(tmp_path)
     release_api = _release_api(root)
-    (root / PRODUCT_FILES["launch_center"]).write_bytes(b"changed")
+    (root / PRODUCT_FILES["installer"]).write_bytes(b"changed")
 
     with pytest.raises(ValueError, match="artifact"):
         verifier.build_release_verification(

@@ -91,7 +91,7 @@ def test_draft_release_rejects_tampered_product(tmp_path: Path):
         tmp_path / "canary.json",
         release.evidence_body_sha256,
     )
-    (bundle / PRODUCT_FILES["launch_center"]).write_bytes(b"changed")
+    (bundle / PRODUCT_FILES["installer"]).write_bytes(b"changed")
 
     with pytest.raises(ValueError, match="binding"):
         release.prepare_draft_release(

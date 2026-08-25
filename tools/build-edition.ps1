@@ -33,18 +33,14 @@ if (Test-Path -LiteralPath $OutputRoot) {
     throw 'OutputRoot must not exist'
 }
 
+# Поставка издания — единый EXE: Launch Center живёт внутри установщика
+# (--launch-center-ui), отдельный LC-бинарь больше не собирается.
 $KnownInternalArtifactNames = @(
     'K7-AI-Foundation-Employee-InternalUnsigned.exe',
-    'K7-AI-Launch-Center-Employee-InternalUnsigned.exe',
     'K7-AI-Foundation-Owner-InternalUnsigned.exe',
-    'K7-AI-Launch-Center-Owner-InternalUnsigned.exe',
-    'K7-AI-Foundation-Simple-InternalUnsigned.exe',
-    'K7-AI-Launch-Center-Simple-InternalUnsigned.exe'
+    'K7-AI-Foundation-Simple-InternalUnsigned.exe'
 )
 $InstallerName = "K7-AI-Foundation-$Edition-$DistributionMode.exe"
-$LaunchCenterName = (
-    "K7-AI-Launch-Center-$Edition-$DistributionMode.exe"
-)
 $LaunchCenterFallbackName = (
     "K7-AI-Launch-Center-$Edition-$DistributionMode.cmd"
 )
@@ -55,8 +51,7 @@ $ExpectedChildDistributionMode = switch ($DistributionMode) {
     'PublicSigned' { 'public_signed' }
 }
 if ($DistributionMode -ceq 'InternalUnsigned' -and
-    ($KnownInternalArtifactNames -cnotcontains $InstallerName -or
-        $KnownInternalArtifactNames -cnotcontains $LaunchCenterName)) {
+    $KnownInternalArtifactNames -cnotcontains $InstallerName) {
     throw 'Internal artifact naming contract is invalid'
 }
 
@@ -107,9 +102,19 @@ else {
     $RuntimeFileName = [IO.Path]::GetFileName(
         $RuntimeUri.AbsolutePath
     )
+    $PinnedSingBoxVersion = [string](
+        Get-Content -LiteralPath (
+            Join-Path $RepositoryRoot 'src\gui\product-config.json'
+        ) -Raw | ConvertFrom-Json
+    ).singbox_version
+    if ($PinnedSingBoxVersion -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'ProductConfig sing-box version is invalid'
+    }
     if ([string]::IsNullOrWhiteSpace($RuntimeFileName) -or
         [string]$RuntimeLockValue.runtime.id -cne 'sing-box' -or
-        [string]$RuntimeLockValue.runtime.version -cne '1.13.14' -or
+        [string]$RuntimeLockValue.runtime.version -cne (
+            $PinnedSingBoxVersion
+        ) -or
         [string]$RuntimeLockValue.runtime.sha256 -cne (
             Get-Sha256 $RuntimeArchive
         ) -or
@@ -118,7 +123,7 @@ else {
     }
     $RuntimeRecord = [ordered]@{
         id = 'sing-box'
-        version = '1.13.14'
+        version = $PinnedSingBoxVersion
         file = $RuntimeFileName
         sha256 = Get-Sha256 $RuntimeArchive
         bytes = (Get-Item -LiteralPath $RuntimeArchive).Length
@@ -204,35 +209,19 @@ function Read-ChildManifest {
 
 $WorkRoot = $OutputRoot + '.build-' + [Guid]::NewGuid().ToString('N')
 $InstallerRoot = Join-Path $WorkRoot 'installer'
-$LaunchCenterRoot = Join-Path $WorkRoot 'launch-center'
 $OutputCreated = $false
 try {
     [IO.Directory]::CreateDirectory($WorkRoot) | Out-Null
     Invoke-ProductBuild -Role 'Installer' -Destination $InstallerRoot
-    Invoke-ProductBuild -Role 'LaunchCenter' -Destination $LaunchCenterRoot
     $InstallerManifest = Read-ChildManifest `
         -Root $InstallerRoot -Role 'Installer'
-    $LaunchCenterManifest = Read-ChildManifest `
-        -Root $LaunchCenterRoot -Role 'LaunchCenter'
-    if ((@($InstallerManifest.targets) -join ',') -cne
-        (@($LaunchCenterManifest.targets) -join ',') -or
-        [string]$InstallerManifest.theme_id -cne
-            [string]$LaunchCenterManifest.theme_id -or
-        [string]$InstallerManifest.version -cne
-            [string]$LaunchCenterManifest.version) {
-        throw 'Child product contracts differ'
-    }
 
     [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
     $OutputCreated = $true
     $InstallerOutput = Join-Path $OutputRoot $InstallerName
-    $LaunchCenterOutput = Join-Path $OutputRoot $LaunchCenterName
     Copy-Item -LiteralPath (
         Join-Path $InstallerRoot 'LLMFoundationInstaller.exe'
     ) -Destination $InstallerOutput
-    Copy-Item -LiteralPath (
-        Join-Path $LaunchCenterRoot 'LLMFoundationInstaller.exe'
-    ) -Destination $LaunchCenterOutput
     $LaunchCenterFallbackOutput = Join-Path (
         $OutputRoot
     ) $LaunchCenterFallbackName
@@ -285,14 +274,6 @@ try {
                 file = $InstallerName
                 sha256 = Get-Sha256 $InstallerOutput
                 bytes = (Get-Item -LiteralPath $InstallerOutput).Length
-            }
-            launch_center = [ordered]@{
-                product_role = 'LaunchCenter'
-                file = $LaunchCenterName
-                sha256 = Get-Sha256 $LaunchCenterOutput
-                bytes = (
-                    Get-Item -LiteralPath $LaunchCenterOutput
-                ).Length
             }
         }
     }

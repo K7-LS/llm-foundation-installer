@@ -178,9 +178,11 @@ jobs:
                 $manifest.verdicts.PROGRAM_RELEASE -cne '3/3') {
               throw "Release manifest is not PublicUnsigned-ready: $root"
             }
+            if ($null -ne $manifest.products.launch_center) {
+              throw "Bundle still ships a second launch-center EXE: $root"
+            }
             foreach ($product in @(
-              $manifest.products.installer.file,
-              $manifest.products.launch_center.file
+              $manifest.products.installer.file
             )) {
               $exe = Join-Path $root $product
               $selfTest = Invoke-JsonProduct `

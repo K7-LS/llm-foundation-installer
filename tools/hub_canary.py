@@ -58,7 +58,6 @@ def build_hub_canary_evidence(
         == {
             "manifest_sha256",
             "installer_sha256",
-            "launch_center_sha256",
             "runtime_sha256",
         }
         and all(_valid_sha256(value) for value in bundle_binding.values())
@@ -200,23 +199,20 @@ def _verify_product(
     ):
         raise ValueError(f"Employee {product} catalog differs")
     if product == "installer":
-        sibling = _run_json(
+        fallback = _run_json(
             executable,
-            ["--resolve-sibling-json", str(bundle)],
+            ["--launch-center-product-json"],
             cwd=bundle,
             timeout=30,
         )
         if (
-            sibling.get("status") != "RESOLVED"
-            or sibling.get("edition_id") != "Employee"
-            or sibling.get("product_role") != "LaunchCenter"
-            or Path(str(sibling.get("executable_path"))).resolve()
-            != (
-                bundle
-                / installer_release.PRODUCT_FILES["launch_center"]
-            ).resolve()
+            fallback.get("app_id") != "k7-ai-launch-center"
+            or fallback.get("edition_id") != "Employee"
+            or fallback.get("product_role") != "LaunchCenter"
         ):
-            raise ValueError("Employee Installer sibling handoff differs")
+            raise ValueError(
+                "Employee Installer launch-center fallback differs"
+            )
     return dict(installer_release.EXPECTED_PRODUCT_CANARY[product])
 
 
@@ -310,7 +306,7 @@ def _verify_runtime(
     if (
         value.get("status") != "VERIFIED"
         or value.get("runtime_id") != "sing-box"
-        or value.get("version") != "1.13.14"
+        or value.get("version") != installer_release.SINGBOX_VERSION
         or value.get("archive_sha256")
         != _sha256(bundle / installer_release.RUNTIME_FILE)
     ):
@@ -347,13 +343,13 @@ def main() -> int:
         "would_execute": bool(arguments.execute_approved_hub_canary),
         "version": installer_release.VERSION,
         "products": list(installer_release.PRODUCT_FILES),
-        "runtime": "sing-box-1.13.14",
+        "runtime": f"sing-box-{installer_release.SINGBOX_VERSION}",
         "targets": list(installer_release.TARGETS),
         "workflow": [
             "product-identity",
             "self-test",
             "catalog",
-            "sibling-handoff",
+            "launch-center-fallback",
             "runtime-bootstrap",
             "plan",
             "install",
@@ -384,7 +380,7 @@ def main() -> int:
     ) as raw:
         isolated_root = Path(raw)
         runtime = _verify_runtime(
-            executables["launch_center"],
+            executables["installer"],
             bundle,
             isolated_root / "runtime-home",
         )
@@ -403,9 +399,6 @@ def main() -> int:
                 bundle / "bundle-manifest.json"
             ),
             "installer_sha256": _sha256(executables["installer"]),
-            "launch_center_sha256": _sha256(
-                executables["launch_center"]
-            ),
             "runtime_sha256": _sha256(
                 bundle / installer_release.RUNTIME_FILE
             ),

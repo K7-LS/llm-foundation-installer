@@ -7,7 +7,6 @@ from pathlib import Path
 
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
-    "launch_center": "K7-AI-Launch-Center-Employee-PublicUnsigned.exe",
 }
 FALLBACK_FILE = "K7-AI-Launch-Center-Employee-PublicUnsigned.cmd"
 RUNTIME_FILE = "sing-box-1.13.14-windows-amd64.zip"
@@ -35,7 +34,6 @@ def write(path: Path, payload: bytes) -> None:
 def employee_bundle(root: Path) -> Path:
     root.mkdir(parents=True)
     write(root / PRODUCT_FILES["installer"], b"MZemployee-installer")
-    write(root / PRODUCT_FILES["launch_center"], b"MZemployee-launch-center")
     write(
         root / FALLBACK_FILE,
         (
@@ -84,11 +82,6 @@ def employee_bundle(root: Path) -> Path:
                 "file": PRODUCT_FILES["installer"],
                 **record(root / PRODUCT_FILES["installer"]),
             },
-            "launch_center": {
-                "product_role": "LaunchCenter",
-                "file": PRODUCT_FILES["launch_center"],
-                **record(root / PRODUCT_FILES["launch_center"]),
-            },
         },
     }
     write(root / "bundle-manifest.json", json_bytes(manifest))
@@ -101,22 +94,13 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
         "installer_sha256": record(
             bundle / PRODUCT_FILES["installer"]
         )["sha256"],
-        "launch_center_sha256": record(
-            bundle / PRODUCT_FILES["launch_center"]
-        )["sha256"],
         "runtime_sha256": record(bundle / RUNTIME_FILE)["sha256"],
     }
     installer_result = {
         "product": "PASS",
         "self_test": "PASS",
         "catalog": "PASS",
-        "sibling_handoff": "PASS",
-    }
-    launch_center_result = {
-        "product": "PASS",
-        "self_test": "PASS",
-        "catalog": "PASS",
-        "sibling_handoff": "NOT_APPLICABLE",
+        "launch_center_fallback": "PASS",
     }
     target_result = {
         "status": "PASS",
@@ -135,7 +119,6 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
         "bundle": binding,
         "products": {
             "installer": installer_result,
-            "launch_center": launch_center_result,
         },
         "runtime": {
             "id": "sing-box",
