@@ -102,20 +102,7 @@ if (Test-Path -LiteralPath $OutputRoot) {
     throw 'OutputRoot must not exist'
 }
 
-function Get-Sha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $Stream = [IO.File]::OpenRead($Path)
-    $Algorithm = [Security.Cryptography.SHA256]::Create()
-    try {
-        return -join (
-            $Algorithm.ComputeHash($Stream) |
-                ForEach-Object { $_.ToString('x2') }
-        )
-    } finally {
-        $Algorithm.Dispose()
-        $Stream.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 function Assert-ExactJsonProperties {
     param(
