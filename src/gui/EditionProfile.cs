@@ -33,59 +33,11 @@ namespace LlmFoundationInstaller
 
         public static EditionProfile LoadEmbedded()
         {
-            Stream resource = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("EditionProfile.json");
-            if (resource == null)
-            {
-                throw new InvalidOperationException(
-                    "Embedded edition profile is missing"
-                );
-            }
-
-            string json;
-            using (resource)
-            using (StreamReader reader = new StreamReader(
-                resource,
-                new UTF8Encoding(false),
-                true
-            ))
-            {
-                json = reader.ReadToEnd();
-            }
-
-            JavaScriptSerializer serializer = new JavaScriptSerializer();
-            Dictionary<string, object> document;
-            EditionProfile profile;
-            try
-            {
-                document = serializer.Deserialize<
-                    Dictionary<string, object>
-                >(json);
-                profile = serializer.Deserialize<EditionProfile>(json);
-            }
-            catch (Exception exception)
-            {
-                throw new InvalidOperationException(
-                    "Embedded edition profile is invalid",
-                    exception
-                );
-            }
-
-            if (document == null ||
-                !document.Keys.OrderBy(value => value, StringComparer.Ordinal)
-                    .SequenceEqual(
-                        ExactProperties.OrderBy(
-                            value => value,
-                            StringComparer.Ordinal
-                        ),
-                        StringComparer.Ordinal
-                    ))
-            {
-                throw new InvalidOperationException(
-                    "Embedded edition profile properties differ"
-                );
-            }
-
+            EditionProfile profile = EmbeddedJson.Load<EditionProfile>(
+                "EditionProfile.json",
+                ExactProperties,
+                "Embedded edition profile"
+            );
             profile.Validate();
             return profile;
         }

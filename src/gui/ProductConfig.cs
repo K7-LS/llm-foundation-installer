@@ -28,59 +28,11 @@ namespace LlmFoundationInstaller
 
         public static ProductConfig LoadEmbedded()
         {
-            Stream resource = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream("ProductConfig.json");
-            if (resource == null)
-            {
-                throw new InvalidOperationException(
-                    "Embedded product config is missing"
-                );
-            }
-
-            string json;
-            using (resource)
-            using (StreamReader reader = new StreamReader(
-                resource,
-                new UTF8Encoding(false),
-                true
-            ))
-            {
-                json = reader.ReadToEnd();
-            }
-
-            JavaScriptSerializer serializer = new JavaScriptSerializer();
-            Dictionary<string, object> document;
-            ProductConfig config;
-            try
-            {
-                document = serializer.Deserialize<
-                    Dictionary<string, object>
-                >(json);
-                config = serializer.Deserialize<ProductConfig>(json);
-            }
-            catch (Exception exception)
-            {
-                throw new InvalidOperationException(
-                    "Embedded product config is invalid",
-                    exception
-                );
-            }
-
-            if (document == null ||
-                !document.Keys.OrderBy(value => value, StringComparer.Ordinal)
-                    .SequenceEqual(
-                        ExactProperties.OrderBy(
-                            value => value,
-                            StringComparer.Ordinal
-                        ),
-                        StringComparer.Ordinal
-                    ))
-            {
-                throw new InvalidOperationException(
-                    "Embedded product config properties differ"
-                );
-            }
-
+            ProductConfig config = EmbeddedJson.Load<ProductConfig>(
+                "ProductConfig.json",
+                ExactProperties,
+                "Embedded product config"
+            );
             config.Validate();
             return config;
         }
