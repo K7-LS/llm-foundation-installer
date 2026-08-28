@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner', 'Simple')]
+    [ValidateSet('Employee', 'Owner')]
     [string]$Edition,
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
@@ -37,8 +37,7 @@ if (Test-Path -LiteralPath $OutputRoot) {
 # (--launch-center-ui), отдельный LC-бинарь больше не собирается.
 $KnownInternalArtifactNames = @(
     'K7-AI-Foundation-Employee-InternalUnsigned.exe',
-    'K7-AI-Foundation-Owner-InternalUnsigned.exe',
-    'K7-AI-Foundation-Simple-InternalUnsigned.exe'
+    'K7-AI-Foundation-Owner-InternalUnsigned.exe'
 )
 $InstallerName = "K7-AI-Foundation-$Edition-$DistributionMode.exe"
 $LaunchCenterFallbackName = (
