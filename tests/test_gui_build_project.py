@@ -49,6 +49,16 @@ def test_views_are_compiled_pages_not_loose_resources():
     assert "LoadComponent" in loader
 
 
+def test_restore_is_offline_by_config():
+    # Ни одного PackageReference в репозитории нет — implicit restore не должен
+    # ходить в сеть: источники NuGet очищены корневым nuget.config.
+    config = (REPOSITORY / "nuget.config").read_text(encoding="utf-8")
+    assert "<clear />" in config
+    assert "<add " not in config
+    project = CSPROJ.read_text(encoding="utf-8")
+    assert "PackageReference" not in project
+
+
 def test_build_script_delegates_compilation_to_dotnet():
     build_script = (
         REPOSITORY / "tools" / "build-gui.ps1"

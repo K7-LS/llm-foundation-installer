@@ -8,23 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Get-Sha256([string]$Path) {
-    $Algorithm = [Security.Cryptography.SHA256]::Create()
-    try {
-        $Input = [IO.File]::OpenRead($Path)
-        try {
-            return ([BitConverter]::ToString($Algorithm.ComputeHash($Input))).Replace(
-                '-', ''
-            ).ToLowerInvariant()
-        }
-        finally {
-            $Input.Dispose()
-        }
-    }
-    finally {
-        $Algorithm.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $SourcePath = Join-Path $RepositoryRoot 'src\officecli-shim\Program.cs'
@@ -34,35 +18,7 @@ if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf) -or
     throw 'OfficeCLI shim source or policy is missing'
 }
 
-$CompilerCandidates = New-Object System.Collections.Generic.List[string]
-$VsWhere = Join-Path ${env:ProgramFiles(x86)} (
-    'Microsoft Visual Studio\Installer\vswhere.exe'
-)
-if (Test-Path -LiteralPath $VsWhere -PathType Leaf) {
-    @(& $VsWhere -products '*' -requires Microsoft.Component.MSBuild `
-        -property installationPath) | ForEach-Object {
-        if (-not [string]::IsNullOrWhiteSpace($_)) {
-            $CompilerCandidates.Add((Join-Path $_ 'MSBuild\Current\Bin\Roslyn\csc.exe'))
-        }
-    }
-}
-foreach ($VisualStudioRoot in @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio'),
-    (Join-Path $env:ProgramFiles 'Microsoft Visual Studio')
-)) {
-    if (Test-Path -LiteralPath $VisualStudioRoot -PathType Container) {
-        @(Get-ChildItem -Path (Join-Path $VisualStudioRoot `
-            '*\*\MSBuild\Current\Bin\Roslyn\csc.exe') -File `
-            -ErrorAction SilentlyContinue | Sort-Object -Property FullName -Descending) |
-            ForEach-Object { $CompilerCandidates.Add($_.FullName) }
-    }
-}
-$Compiler = @($CompilerCandidates | Where-Object {
-    Test-Path -LiteralPath $_ -PathType Leaf
-} | Select-Object -Unique) | Select-Object -First 1
-if ([string]::IsNullOrWhiteSpace($Compiler)) {
-    throw 'A Roslyn C# compiler is required for a deterministic OfficeCLI shim build.'
-}
+$Compiler = Find-RoslynCompiler -Purpose 'a deterministic OfficeCLI shim build'
 
 $Destination = [IO.Path]::GetFullPath($OutputPath)
 $DestinationDirectory = Split-Path -Parent $Destination
