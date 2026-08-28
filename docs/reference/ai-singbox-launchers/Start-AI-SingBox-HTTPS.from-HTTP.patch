@@ -1,0 +1,69 @@
+--- Start-AI-SingBox-HTTP.ps1	2026-07-28 19:25:50.000000000 +0300
++++ Start-AI-SingBox-HTTPS.ps1	2026-07-28 19:25:51.000000000 +0300
+@@ -1,6 +1,6 @@
+ ﻿<#
+ .SYNOPSIS
+-Запускает выбранное AI-приложение через sing-box и обычный HTTP upstream-прокси.
++Запускает выбранное AI-приложение через sing-box и HTTPS upstream-прокси.
+ 
+ .DESCRIPTION
+ Поднимает временный локальный mixed-прокси sing-box, включает пользовательский
+@@ -30,8 +30,8 @@
+ )
+ 
+ $ErrorActionPreference = "Stop"
+-$script:Transport = "HTTP"
+-$script:StateStem = ".ai-singbox-http"
++$script:Transport = "HTTPS"
++$script:StateStem = ".ai-singbox-https"
+ $script:ConfigPath = Join-Path $env:USERPROFILE "$($script:StateStem).json"
+ $script:CredPath = Join-Path $env:USERPROFILE "$($script:StateStem).cred"
+ $script:DownloadUrl = "https://github.com/SagerNet/sing-box/releases/download/v1.13.14/sing-box-1.13.14-windows-amd64.zip"
+@@ -142,12 +142,12 @@
+         }
+     }
+ 
+-    $server = if ($saved -and $saved.server) { [string]$saved.server } else { Read-Host "Адрес HTTP-прокси" }
++    $server = if ($saved -and $saved.server) { [string]$saved.server } else { Read-Host "Адрес HTTPS-прокси" }
+     if ([string]::IsNullOrWhiteSpace($server)) {
+         throw "Адрес прокси не указан."
+     }
+ 
+-    $portText = if ($saved -and $saved.port) { [string]$saved.port } else { Read-Host "Порт HTTP-прокси" }
++    $portText = if ($saved -and $saved.port) { [string]$saved.port } else { Read-Host "Порт HTTPS-прокси" }
+     $port = 0
+     if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+         throw "Некорректный порт прокси: $portText"
+@@ -243,6 +243,12 @@
+         server_port = [int]$ProxyConfig.port
+         username = $ProxyConfig.username
+         password = $PlainPassword
++        tls = [ordered]@{
++            enabled = $true
++            server_name = $ProxyConfig.server
++            insecure = $false
++            alpn = @("http/1.1")
++        }
+     }
+ 
+     return [ordered]@{
+@@ -879,8 +885,8 @@
+         -ListenPort 18082 `
+         -ProcessNames @("ChatGPT.exe")
+ 
+-    if ($config.outbounds[0].Contains("tls")) {
+-        throw "SelfTest: HTTP transport must not contain TLS settings."
++    if (-not $config.outbounds[0].tls.enabled) {
++        throw "SelfTest: HTTPS transport must enable TLS."
+     }
+     if ($config.route.final -ne "direct") {
+         throw "SelfTest: final route must be direct."
+@@ -922,7 +928,7 @@
+         }
+     }
+ 
+-    Write-Host "HTTP launcher self-test passed." -ForegroundColor Green
++    Write-Host "HTTPS launcher self-test passed." -ForegroundColor Green
+     & $env:ComSpec /c exit 0
+ }
+ 

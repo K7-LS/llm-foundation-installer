@@ -9,10 +9,12 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 REFERENCE = REPOSITORY / "docs" / "reference" / "ai-singbox-launchers"
 MANIFEST = REFERENCE / "SOURCE-MANIFEST.json"
 EXPECTED = {
-    "Start-AI-SingBox-HTTPS.ps1": {
-        "bytes": 36565,
+    # HTTPS-вариант различался с HTTP на 22 строки и хранится diff-патчем
+    # (кандидат №14 этапа 2а); SHA исходника — в compression_note манифеста.
+    "Start-AI-SingBox-HTTPS.from-HTTP.patch": {
+        "bytes": 2867,
         "sha256": (
-            "5b5a10ae706e479f08c79377abc204e682f73494ee83e98117af7a7ba91f661d"
+            "1bec8786b09a36eeb740e4a26955a327edaa3696321dc04a8edb8b658bb85365"
         ),
     },
     "Start-AI-SingBox-HTTP.ps1": {
