@@ -150,15 +150,6 @@ def _render_guide_preview(
             "SignalConsole",
             True,
         ),
-        (
-            "Simple",
-            "Installer",
-            ["claude", "codex", "opencode"],
-            ["claude", "codex", "opencode"],
-            True,
-            "K7Signal",
-            False,
-        ),
     ],
 )
 def test_embedded_edition_contract(
@@ -281,8 +272,6 @@ def test_owner_launch_center_separates_claude_technical_and_provider_state() -> 
         ("Employee", "LaunchCenter"),
         ("Owner", "Installer"),
         ("Owner", "LaunchCenter"),
-        ("Simple", "Installer"),
-        ("Simple", "LaunchCenter"),
     ],
 )
 def test_each_edition_product_renders_its_own_preview(
@@ -574,9 +563,9 @@ def test_edition_builder_declares_exact_internal_artifact_names() -> None:
     for name in (
         "K7-AI-Foundation-Employee-InternalUnsigned.exe",
         "K7-AI-Foundation-Owner-InternalUnsigned.exe",
-        "K7-AI-Foundation-Simple-InternalUnsigned.exe",
     ):
         assert name in source
+    assert "Simple" not in source
     assert "K7-AI-Launch-Center-Employee-InternalUnsigned.exe" not in source
 
 

@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner', 'Simple')]
+    [ValidateSet('Employee', 'Owner')]
     [string]$Edition,
     [Parameter(Mandatory = $true)]
     [ValidateSet('Installer', 'LaunchCenter')]
@@ -102,20 +102,7 @@ if (Test-Path -LiteralPath $OutputRoot) {
     throw 'OutputRoot must not exist'
 }
 
-function Get-Sha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $Stream = [IO.File]::OpenRead($Path)
-    $Algorithm = [Security.Cryptography.SHA256]::Create()
-    try {
-        return -join (
-            $Algorithm.ComputeHash($Stream) |
-                ForEach-Object { $_.ToString('x2') }
-        )
-    } finally {
-        $Algorithm.Dispose()
-        $Stream.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 function Assert-ExactJsonProperties {
     param(
@@ -1310,22 +1297,10 @@ $EditionContract = if ($Edition -ceq 'Owner') {
         product_role = $ProductRole
     }
 }
-elseif ($Edition -ceq 'Employee') {
+else {
     [ordered]@{
         edition_id = 'Employee'
         display_name = 'K-7 AI Foundation Employee'
-        distribution_allowed = $true
-        included_target_ids = @('claude', 'codex', 'opencode')
-        required_target_ids = @('claude', 'codex', 'opencode')
-        theme_id = 'K7Signal'
-        owner_controlled = $false
-        product_role = $ProductRole
-    }
-}
-else {
-    [ordered]@{
-        edition_id = 'Simple'
-        display_name = 'K-7 AI Foundation Simple'
         distribution_allowed = $true
         included_target_ids = @('claude', 'codex', 'opencode')
         required_target_ids = @('claude', 'codex', 'opencode')

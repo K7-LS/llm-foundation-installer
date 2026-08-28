@@ -49,6 +49,16 @@ def test_views_are_compiled_pages_not_loose_resources():
     assert "LoadComponent" in loader
 
 
+def test_restore_is_offline_by_config():
+    # Ни одного PackageReference в репозитории нет — implicit restore не должен
+    # ходить в сеть: источники NuGet очищены корневым nuget.config.
+    config = (REPOSITORY / "nuget.config").read_text(encoding="utf-8")
+    assert "<clear />" in config
+    assert "<add " not in config
+    project = CSPROJ.read_text(encoding="utf-8")
+    assert "PackageReference" not in project
+
+
 def test_build_script_delegates_compilation_to_dotnet():
     build_script = (
         REPOSITORY / "tools" / "build-gui.ps1"
@@ -59,3 +69,21 @@ def test_build_script_delegates_compilation_to_dotnet():
     assert "Roslyn" not in build_script
     assert "vswhere.exe" not in build_script
     assert "AllowLegacyTestCompiler" not in build_script
+
+
+def test_installer_app_stays_thin():
+    # Ф2-храповик (перенесён из удалённого test_gui_modules.py, п.27):
+    # InstallerApp.cs держит только Program и assembly-метаданные; порог
+    # ужесточён 1300 → 1200 (факт ~1134). Пофайловая карта типов удалена —
+    # она покрывала 14 модулей из 30 и требовала ручного обновления.
+    source = (GUI / "InstallerApp.cs").read_text(encoding="utf-8")
+    assert "[assembly: AssemblyTitle" in source
+    headers = {
+        line.split(" class ", 1)[1].split(" ")[0].split(":")[0]
+        for line in source.splitlines()
+        if line.startswith(
+            ("    internal sealed class ", "    internal static class ")
+        )
+    }
+    assert headers == {"Program"}
+    assert len(source.splitlines()) < 1200
