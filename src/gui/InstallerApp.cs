@@ -653,15 +653,6 @@ namespace LlmFoundationInstaller
                         return 2;
                     }
                 }
-                if (args.Length == 1 && args[0] == "--platform-json")
-                {
-                    PlatformCompatibilityResult platform =
-                        PlatformCompatibility.Inspect();
-                    WriteOutput(new JavaScriptSerializer().Serialize(
-                        platform
-                    ));
-                    return platform.status == "READY" ? 0 : 20;
-                }
                 if (args.Length == 4 &&
                     args[0] == "--evaluate-platform-json")
                 {
@@ -715,28 +706,6 @@ namespace LlmFoundationInstaller
                             bundleRoot,
                             args[1],
                             args[2]
-                        )
-                    ));
-                    return 0;
-                }
-                if (args.Length == 2 &&
-                    args[0] == "--store-client-json")
-                {
-                    WriteOutput(new JavaScriptSerializer().Serialize(
-                        ClientBootstrap.ProbeStore(
-                            bundleRoot,
-                            args[1]
-                        )
-                    ));
-                    return 0;
-                }
-                if (args.Length == 2 &&
-                    args[0] == "--open-store-client-json")
-                {
-                    WriteOutput(new JavaScriptSerializer().Serialize(
-                        ClientBootstrap.OpenStoreSource(
-                            bundleRoot,
-                            args[1]
                         )
                     ));
                     return 0;
