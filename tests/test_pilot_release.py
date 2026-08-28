@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pytest
 
+APP_VERSION = (
+    Path(__file__).resolve().parents[1] / "APP_VERSION"
+).read_text(encoding="utf-8").strip()
+
 from tests.edition_release_fixtures import (
     PRODUCT_FILES,
     RUNTIME_FILE,
@@ -100,7 +104,7 @@ def test_pilot_finalization_preserves_both_products_and_runtime(
     manifest = json.loads(
         first.release_manifest_path.read_text(encoding="utf-8")
     )
-    assert manifest["tag"] == "employee-v0.4.0"
+    assert manifest["tag"] == f"employee-v{APP_VERSION}"
     assert manifest["channel"] == "stable"
     assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
     assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"

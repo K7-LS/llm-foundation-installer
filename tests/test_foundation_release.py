@@ -8,6 +8,10 @@ from pathlib import Path
 
 import pytest
 
+APP_VERSION = (
+    Path(__file__).resolve().parents[1] / "APP_VERSION"
+).read_text(encoding="utf-8").strip()
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FOUNDATION_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -75,7 +79,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "schema_version": 1,
         "generated_at_utc": "2026-07-27T12:00:00Z",
         "engine_version": FOUNDATION_VERSION,
-        "installer_version": "0.4.0",
+        "installer_version": APP_VERSION,
         "source": {
             "repository": (
                 "https://github.com/K7-LS/"

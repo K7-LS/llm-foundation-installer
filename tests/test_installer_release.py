@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+APP_VERSION = (REPOSITORY_ROOT / "APP_VERSION").read_text(
+    encoding="utf-8"
+).strip()
+
 from tests.edition_release_fixtures import (
     FALLBACK_FILE,
     PRODUCT_FILES,
@@ -67,7 +72,7 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     manifest = json.loads(
         first.release_manifest_path.read_text(encoding="utf-8")
     )
-    assert manifest["tag"] == "employee-v0.4.0"
+    assert manifest["tag"] == f"employee-v{APP_VERSION}"
     assert manifest["channel"] == "draft"
     assert manifest["products"] == {
         key: record(bundle / filename)
@@ -157,3 +162,13 @@ def test_draft_release_rejects_missing_runtime(tmp_path: Path):
 
     with pytest.raises(ValueError, match="inventory"):
         release.validate_bundle(bundle)
+
+
+def test_release_tools_read_the_product_version_from_app_version() -> None:
+    # Кандидат №18: версия продукта живёт в APP_VERSION. Инструменты релиза
+    # и их тесты не должны хардкодить её заново — иначе каждый бамп это
+    # ручная правка десятка мест.
+    for name in ("installer_release.py", "foundation_release.py"):
+        source = (REPOSITORY_ROOT / "tools" / name).read_text(encoding="utf-8")
+        assert "APP_VERSION" in source, name
+        assert f'"{APP_VERSION}"' not in source, name
