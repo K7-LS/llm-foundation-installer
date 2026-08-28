@@ -3,10 +3,11 @@
   "source_kind": "owner_supplied_behavior_reference",
   "received_date": "2026-07-28",
   "executed_during_intake": false,
+  "compression_note": "Скрипты HTTP и HTTPS различались на 22 строки; HTTPS-вариант хранится unified-diff-патчем к HTTP-варианту (восстановление: patch/git apply). SHA исходного Start-AI-SingBox-HTTPS.ps1: 5b5a10ae706e479f08c79377abc204e682f73494ee83e98117af7a7ba91f661d, 36565 байт.",
   "files": {
-    "Start-AI-SingBox-HTTPS.ps1": {
-      "bytes": 36565,
-      "sha256": "5b5a10ae706e479f08c79377abc204e682f73494ee83e98117af7a7ba91f661d",
+    "Start-AI-SingBox-HTTPS.from-HTTP.patch": {
+      "bytes": 2867,
+      "sha256": "1bec8786b09a36eeb740e4a26955a327edaa3696321dc04a8edb8b658bb85365",
       "contains_credentials": false
     },
     "Start-AI-SingBox-HTTP.ps1": {
