@@ -126,8 +126,8 @@ namespace LlmFoundationInstaller
                             row.client_state == "not_checked");
                     status.Foreground = new SolidColorBrush(
                         ready
-                            ? Color.FromRgb(22, 122, 88)
-                            : Color.FromRgb(161, 92, 0)
+                            ? StatusPalette.Ok
+                            : StatusPalette.Warn
                     );
                     status.ToolTip = row.package_state == "accepted"
                         ? (row.id == "codex" &&
@@ -141,8 +141,8 @@ namespace LlmFoundationInstaller
                     {
                         badge.Background = new SolidColorBrush(
                             ready
-                                ? Color.FromRgb(231, 246, 240)
-                                : Color.FromRgb(255, 244, 222)
+                                ? StatusPalette.OkSurface
+                                : StatusPalette.WarnSurface
                         );
                     }
                 }
@@ -172,16 +172,16 @@ namespace LlmFoundationInstaller
                         : "Установка заблокирована: нет принятых пакетов клиентов.");
                 statusText.Foreground = new SolidColorBrush(
                     catalog.install_enabled
-                        ? Color.FromRgb(22, 122, 88)
-                        : Color.FromRgb(161, 92, 0)
+                        ? StatusPalette.Ok
+                        : StatusPalette.Warn
                 );
             }
             if (statusBanner != null)
             {
                 statusBanner.Background = new SolidColorBrush(
                     catalog.install_enabled
-                        ? Color.FromRgb(231, 246, 240)
-                        : Color.FromRgb(255, 244, 222)
+                        ? StatusPalette.OkSurface
+                        : StatusPalette.WarnSurface
                 );
             }
             SetWorkflowStep(view, 1, false);
@@ -210,17 +210,17 @@ namespace LlmFoundationInstaller
                 {
                     badge.Background = new SolidColorBrush(
                         complete
-                            ? Color.FromRgb(22, 122, 88)
+                            ? StatusPalette.Ok
                             : (active
-                                ? Color.FromRgb(65, 105, 225)
+                                ? StatusPalette.ActiveStep
                                 : Colors.Transparent)
                     );
                     badge.BorderBrush = new SolidColorBrush(
                         complete
-                            ? Color.FromRgb(22, 122, 88)
+                            ? StatusPalette.Ok
                             : (active
-                                ? Color.FromRgb(65, 105, 225)
-                                : Color.FromRgb(82, 96, 120))
+                                ? StatusPalette.ActiveStep
+                                : StatusPalette.IdleStepBorder)
                     );
                     badge.BorderThickness = complete || active
                         ? new Thickness(0)

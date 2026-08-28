@@ -301,15 +301,7 @@ namespace LlmFoundationInstaller
 
         private static Color StatusToneColor(string tone)
         {
-            if (tone == ConnectionStatusModel.ToneOk)
-            {
-                return Color.FromRgb(22, 122, 88);
-            }
-            if (tone == ConnectionStatusModel.ToneWarn)
-            {
-                return Color.FromRgb(161, 92, 0);
-            }
-            return Color.FromRgb(49, 87, 199);
+            return StatusPalette.Tone(tone);
         }
 
         internal static object TestConnection(

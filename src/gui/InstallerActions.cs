@@ -981,15 +981,15 @@ namespace LlmFoundationInstaller
             TextBlock status = view.FindName("StatusText") as TextBlock;
             Border banner = view.FindName("StatusBanner") as Border;
             Color foreground = state == "success"
-                ? Color.FromRgb(22, 122, 88)
+                ? StatusPalette.Ok
                 : (state == "info"
-                    ? Color.FromRgb(49, 87, 199)
-                    : Color.FromRgb(161, 92, 0));
+                    ? StatusPalette.Info
+                    : StatusPalette.Warn);
             Color background = state == "success"
-                ? Color.FromRgb(231, 246, 240)
+                ? StatusPalette.OkSurface
                 : (state == "info"
-                    ? Color.FromRgb(234, 240, 255)
-                    : Color.FromRgb(255, 244, 222));
+                    ? StatusPalette.InfoSurface
+                    : StatusPalette.WarnSurface);
             if (status != null)
             {
                 status.Text = message;
