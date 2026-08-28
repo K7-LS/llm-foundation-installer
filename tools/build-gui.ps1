@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner', 'Simple')]
+    [ValidateSet('Employee', 'Owner')]
     [string]$Edition,
     [Parameter(Mandatory = $true)]
     [ValidateSet('Installer', 'LaunchCenter')]
@@ -1310,22 +1310,10 @@ $EditionContract = if ($Edition -ceq 'Owner') {
         product_role = $ProductRole
     }
 }
-elseif ($Edition -ceq 'Employee') {
+else {
     [ordered]@{
         edition_id = 'Employee'
         display_name = 'K-7 AI Foundation Employee'
-        distribution_allowed = $true
-        included_target_ids = @('claude', 'codex', 'opencode')
-        required_target_ids = @('claude', 'codex', 'opencode')
-        theme_id = 'K7Signal'
-        owner_controlled = $false
-        product_role = $ProductRole
-    }
-}
-else {
-    [ordered]@{
-        edition_id = 'Simple'
-        display_name = 'K-7 AI Foundation Simple'
         distribution_allowed = $true
         included_target_ids = @('claude', 'codex', 'opencode')
         required_target_ids = @('claude', 'codex', 'opencode')

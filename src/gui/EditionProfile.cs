@@ -129,19 +129,6 @@ namespace LlmFoundationInstaller
                 return;
             }
 
-            if (edition_id == "Simple")
-            {
-                ValidateExact(
-                    "K-7 AI Foundation Simple",
-                    true,
-                    new[] { "claude", "codex", "opencode" },
-                    new[] { "claude", "codex", "opencode" },
-                    "K7Signal",
-                    false
-                );
-                return;
-            }
-
             if (edition_id == "Owner")
             {
                 ValidateExact(
