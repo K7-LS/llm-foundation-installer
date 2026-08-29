@@ -992,6 +992,22 @@ def gui_bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _build_gui_bundle(output)
 
 
+@pytest.fixture(scope="module")
+def accepted_package_bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Бандл с принятым codex-пакетом — один на модуль (кандидат №25).
+
+    Девять тестов строили байт-идентичный бандл заново. Использовать
+    read-only: тесты, которые ПОРТЯТ содержимое бандла (проверка tampered),
+    обязаны строить свой.
+    """
+    if POWERSHELL is None:
+        pytest.skip("PowerShell is required to build the Windows GUI")
+    root = tmp_path_factory.mktemp("accepted-package")
+    package_source = root / "package-source"
+    _accepted_package(package_source)
+    return _build_gui_bundle(root / "bundle", package_source)
+
+
 def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     executable = gui_bundle / "LLMFoundationInstaller.exe"
     engine = gui_bundle / "engine" / "foundation.ps1"
@@ -3773,10 +3789,9 @@ def test_gui_preflight_checks_clients_without_claiming_missing_packages(
 
 def test_store_only_codex_preflight_accepts_validated_store_record(
     tmp_path: Path,
+    accepted_package_bundle: Path,
 ):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    bundle = accepted_package_bundle
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
     store_location = tmp_path / "WindowsApps" / (
@@ -3815,10 +3830,9 @@ def test_store_only_codex_preflight_accepts_validated_store_record(
 
 def test_store_only_codex_preflight_rejects_tampered_publisher_record(
     tmp_path: Path,
+    accepted_package_bundle: Path,
 ):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    bundle = accepted_package_bundle
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
     store_location = tmp_path / "WindowsApps" / "OpenAI.Codex-fixture"
@@ -3855,10 +3869,9 @@ def test_store_only_codex_preflight_rejects_tampered_publisher_record(
 
 def test_cli_fallback_codex_preflight_accepts_detected_version(
     tmp_path: Path,
+    accepted_package_bundle: Path,
 ):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    bundle = accepted_package_bundle
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
     _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
@@ -3892,10 +3905,9 @@ def test_cli_fallback_codex_preflight_accepts_detected_version(
 
 def test_validated_store_codex_preflight_has_precedence_over_cli(
     tmp_path: Path,
+    accepted_package_bundle: Path,
 ):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    bundle = accepted_package_bundle
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
     _compile_versioned_codex(safe_path / "codex.exe", "2.0.0")
@@ -4093,10 +4105,9 @@ def test_gui_accepts_only_build_verified_hash_bound_package(tmp_path: Path):
 
 def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
     tmp_path: Path,
+    accepted_package_bundle: Path,
 ):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+    bundle = accepted_package_bundle
     safe_path = tmp_path / "safe-path"
     safe_path.mkdir()
     record = tmp_path / "missing-store-record.json"
@@ -4128,14 +4139,10 @@ def test_gui_preflight_keeps_accepted_base_installable_when_client_is_missing(
     )
 
 
-def test_gui_accepts_native_codex_flat_release_evidence(tmp_path: Path):
-    package_source = tmp_path / "package-source"
-    _accepted_package(
-        package_source,
-        codex_flat_evidence=True,
-    )
-
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+def test_gui_accepts_native_codex_flat_release_evidence(
+    accepted_package_bundle: Path,
+):
+    bundle = accepted_package_bundle
     payload = json.loads(
         subprocess.run(
             [
@@ -5102,10 +5109,11 @@ def test_provider_eligibility_is_hash_bound_into_bundle_manifest(
     }
 
 
-def test_gui_runs_real_foundation_workflow_and_preserves_auth(tmp_path: Path):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+def test_gui_runs_real_foundation_workflow_and_preserves_auth(
+    tmp_path: Path,
+    accepted_package_bundle: Path,
+):
+    bundle = accepted_package_bundle
     executable = bundle / "LLMFoundationInstaller.exe"
     home = tmp_path / "employee-home"
     auth = home / ".codex" / "auth.json"
@@ -5154,10 +5162,11 @@ def test_gui_runs_real_foundation_workflow_and_preserves_auth(tmp_path: Path):
     assert auth.read_text(encoding="utf-8") == '{"token":"preserve"}\n'
 
 
-def test_gui_executable_is_a_standalone_installer_payload(tmp_path: Path):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+def test_gui_executable_is_a_standalone_installer_payload(
+    tmp_path: Path,
+    accepted_package_bundle: Path,
+):
+    bundle = accepted_package_bundle
     standalone = tmp_path / "standalone"
     standalone.mkdir()
     executable = standalone / "LLMFoundationInstaller.exe"
@@ -5214,10 +5223,11 @@ def test_gui_executable_is_a_standalone_installer_payload(tmp_path: Path):
     assert (home / ".codex" / "AGENTS.md").is_file()
 
 
-def test_gui_workflow_fails_closed_on_malformed_client_version(tmp_path: Path):
-    package_source = tmp_path / "package-source"
-    _accepted_package(package_source)
-    bundle = _build_gui_bundle(tmp_path / "bundle", package_source)
+def test_gui_workflow_fails_closed_on_malformed_client_version(
+    tmp_path: Path,
+    accepted_package_bundle: Path,
+):
+    bundle = accepted_package_bundle
     executable = bundle / "LLMFoundationInstaller.exe"
     home = tmp_path / "employee-home"
     home.mkdir()
