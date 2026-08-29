@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$OutputRoot,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Employee', 'Owner', 'Simple')]
+    [ValidateSet('Employee', 'Owner')]
     [string]$Edition,
     [ValidateSet('Preview', 'InternalUnsigned', 'PublicUnsigned', 'PublicSigned')]
     [string]$DistributionMode = 'Preview',
@@ -37,8 +37,7 @@ if (Test-Path -LiteralPath $OutputRoot) {
 # (--launch-center-ui), отдельный LC-бинарь больше не собирается.
 $KnownInternalArtifactNames = @(
     'K7-AI-Foundation-Employee-InternalUnsigned.exe',
-    'K7-AI-Foundation-Owner-InternalUnsigned.exe',
-    'K7-AI-Foundation-Simple-InternalUnsigned.exe'
+    'K7-AI-Foundation-Owner-InternalUnsigned.exe'
 )
 $InstallerName = "K7-AI-Foundation-$Edition-$DistributionMode.exe"
 $LaunchCenterFallbackName = (
@@ -55,20 +54,7 @@ if ($DistributionMode -ceq 'InternalUnsigned' -and
     throw 'Internal artifact naming contract is invalid'
 }
 
-function Get-Sha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $Stream = [IO.File]::OpenRead($Path)
-    $Algorithm = [Security.Cryptography.SHA256]::Create()
-    try {
-        return -join (
-            $Algorithm.ComputeHash($Stream) |
-                ForEach-Object { $_.ToString('x2') }
-        )
-    } finally {
-        $Algorithm.Dispose()
-        $Stream.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 $RuntimeRecord = $null
 if ([string]::IsNullOrWhiteSpace($RuntimeArchive)) {
