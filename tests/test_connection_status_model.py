@@ -6,7 +6,6 @@ ConnectionStatusModel строит тексты и тон (info/ok/warn); Connec
 """
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -40,32 +39,9 @@ def test_model_is_compiled_and_exposed_by_the_project():
 
 
 @pytest.fixture(scope="module")
-def status_catalog(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    output = tmp_path_factory.mktemp("status-model") / "center"
-    powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
-    built = subprocess.run(
-        [
-            str(powershell),
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-File",
-            str(REPOSITORY / "tools" / "build-gui.ps1"),
-            "-OutputRoot",
-            str(output),
-            "-Edition",
-            "Employee",
-            "-ProductRole",
-            "LaunchCenter",
-        ],
-        cwd=REPOSITORY,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=600,
-    )
-    assert built.returncode == 0, built.stdout + built.stderr
+def status_catalog(employee_launch_center_bundle: Path) -> dict:
+    # Бандл общий (conftest, session-scope): читаем каталог, ничего не пишем.
+    output = employee_launch_center_bundle
     result = subprocess.run(
         [
             str(output / "LLMFoundationInstaller.exe"),

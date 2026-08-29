@@ -21,11 +21,44 @@ namespace LlmFoundationInstaller
 {
     internal static class ProductCatalog
     {
-        private static readonly string[][] Definitions = new[]
+        // Позиционный string[][] молча путал два разных client id (у codex и
+        // claude они совпадают, у opencode — нет) и требовал спецкейсов по
+        // definition[0] == "codex". Типизированная запись убирает и то, и другое.
+        private sealed class TargetDefinition
         {
-            new[] { "codex", "Codex", "codex-cli", "codex-cli" },
-            new[] { "claude", "Claude", "claude-code", "claude-code" },
-            new[] { "opencode", "OpenCode", "opencode", "opencode-cli" }
+            public TargetDefinition(
+                string id,
+                string displayName,
+                string packageClientId,
+                string sourceClientId,
+                bool detectsThroughStore
+            )
+            {
+                Id = id;
+                DisplayName = displayName;
+                PackageClientId = packageClientId;
+                SourceClientId = sourceClientId;
+                DetectsThroughStore = detectsThroughStore;
+            }
+
+            public string Id { get; private set; }
+            public string DisplayName { get; private set; }
+            public string PackageClientId { get; private set; }
+            public string SourceClientId { get; private set; }
+            public bool DetectsThroughStore { get; private set; }
+        }
+
+        private static readonly TargetDefinition[] Definitions = new[]
+        {
+            new TargetDefinition(
+                "codex", "Codex", "codex-cli", "codex-cli", true
+            ),
+            new TargetDefinition(
+                "claude", "Claude", "claude-code", "claude-code", false
+            ),
+            new TargetDefinition(
+                "opencode", "OpenCode", "opencode", "opencode-cli", false
+            )
         };
 
         public static CatalogResult Inspect(
@@ -51,25 +84,29 @@ namespace LlmFoundationInstaller
                 eligibility
             );
             List<TargetRow> targets = new List<TargetRow>();
-            foreach (string[] definition in Definitions.Where(
-                value => edition.Includes(value[0])
+            // Источники клиентов читаются один раз: раньше ClientBootstrap.Load
+            // стоял внутри цикла и парсил лок-файл по разу на каждую цель.
+            List<ClientSource> clientSources =
+                ClientBootstrap.Load(bundleRoot).clients;
+            foreach (TargetDefinition definition in Definitions.Where(
+                value => edition.Includes(value.Id)
             ))
             {
                 TrustedPackage package;
-                string state = !trusted.TryGetValue(definition[0], out package)
+                string state = !trusted.TryGetValue(definition.Id, out package)
                     ? "missing"
                     : (ValidateTrustedPackage(
                         bundleRoot,
                         package,
-                        definition[0],
-                        definition[2]
+                        definition.Id,
+                        definition.PackageClientId
                     ) ? "accepted" : "tampered");
                 string detected = null;
                 string clientState = "not_checked";
-                ClientSource primarySource = ClientBootstrap.Load(bundleRoot)
-                    .clients.FirstOrDefault(source => String.Equals(
+                ClientSource primarySource = clientSources
+                    .FirstOrDefault(source => String.Equals(
                         source.id,
-                        definition[3],
+                        definition.SourceClientId,
                         StringComparison.Ordinal
                     ));
                 string supported = primarySource == null
@@ -77,15 +114,16 @@ namespace LlmFoundationInstaller
                     : primarySource.version;
                 if (detectClients)
                 {
-                    ClientDetectionResult detection = definition[0] == "codex"
-                        ? DetectCodex(bundleRoot, storeRecord)
-                        : DetectCli(definition[3]);
+                    ClientDetectionResult detection =
+                        definition.DetectsThroughStore
+                            ? DetectCodex(bundleRoot, storeRecord)
+                            : DetectCli(definition.SourceClientId);
                     detected = detection.version;
                     clientState = detected == null
                         ? "missing"
                         : (state != "accepted"
                             ? "present_unbound"
-                            : (definition[0] == "codex"
+                            : (definition.DetectsThroughStore
                                 ? "ready"
                                 : (String.Equals(
                                     detected,
@@ -95,9 +133,9 @@ namespace LlmFoundationInstaller
                 }
                 targets.Add(new TargetRow
                 {
-                    id = definition[0],
-                    display_name = definition[1],
-                    client_id = definition[3],
+                    id = definition.Id,
+                    display_name = definition.DisplayName,
+                    client_id = definition.SourceClientId,
                     package_state = state,
                     supported_version = supported,
                     detected_version = detected,
@@ -161,8 +199,8 @@ namespace LlmFoundationInstaller
         {
             EditionProfile edition = EditionProfile.LoadEmbedded();
             return Definitions.Where(
-                row => edition.Includes(row[0])
-            ).Select(row => row[0]).ToArray();
+                row => edition.Includes(row.Id)
+            ).Select(row => row.Id).ToArray();
         }
 
         public static bool TryGetAcceptedPackage(
@@ -177,9 +215,9 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            string[] definition = Definitions.FirstOrDefault(
+            TargetDefinition definition = Definitions.FirstOrDefault(
                 row => String.Equals(
-                    row[0],
+                    row.Id,
                     target,
                     StringComparison.Ordinal
                 )
@@ -196,8 +234,8 @@ namespace LlmFoundationInstaller
                 !ValidateTrustedPackage(
                     bundleRoot,
                     candidate,
-                    definition[0],
-                    definition[2]
+                    definition.Id,
+                    definition.PackageClientId
                 ))
             {
                 return false;
