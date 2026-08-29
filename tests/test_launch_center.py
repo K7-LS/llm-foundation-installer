@@ -356,20 +356,12 @@ def _compile_environment_probe(path: Path) -> None:
     ],
 )
 def test_product_role_exposes_edition_bound_launch_targets(
-    tmp_path: Path,
+    shared_bundle,
     edition: str,
     expected_targets: list[str],
 ) -> None:
-    installer = _build(
-        tmp_path / f"{edition}-installer",
-        edition=edition,
-        product_role="Installer",
-    )
-    center = _build(
-        tmp_path / f"{edition}-center",
-        edition=edition,
-        product_role="LaunchCenter",
-    )
+    installer = shared_bundle(edition, "Installer")
+    center = shared_bundle(edition, "LaunchCenter")
 
     _, installer_value = _run_json(installer, "--product-json")
     _, center_value = _run_json(center, "--product-json")
@@ -383,18 +375,11 @@ def test_product_role_exposes_edition_bound_launch_targets(
 
 
 def test_complete_target_catalog_matches_real_launch_center_cards(
-    tmp_path: Path,
+    employee_launch_center_bundle: Path,
+    owner_launch_center_bundle: Path,
 ) -> None:
-    employee = _build(
-        tmp_path / "employee-center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
-    owner = _build(
-        tmp_path / "owner-center",
-        edition="Owner",
-        product_role="LaunchCenter",
-    )
+    employee = employee_launch_center_bundle
+    owner = owner_launch_center_bundle
     _, employee_product = _run_json(employee, "--product-json")
     _, owner_product = _run_json(owner, "--product-json")
     employee_targets = [
@@ -424,13 +409,9 @@ def test_complete_target_catalog_matches_real_launch_center_cards(
 
 
 def test_installer_binary_exposes_launch_center_fallback(
-    tmp_path: Path,
+    employee_installer_bundle: Path,
 ) -> None:
-    installer = _build(
-        tmp_path / "employee-installer",
-        edition="Employee",
-        product_role="Installer",
-    )
+    installer = employee_installer_bundle
 
     returncode, value = _run_json(
         installer,
@@ -552,13 +533,9 @@ def test_installer_binary_exposes_launch_center_fallback(
 
 
 def test_ui_launch_selection_json_shows_vscode_correlation(
-    tmp_path: Path,
+    employee_launch_center_bundle: Path,
 ) -> None:
-    center = _build(
-        tmp_path / "employee-center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
+    center = employee_launch_center_bundle
 
     returncode, value = _run_json(
         center,
@@ -775,17 +752,14 @@ def test_vscode_missing_id_is_shown_as_wpf_marketplace_guidance(
 
 def test_vscode_normal_resolver_checks_installed_signed_code(
     tmp_path: Path,
+    employee_launch_center_bundle: Path,
 ) -> None:
     candidate = _find_vscode_candidate()
     if candidate is None:
         pytest.skip(
             "VS Code Code.exe is unavailable in approved install paths or PATH"
         )
-    center = _build(
-        tmp_path / "employee-center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
+    center = employee_launch_center_bundle
     home = tmp_path / "home"
     extension = (
         home
@@ -822,12 +796,9 @@ def test_vscode_normal_resolver_checks_installed_signed_code(
 
 def test_vscode_test_record_command_rejects_production_source_lock(
     tmp_path: Path,
+    employee_launch_center_bundle: Path,
 ) -> None:
-    center = _build(
-        tmp_path / "employee-center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
+    center = employee_launch_center_bundle
     record = tmp_path / "vscode-record.json"
     _write_vscode_record(record)
 
@@ -1075,12 +1046,9 @@ def test_exact_managed_cli_resolution_requires_install_record(
 
 def test_store_launch_resolution_is_manifest_and_hash_bound(
     tmp_path: Path,
+    employee_launch_center_bundle: Path,
 ) -> None:
-    bundle = _build(
-        tmp_path / "center",
-        edition="Employee",
-        product_role="LaunchCenter",
-    )
+    bundle = employee_launch_center_bundle
     home = tmp_path / "home"
     package_root = tmp_path / "WindowsApps" / (
         "OpenAI.Codex_26.721.4979.0_x64__2p2nqsd0c76g0"
