@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.4.0"
-TAG = "employee-v0.4.0"
+# Единственный источник версии продукта — файл APP_VERSION в корне
+# (раньше значение дублировалось здесь, в foundation_release и в тестах).
+VERSION = (
+    Path(__file__).resolve().parents[1] / "APP_VERSION"
+).read_text(encoding="utf-8").strip()
+TAG = f"employee-v{VERSION}"
 TARGETS = ("claude", "codex", "opencode")
 SELF_TEST_TARGETS = ("codex", "claude", "opencode")
 PRODUCT_FILES = {
@@ -64,7 +68,7 @@ EXPECTED_DRAFT_VERDICTS = {
     "HOME_PC_CANARY": "PENDING",
     "EMPLOYEE_INSTALLER_PUBLIC_UNSIGNED": "PENDING_PILOT",
 }
-INSTALL_GUIDE = """# K-7 для сотрудников, версия 0.4.0
+INSTALL_GUIDE = f"""# K-7 для сотрудников, версия {VERSION}
 
 В комплекте пять связанных позиций:
 

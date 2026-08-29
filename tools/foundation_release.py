@@ -12,6 +12,9 @@ from typing import Any
 VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(
     encoding="utf-8"
 ).strip()
+APP_VERSION = (
+    Path(__file__).resolve().parents[1] / "APP_VERSION"
+).read_text(encoding="utf-8").strip()
 TAG = f"foundation-engine-v{VERSION}"
 REPOSITORY_URL = (
     "https://github.com/K7-LS/llm-foundation-installer"
@@ -114,7 +117,7 @@ def _validate_acceptance(
     valid = (
         evidence.get("schema_version") == 1
         and evidence.get("engine_version") == VERSION
-        and evidence.get("installer_version") == "0.4.0"
+        and evidence.get("installer_version") == APP_VERSION
         and evidence.get("FOUNDATION_SYNTHETIC") == "PASS"
         and evidence.get("deterministic_engine_bundle") == "PASS"
         and evidence.get("evidence_body_sha256")
