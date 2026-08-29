@@ -44,25 +44,7 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     throw 'Foundation version is invalid'
 }
 
-function Get-Sha256 {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    $Stream = [IO.File]::Open(
-        $Path,
-        [IO.FileMode]::Open,
-        [IO.FileAccess]::Read,
-        [IO.FileShare]::Read
-    )
-    $Algorithm = [Security.Cryptography.SHA256]::Create()
-    try {
-        return -join (
-            $Algorithm.ComputeHash($Stream) |
-                ForEach-Object { $_.ToString('x2') }
-        )
-    } finally {
-        $Algorithm.Dispose()
-        $Stream.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot '_common.ps1')
 
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $BundledScript = Join-Path $OutputRoot 'foundation.ps1'

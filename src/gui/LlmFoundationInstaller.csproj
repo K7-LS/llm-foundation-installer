@@ -46,6 +46,7 @@
     <Compile Include="ConnectionUi.cs" />
     <Compile Include="EditionProfile.cs" />
     <Compile Include="EditionTheme.cs" />
+    <Compile Include="EmbeddedJson.cs" />
     <Compile Include="FoundationWorkflow.cs" />
     <Compile Include="InstallerActions.cs" />
     <Compile Include="InstallerApp.cs" />
@@ -61,6 +62,7 @@
     <Compile Include="RuntimeBootstrap.cs" />
     <Compile Include="RuntimePayload.cs" />
     <Compile Include="SingBoxConfig.cs" />
+    <Compile Include="StatusPalette.cs" />
     <Compile Include="SingBoxSession.cs" />
     <Compile Include="SystemProxyLease.cs" />
     <Compile Include="VsCodeIntegration.cs" />

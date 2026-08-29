@@ -291,8 +291,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = WindowsPowerShellPath(),
                 Arguments =
-                    "-NoLogo -NoProfile -NonInteractive " +
-                    "-ExecutionPolicy Bypass -Command " +
+                    NonInteractiveCommandPrelude +
                     QuoteArgument(command),
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -985,8 +984,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = WindowsPowerShellPath(),
                 Arguments =
-                    "-NoLogo -NoProfile -NonInteractive " +
-                    "-ExecutionPolicy Bypass -Command " +
+                    NonInteractiveCommandPrelude +
                     QuoteArgument(BuildOfficialScriptWrapper()),
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1142,8 +1140,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = WindowsPowerShellPath(),
                 Arguments =
-                    "-NoLogo -NoProfile -NonInteractive " +
-                    "-ExecutionPolicy Bypass -Command " +
+                    NonInteractiveCommandPrelude +
                     QuoteArgument(command),
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1656,8 +1653,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = WindowsPowerShellPath(),
                 Arguments =
-                    "-NoLogo -NoProfile -NonInteractive " +
-                    "-ExecutionPolicy Bypass -Command " +
+                    NonInteractiveCommandPrelude +
                     QuoteArgument(command),
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -2865,6 +2861,12 @@ namespace LlmFoundationInstaller
             }
         }
 
+        // Прелюдия аргументов Windows PowerShell — одна на все пять вызовов
+        // (раньше склеивалась вручную в каждом ProcessStartInfo).
+        private const string NonInteractiveCommandPrelude =
+            "-NoLogo -NoProfile -NonInteractive " +
+            "-ExecutionPolicy Bypass -Command ";
+
         private static string WindowsPowerShellPath()
         {
             string powershell = Path.Combine(
@@ -2907,8 +2909,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = powershell,
                 Arguments =
-                    "-NoLogo -NoProfile -NonInteractive " +
-                    "-ExecutionPolicy Bypass -Command " +
+                    NonInteractiveCommandPrelude +
                     QuoteArgument(command),
                 UseShellExecute = false,
                 CreateNoWindow = true,
