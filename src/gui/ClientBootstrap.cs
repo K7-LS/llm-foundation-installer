@@ -1006,6 +1006,18 @@ namespace LlmFoundationInstaller
                 Path.GetFullPath(home);
             start.EnvironmentVariables["LOCALAPPDATA"] =
                 LocalApplicationDataForHome(home);
+            // Официальный установщик распаковывает пакет через `tar`. Если
+            // в PATH первым стоит GNU tar (Git for Windows), он принимает
+            // путь вида C:\... за удалённый хост («Cannot connect to C:
+            // resolve failed»), архив не распаковывается и установка падает
+            // с «did not contain the expected package layout» — при том, что
+            // файл скачан верно и прошёл сверку хеша. Системный bsdtar идёт
+            // первым, чтобы установка не зависела от набора инструментов
+            // пользователя.
+            start.EnvironmentVariables["PATH"] =
+                Environment.GetFolderPath(Environment.SpecialFolder.System) +
+                Path.PathSeparator +
+                Environment.GetEnvironmentVariable("PATH");
             ConnectionStore.ConfigureProcessEnvironment(home, start);
             using (Process process = Process.Start(start))
             {
@@ -1015,8 +1027,12 @@ namespace LlmFoundationInstaller
                         "Official client installer could not start"
                     );
                 }
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
+                // Вывод официального установщика раньше читался и молча
+                // выбрасывался: падение выглядело как «failed with exit 1»
+                // без причины — на машине без админ-прав разбор был
+                // невозможен. Теперь хвост потоков идёт в сообщение.
+                string installerOutput = process.StandardOutput.ReadToEnd();
+                string installerError = process.StandardError.ReadToEnd();
                 if (!process.WaitForExit(600000))
                 {
                     try
@@ -1034,7 +1050,8 @@ namespace LlmFoundationInstaller
                 {
                     throw new InvalidOperationException(
                         "Official client installer failed with exit " +
-                        process.ExitCode
+                        process.ExitCode +
+                        InstallerDiagnostics(installerOutput, installerError)
                     );
                 }
             }
@@ -1069,6 +1086,26 @@ namespace LlmFoundationInstaller
                 path_persisted = pathPersisted,
                 authentication_touched = false
             };
+        }
+
+        private static string InstallerDiagnostics(
+            string standardOutput,
+            string standardError
+        )
+        {
+            string tail = String.IsNullOrWhiteSpace(standardError)
+                ? standardOutput
+                : standardError;
+            if (String.IsNullOrWhiteSpace(tail))
+            {
+                return ". Установщик не оставил вывода";
+            }
+            tail = tail.Trim();
+            if (tail.Length > 600)
+            {
+                tail = tail.Substring(tail.Length - 600);
+            }
+            return ". Вывод установщика: " + tail;
         }
 
         private static string BuildOfficialScriptWrapper()
