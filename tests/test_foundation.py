@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -15,6 +16,7 @@ SUPPORTED_CLIENT = "0.146.0-alpha.3.1"
 ENGINE_VERSION = (
     Path(__file__).resolve().parents[1] / "VERSION"
 ).read_text(encoding="utf-8").strip()
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 POWERSHELLS = [
     value
     for value in (shutil.which("pwsh"), shutil.which("powershell.exe"))
@@ -1808,3 +1810,49 @@ def test_foundation_engine_has_no_network_or_secret_material(engine_root):
         "-----begin private key-----",
     ):
         assert forbidden not in lowered
+
+
+def test_engine_build_uses_a_local_officecli_cache_without_network(tmp_path):
+    # Каждая сборка тянула officecli из сети: обрыв канала валил и локальные
+    # прогоны, и CI. Кеш по SHA делает вторую сборку на машине автономной;
+    # проверка хеша остаётся обязательной на любом пути.
+    executable = POWERSHELLS[0]
+    cache_root = tmp_path / "cache"
+    pinned = REPOSITORY_ROOT.parent / ".officecli-cache" / "officecli.exe"
+    if not pinned.is_file():
+        pytest.skip("нет локальной копии officecli для наполнения кеша")
+    environment = {
+        **os.environ,
+        "K7_BUILD_CACHE": str(cache_root),
+        "K7_OFFICECLI_BINARY_PATH": str(pinned.resolve()),
+    }
+    seeded = subprocess.run(
+        [
+            executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-engine.ps1"),
+            "-OutputRoot", str(tmp_path / "seed"),
+        ],
+        check=False, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", env=environment,
+    )
+    assert seeded.returncode == 0, seeded.stdout + seeded.stderr
+    cached = list((cache_root / "officecli").glob("*.exe"))
+    assert len(cached) == 1, "кеш должен содержать ровно один файл, названный по SHA"
+    assert re.fullmatch(r"[0-9a-f]{64}\.exe", cached[0].name)
+
+    offline = {**os.environ, "K7_BUILD_CACHE": str(cache_root)}
+    offline.pop("K7_OFFICECLI_BINARY_PATH", None)
+    restored = subprocess.run(
+        [
+            executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(REPOSITORY_ROOT / "tools" / "build-engine.ps1"),
+            "-OutputRoot", str(tmp_path / "restored"),
+        ],
+        check=False, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", env=offline,
+    )
+    assert restored.returncode == 0, restored.stdout + restored.stderr
+    assert "restored from the local build cache" in restored.stdout
+    assert (
+        tmp_path / "restored" / "shared-tools" / "officecli" / "officecli.exe"
+    ).is_file()

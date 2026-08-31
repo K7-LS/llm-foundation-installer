@@ -96,17 +96,55 @@ if ($OfficeCli.Count -ne 1 -or
 $SharedRoot = Join-Path $OutputRoot 'shared-tools\officecli'
 [IO.Directory]::CreateDirectory($SharedRoot) | Out-Null
 $PrivatePath = Join-Path $SharedRoot 'officecli.exe'
-if ([string]::IsNullOrWhiteSpace($OfficeCliBinaryPath)) {
-    Invoke-WebRequest -UseBasicParsing -Uri ([string]$OfficeCli[0].url) -OutFile $PrivatePath
-} else {
+$ExpectedSha = [string]$OfficeCli[0].sha256
+# Каждая сборка тянула officecli из сети: на нестабильном канале это валило
+# и локальные прогоны, и CI. Порядок теперь: явный пин -> локальный кеш по
+# SHA -> сеть с повторами; загруженное кладётся в кеш. Проверка хеша
+# обязательна на любом пути, так что кеш не ослабляет целостность.
+$CacheRoot = [Environment]::GetEnvironmentVariable(
+    'K7_BUILD_CACHE',
+    [EnvironmentVariableTarget]::Process
+)
+if ([string]::IsNullOrWhiteSpace($CacheRoot)) {
+    $CacheRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.k7-build-cache'
+}
+$CachedBinary = Join-Path (Join-Path $CacheRoot 'officecli') ($ExpectedSha + '.exe')
+if (-not [string]::IsNullOrWhiteSpace($OfficeCliBinaryPath)) {
     $PinnedBinary = [IO.Path]::GetFullPath($OfficeCliBinaryPath)
     if (-not (Test-Path -LiteralPath $PinnedBinary -PathType Leaf)) {
         throw 'OfficeCLI binary cache is missing'
     }
     [IO.File]::Copy($PinnedBinary, $PrivatePath, $false)
+} elseif (Test-Path -LiteralPath $CachedBinary -PathType Leaf) {
+    [IO.File]::Copy($CachedBinary, $PrivatePath, $false)
+    Write-Host 'OfficeCLI restored from the local build cache.'
+} else {
+    $Attempt = 0
+    $Downloaded = $false
+    while (-not $Downloaded) {
+        $Attempt++
+        try {
+            Invoke-WebRequest -UseBasicParsing `
+                -Uri ([string]$OfficeCli[0].url) -OutFile $PrivatePath
+            $Downloaded = $true
+        }
+        catch {
+            if ($Attempt -ge 3) { throw }
+            Write-Host (
+                'OfficeCLI download attempt ' + $Attempt +
+                ' failed, retrying: ' + $_.Exception.Message
+            )
+            Start-Sleep -Seconds (5 * $Attempt)
+        }
+    }
 }
-if ((Get-Sha256 $PrivatePath) -cne [string]$OfficeCli[0].sha256) {
+if ((Get-Sha256 $PrivatePath) -cne $ExpectedSha) {
     throw 'OfficeCLI source hash differs'
+}
+if (-not (Test-Path -LiteralPath $CachedBinary -PathType Leaf)) {
+    # Кеш пополняется только проверенным по хешу файлом.
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $CachedBinary)) | Out-Null
+    [IO.File]::Copy($PrivatePath, $CachedBinary, $false)
 }
 $ShimPath = Join-Path $SharedRoot 'officecli-shim.exe'
 & $ShimBuildPath -OutputPath $ShimPath
