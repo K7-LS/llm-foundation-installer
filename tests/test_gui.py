@@ -5990,3 +5990,30 @@ def test_dead_shared_installer_view_is_removed():
     assert not (
         REPOSITORY_ROOT / "src" / "gui" / "InstallerView.xaml"
     ).exists()
+
+
+def test_official_installer_prepends_the_system_directory_to_path(gui_bundle: Path):
+    # Официальный установщик Codex распаковывает пакет через `tar`. GNU tar из
+    # Git for Windows принимает путь C:\... за удалённый хост и молча не
+    # распаковывает архив — установка падала с «did not contain the expected
+    # package layout», хотя файл скачан верно и прошёл сверку хеша.
+    source = (REPOSITORY_ROOT / "src" / "gui" / "ClientBootstrap.cs").read_text(
+        encoding="utf-8"
+    )
+    window = source.split("InstallOfficialPowerShellScript(", 2)[2]
+    window = window.split("private static", 1)[0]
+    assert 'start.EnvironmentVariables["PATH"]' in window
+    assert "SpecialFolder.System" in window
+    assert window.index('EnvironmentVariables["PATH"]') < window.index(
+        "Process.Start(start)"
+    )
+
+
+def test_official_installer_failure_reports_the_installer_output(gui_bundle: Path):
+    # «failed with exit 1» без причины делал разбор невозможным на машине
+    # без админ-прав: вывод установщика читался и молча выбрасывался.
+    source = (REPOSITORY_ROOT / "src" / "gui" / "ClientBootstrap.cs").read_text(
+        encoding="utf-8"
+    )
+    assert "InstallerDiagnostics(installerOutput, installerError)" in source
+    assert "Вывод установщика: " in source
