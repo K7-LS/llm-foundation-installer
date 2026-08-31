@@ -360,14 +360,18 @@ namespace LlmFoundationInstaller
             {
                 return trustFailure;
             }
+            // Идентификатор расширения в VS Code регистронезависим: сам
+            // marketplace выдаёт «OpenAI.chatgpt», а package.json несёт
+            // publisher «openai». Строгое сравнение по регистру приводило к
+            // CODEX_EXTENSION_ID_NOT_DETECTED при установленном расширении.
             if (!String.Equals(
                     record.extension_publisher,
                     "OpenAI",
-                    StringComparison.Ordinal) ||
+                    StringComparison.OrdinalIgnoreCase) ||
                 !String.Equals(
                     record.extension_name,
                     "chatgpt",
-                    StringComparison.Ordinal))
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return Blocked(
                     "CODEX_EXTENSION_ID_NOT_DETECTED",
@@ -797,11 +801,11 @@ namespace LlmFoundationInstaller
                         String.Equals(
                             manifest.publisher,
                             "OpenAI",
-                            StringComparison.Ordinal) &&
+                            StringComparison.OrdinalIgnoreCase) &&
                         String.Equals(
                             manifest.name,
                             "chatgpt",
-                            StringComparison.Ordinal))
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         publisher = manifest.publisher;
                         name = manifest.name;

@@ -1506,6 +1506,16 @@ namespace LlmFoundationInstaller
             string local = LocalApplicationDataForHome(home);
             string executable = new[]
             {
+                // Официальный установщик 1.18.x кладёт приложение в каталог
+                // с npm-именем пакета; прежние пути остались для сборок,
+                // которые ставились по старой схеме. Легитимность всё равно
+                // подтверждают подпись и версия ниже, а не сам путь.
+                Path.Combine(
+                    local,
+                    "Programs",
+                    "@opencode-aidesktop",
+                    "OpenCode.exe"
+                ),
                 Path.Combine(
                     local,
                     "Programs",
