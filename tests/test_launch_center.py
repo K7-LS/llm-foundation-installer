@@ -1284,3 +1284,31 @@ def test_sibling_product_handoff_is_removed_from_single_exe() -> None:
     assert "SiblingProductResolution" not in gui_source
     assert "--launch-center-product-json" in gui_source
     assert "--launch-center-ui" in gui_source
+
+
+def test_extension_identity_comparison_ignores_publisher_case() -> None:
+    # marketplace выдаёт «OpenAI.chatgpt», а package.json расширения несёт
+    # publisher «openai»: строгое по регистру сравнение давало
+    # CODEX_EXTENSION_ID_NOT_DETECTED при установленном расширении.
+    source = (REPOSITORY / "src" / "gui" / "VsCodeIntegration.cs").read_text(
+        encoding="utf-8"
+    )
+    assert 'StringComparison.Ordinal)' not in source.split(
+        'record.extension_publisher,', 1
+    )[1].split("}", 1)[0]
+    assert source.count('"OpenAI",\n                    '
+                        'StringComparison.OrdinalIgnoreCase') >= 1
+    assert source.count('"OpenAI",\n                            '
+                        'StringComparison.OrdinalIgnoreCase') >= 1
+
+
+def test_official_desktop_lookup_covers_the_current_install_directory() -> None:
+    # Установщик OpenCode 1.18.x кладёт приложение в каталог с npm-именем
+    # пакета; прежний список путей знал только «Programs\OpenCode».
+    source = (REPOSITORY / "src" / "gui" / "ClientBootstrap.cs").read_text(
+        encoding="utf-8"
+    )
+    window = source.split("ResolveOfficialDesktopPath", 2)[2]
+    window = window.split("FirstOrDefault(File.Exists)", 1)[0]
+    assert '"@opencode-aidesktop"' in window
+    assert '"OpenCode"' in window        # прежние пути сохранены
