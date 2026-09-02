@@ -426,7 +426,7 @@ namespace LlmFoundationInstaller
                         >(result.output);
                     // Тот же корень, что и у диалога по неизвестным записям:
                     // JavaScriptSerializer отдаёт массив как ArrayList, а не
-                    // object[]. Проверка «is object[]» всегда была ложной, и
+                    // object[]. Проверка на типизированный массив всегда была ложной, и
                     // в плане пользователю всегда показывалось «0 файлов».
                     object actionsValue;
                     ICollection actionItems = plan.TryGetValue(
