@@ -86,4 +86,11 @@ def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
     assert "локальные " in app
     assert '"настройки не удаляются.' in app
     assert "ShowOwnedMessage" in app
-    assert "ожидает решения по старой базе" in app
+    # Подсказка «ожидает решения… нажмите Сформировать план» заменена
+    # ОСОЗНАННО: движок отдаёт BLOCKED_USER_DECISION и без списка
+    # unknown_entries, и тогда диалога за этой кнопкой нет — получался
+    # замкнутый круг. Теперь показывается фактическая причина, а
+    # приглашение к выбору остаётся только когда решение доступно.
+    assert "ожидает решения по старой базе" not in app
+    assert "UnknownDecisionReason" in app
+    assert "остановлен движком" in app

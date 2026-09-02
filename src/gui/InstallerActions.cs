@@ -370,13 +370,19 @@ namespace LlmFoundationInstaller
                         }
                         else if (IsUnknownDecisionRequired(result))
                         {
+                            // Движок отдаёт BLOCKED_USER_DECISION в двух
+                            // формах: со списком unknown_entries и ошибкой
+                            // без него. Во втором случае диалог выбора не
+                            // появлялся никогда, а подсказка предлагала снова
+                            // нажать «Сформировать план» — пользователь
+                            // получал замкнутый круг без выхода. Показываем
+                            // фактическую причину от движка.
                             SetStatus(
                                 view,
                                 "План для " + row.display_name +
-                                    " ожидает решения по старой базе и " +
-                                    "локальным дополнениям. Данные не " +
-                                    "изменены; нажмите «Сформировать план» " +
-                                    "и подтвердите рекомендуемый вариант.",
+                                    " остановлен движком: " +
+                                    UnknownDecisionReason(result) +
+                                    " Данные не изменены.",
                                 "warning"
                             );
                             notices.Add(
@@ -844,6 +850,48 @@ namespace LlmFoundationInstaller
             row.local_exception_paths = keep;
             row.confirm_remove_unknown = true;
             return true;
+        }
+
+        private static string UnknownDecisionReason(
+            WorkflowRunResult result
+        )
+        {
+            string message = "";
+            try
+            {
+                Dictionary<string, object> payload =
+                    new JavaScriptSerializer().Deserialize<
+                        Dictionary<string, object>
+                    >(result.output);
+                object value;
+                if (payload.TryGetValue("message", out value))
+                {
+                    message = Convert.ToString(
+                        value,
+                        CultureInfo.InvariantCulture
+                    );
+                }
+                if (String.IsNullOrWhiteSpace(message) &&
+                    payload.TryGetValue("code", out value))
+                {
+                    message = Convert.ToString(
+                        value,
+                        CultureInfo.InvariantCulture
+                    );
+                }
+            }
+            catch
+            {
+            }
+            if (String.IsNullOrWhiteSpace(message))
+            {
+                message = FirstUseful(result.error, result.output);
+            }
+            if (String.IsNullOrWhiteSpace(message))
+            {
+                message = "решение по неизвестным записям не получено";
+            }
+            return message.Trim();
         }
 
         private static bool IsUnknownDecisionRequired(
