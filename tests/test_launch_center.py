@@ -1312,3 +1312,23 @@ def test_official_desktop_lookup_covers_the_current_install_directory() -> None:
     window = window.split("FirstOrDefault(File.Exists)", 1)[0]
     assert '"@opencode-aidesktop"' in window
     assert '"OpenCode"' in window        # прежние пути сохранены
+
+
+def test_self_updated_client_is_distinguished_from_tampering() -> None:
+    # Клиент обновляет себя сам: после автообновления хеш перестаёт совпадать
+    # с зафиксированным, и запуск блокировался навсегда с той же причиной,
+    # что и подмена файла. Наблюдалось живьём: Claude Code обновился
+    # 2.1.218 -> 2.1.258, подпись валидна, лаунчер молча отказывал.
+    source = (REPOSITORY / "src" / "gui" / "LaunchTarget.cs").read_text(
+        encoding="utf-8"
+    )
+    assert "MANAGED_COMMAND_VERSION_DRIFT" in source
+    assert "IsAuthenticSelfUpdate" in source
+    window = source.split("private static bool IsAuthenticSelfUpdate", 1)[1]
+    window = window.split("private static", 1)[0]
+    # Различие делается по подписи издателя, а не по одному лишь наличию файла
+    assert "VerifyAuthenticode" in window
+    assert "source.publisher" in window
+    assert "signature_required" in window
+    # Запуск остаётся заблокированным в обоих случаях
+    assert window.count("return false") >= 2

@@ -378,12 +378,50 @@ namespace LlmFoundationInstaller
             }
             catch
             {
+                // Клиент обновляет себя сам: после автообновления хеш
+                // перестаёт совпадать с зафиксированным, и запуск блокируется
+                // навсегда, хотя файл официальный. Различаем подмену и
+                // штатное обновление — запуск в обоих случаях остановлен,
+                // но причина разная, и по ней видно, что делать.
                 return Blocked(
                     target.target_id,
                     target.client_id,
                     target.role,
-                    "MANAGED_COMMAND_INTEGRITY_FAILED"
+                    IsAuthenticSelfUpdate(home, source)
+                        ? "MANAGED_COMMAND_VERSION_DRIFT"
+                        : "MANAGED_COMMAND_INTEGRITY_FAILED"
                 );
+            }
+        }
+
+        private static bool IsAuthenticSelfUpdate(
+            string home,
+            ClientSource source
+        )
+        {
+            // Признак штатного обновления: файл на месте, подпись валидна и
+            // принадлежит тому же издателю, что объявлен в client-sources.
+            if (!source.signature_required ||
+                String.IsNullOrWhiteSpace(source.publisher))
+            {
+                return false;
+            }
+            try
+            {
+                string executable = ClientBootstrap.ManagedCommandExecutable(
+                    home,
+                    source
+                );
+                if (!File.Exists(executable))
+                {
+                    return false;
+                }
+                ClientBootstrap.VerifyAuthenticode(executable, source.publisher);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

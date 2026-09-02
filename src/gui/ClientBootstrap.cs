@@ -2509,6 +2509,33 @@ namespace LlmFoundationInstaller
                     StringComparison.Ordinal));
         }
 
+        internal static string ManagedCommandExecutable(
+            string home,
+            ClientSource source
+        )
+        {
+            // Путь берётся из записи установки: сам файл мог обновиться,
+            // но его расположение остаётся прежним.
+            string recordPath = ManagedCommandRecordPath(home, source);
+            ManagedCommandRecord record =
+                new JavaScriptSerializer().Deserialize<ManagedCommandRecord>(
+                    File.ReadAllText(recordPath, new UTF8Encoding(false, true))
+                );
+            if (record == null ||
+                String.IsNullOrWhiteSpace(record.relative_path))
+            {
+                throw new InvalidOperationException(
+                    "Managed command record is invalid"
+                );
+            }
+            return Path.GetFullPath(
+                Path.Combine(
+                    Path.GetFullPath(home),
+                    record.relative_path.Replace('/', Path.DirectorySeparatorChar)
+                )
+            );
+        }
+
         internal static string ManagedCommandRecordPath(
             string home,
             ClientSource source
@@ -2931,7 +2958,7 @@ namespace LlmFoundationInstaller
             return powershell;
         }
 
-        private static void VerifyAuthenticode(
+        internal static void VerifyAuthenticode(
             string path,
             string expectedPublisher
         )
