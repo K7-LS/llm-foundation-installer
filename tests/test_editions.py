@@ -688,3 +688,26 @@ def test_edition_bundle_carries_hash_bound_runtime_sidecar(
         "sha256": archive_hash,
         "bytes": archive.stat().st_size,
     }
+
+
+def test_powershell_scripts_with_cyrillic_carry_utf8_bom() -> None:
+    # Windows PowerShell 5.1 читает .ps1 без BOM как ANSI: кириллица
+    # рассыпается, кавычки внутри строк разъезжаются и скрипт падает с
+    # ParserError ещё до первой команды. Наблюдалось на машине сотрудника,
+    # где нет pwsh 7 и запуск ушёл в 5.1. pwsh 7 читает UTF-8 сам, поэтому
+    # на машине разработчика дефект не виден — только BOM закрывает оба.
+    offenders = []
+    for path in sorted((REPOSITORY / "tools").rglob("*.ps1")):
+        payload = path.read_bytes()
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            offenders.append(path.name + " (не UTF-8)")
+            continue
+        has_cyrillic = any("Ѐ" <= ch <= "ӿ" for ch in text)
+        if has_cyrillic and not payload.startswith(b"\xef\xbb\xbf"):
+            offenders.append(path.name)
+    assert offenders == [], (
+        "эти .ps1 содержат кириллицу без UTF-8 BOM и сломаются "
+        "в Windows PowerShell 5.1: " + ", ".join(offenders)
+    )
