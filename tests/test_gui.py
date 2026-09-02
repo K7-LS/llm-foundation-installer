@@ -1415,7 +1415,7 @@ def test_internal_unsigned_rejects_local_test_client_source_lock(
     ).lower()
 
 
-def test_client_download_is_atomic_hash_verified_and_vpn_needs_no_proxy(
+def test_client_download_is_atomic_hash_verified_and_direct_needs_no_proxy(
     tmp_path: Path,
 ):
     content = b"fixture-client-binary\n"
@@ -1452,10 +1452,10 @@ def test_client_download_is_atomic_hash_verified_and_vpn_needs_no_proxy(
         executable = bundle / "LLMFoundationInstaller.exe"
         home = tmp_path / "employee-home"
         home.mkdir()
-        profile = tmp_path / "vpn.json"
+        profile = tmp_path / "direct.json"
         _write_json(
             profile,
-            {"schema_version": 1, "mode": "VPN", "proxy": None},
+            {"schema_version": 1, "mode": "Direct", "proxy": None},
         )
         saved = subprocess.run(
             [
@@ -1516,7 +1516,7 @@ def test_client_download_is_atomic_hash_verified_and_vpn_needs_no_proxy(
             "status": "VERIFIED",
             "client_id": "fixture-client",
             "version": "1.0.0",
-            "connection_mode": "VPN",
+            "connection_mode": "Direct",
             "uses_proxy": False,
             "sha256": hashlib.sha256(content).hexdigest(),
             "bytes": len(content),
@@ -3569,7 +3569,7 @@ def test_launch_center_persists_independent_routes_per_client(
     for target, route in (
         ("codex-desktop", "SingBoxHttps"),
         ("claude-code", "Direct"),
-        ("opencode-cli", "VPN"),
+        ("opencode-cli", "Direct"),
     ):
         saved = subprocess.run(
             [
@@ -3605,7 +3605,7 @@ def test_launch_center_persists_independent_routes_per_client(
     assert routes == {
         "claude-code": "Direct",
         "codex-desktop": "SingBoxHttps",
-        "opencode-cli": "VPN",
+        "opencode-cli": "Direct",
     }
 
     selected = subprocess.run(
@@ -3693,7 +3693,6 @@ def test_every_installer_has_large_labeled_component_checkboxes() -> None:
     ("route", "mode", "proxy_type", "proxy_settings"),
     [
         ("Direct", "Direct", None, "Collapsed"),
-        ("VPN", "VPN", None, "Collapsed"),
         ("SingBoxHttp", "Proxy", "HTTP", "Visible"),
     ],
 )
@@ -5255,8 +5254,8 @@ def test_gui_workflow_fails_closed_on_malformed_client_version(
     assert json.loads(result.stdout)["code"] == "UNSUPPORTED_CLIENT"
 
 
-@pytest.mark.parametrize("mode", ["Direct", "VPN"])
-def test_connection_profile_treats_direct_and_vpn_as_ready_without_proxy(
+@pytest.mark.parametrize("mode", ["Direct"])
+def test_connection_profile_treats_direct_as_ready_without_proxy(
     gui_bundle: Path,
     tmp_path: Path,
     mode: str,
@@ -5691,7 +5690,7 @@ def test_invalid_proxy_does_not_overwrite_last_known_good_profile(
     good = tmp_path / "good.json"
     _write_json(
         good,
-        {"schema_version": 1, "mode": "VPN", "proxy": None},
+        {"schema_version": 1, "mode": "Direct", "proxy": None},
     )
     saved = subprocess.run(
         [
@@ -5983,7 +5982,7 @@ def test_installer_ui_makes_provider_policy_boundary_visible():
         xaml = (
             REPOSITORY_ROOT / "src" / "gui" / resource
         ).read_text(encoding="utf-8").lower()
-        assert "vpn/proxy — это только транспорт" in xaml, resource
+        assert "прокси — это только транспорт" in xaml, resource
         assert "не подтверждает доступность сервиса в регионе" in xaml, resource
     assert "допуск провайдера истёк или недействителен" in source
     assert "Установка Claude заблокирована" not in source
@@ -6021,3 +6020,80 @@ def test_official_installer_failure_reports_the_installer_output(gui_bundle: Pat
     )
     assert "InstallerDiagnostics(installerOutput, installerError)" in source
     assert "Вывод установщика: " in source
+
+
+def test_legacy_vpn_profile_loads_as_direct(gui_bundle: Path, tmp_path: Path):
+    # Режим VPN убран (решение владельца 2026-09-02): он означал «прокси не
+    # нужен», то есть был Direct с другим текстом. Профили прежних сборок с
+    # mode=VPN у пользователей остались — они должны читаться как Direct,
+    # а не ронять загрузку ошибкой «schema or mode is invalid».
+    executable = gui_bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "legacy-home"
+    (home / ".llm-foundation").mkdir(parents=True)
+    _write_json(
+        home / ".llm-foundation" / "connection.json",
+        {"schema_version": 1, "mode": "VPN", "proxy": None},
+    )
+    loaded = subprocess.run(
+        [str(executable), "--connection-json", str(home)],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert loaded.returncode == 0, loaded.stdout + loaded.stderr
+    payload = json.loads(loaded.stdout)
+    assert payload["profile"]["mode"] == "Direct"
+    assert payload["profile"]["proxy"] is None
+    assert payload["credential_state"] == "none"
+
+
+def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: Path):
+    # Замечание Codex к этапу 0: на уже принятых станциях лежат
+    # launcher-routes.json прежних сборок. Без миграции Validate отверг бы
+    # весь файл — Launch Center сломался бы, а вместе с VPN пропал бы нужный
+    # SingBox-маршрут соседней цели. Смешанный файл: VPN -> Direct по-целево,
+    # остальные маршруты сохраняются как есть.
+    executable = gui_bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "legacy-routes-home"
+    (home / ".llm-foundation").mkdir(parents=True)
+    _write_json(
+        home / ".llm-foundation" / "launcher-routes.json",
+        {
+            "schema_version": 1,
+            "target_routes": {
+                "claude-code": "Direct",
+                "codex-desktop": "SingBoxHttps",
+                "opencode-cli": "VPN",
+            },
+        },
+    )
+    loaded = subprocess.run(
+        [str(executable), "--launch-routes-json", str(home)],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert loaded.returncode == 0, loaded.stdout + loaded.stderr
+    assert json.loads(loaded.stdout)["target_routes"] == {
+        "claude-code": "Direct",
+        "codex-desktop": "SingBoxHttps",
+        "opencode-cli": "Direct",
+    }
+    # Save поверх мигрированного файла не должен споткнуться о старое значение
+    saved = subprocess.run(
+        [str(executable), "--save-launch-route-json", str(home), "opencode-cli", "SingBoxHttp"],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert saved.returncode == 0, saved.stdout + saved.stderr
+    assert json.loads(saved.stdout)["route"] == "SingBoxHttp"

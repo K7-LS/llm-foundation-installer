@@ -1148,8 +1148,8 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
     assert "InternetSetOption" in proxy_source
 
 
-@pytest.mark.parametrize("route", ["Direct", "VPN"])
-def test_direct_vpn_launch_exact_process_without_proxy_environment(
+@pytest.mark.parametrize("route", ["Direct"])
+def test_direct_launch_exact_process_without_proxy_environment(
     tmp_path: Path,
     route: str,
     process_only_registry_key: str,

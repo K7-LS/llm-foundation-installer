@@ -17,7 +17,7 @@ import installer_release  # noqa: E402
 import pilot_release  # noqa: E402
 
 
-NETWORK_MODES = ("Direct", "VPN", "SingBoxHttp", "SingBoxHttps")
+NETWORK_MODES = ("Direct", "SingBoxHttp", "SingBoxHttps")
 
 
 def _json_bytes(value: object) -> bytes:

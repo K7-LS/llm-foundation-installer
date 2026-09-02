@@ -30,14 +30,9 @@ namespace LlmFoundationInstaller
             );
         }
 
-        public static ConnectionStatus ModeIdle(bool isVpn)
+        public static ConnectionStatus ModeIdle()
         {
-            return Make(
-                isVpn
-                    ? "VPN: прокси не требуется."
-                    : "Напрямую: прокси не используется.",
-                ToneOk
-            );
+            return Make("Напрямую: прокси не используется.", ToneOk);
         }
 
         public static ConnectionStatus SavedProfileNeedsAttention(
@@ -168,11 +163,9 @@ namespace LlmFoundationInstaller
         public static ConnectionStatus Saved(string mode)
         {
             return Make(
-                mode == "VPN"
-                    ? "VPN сохранён: отсутствие прокси не является ошибкой."
-                    : (mode == "Direct"
-                        ? "Прямое подключение сохранено: прокси отключён."
-                        : "Прокси сохранён; пароль защищён Windows DPAPI."),
+                mode == "Direct"
+                    ? "Прямое подключение сохранено: прокси отключён."
+                    : "Прокси сохранён; пароль защищён Windows DPAPI.",
                 ToneOk
             );
         }
@@ -225,7 +218,7 @@ namespace LlmFoundationInstaller
                 stableReason == "RUNTIME_EXITED_BEFORE_READY")
             {
                 action = "SingBox не запустил локальный прокси. Закройте другой " +
-                    "VPN или прокси и повторите проверку.";
+                    "прокси на этом порту и повторите проверку.";
             }
             else if (stableReason == "ROUTE_PROBE_FAILED")
             {
@@ -315,8 +308,7 @@ namespace LlmFoundationInstaller
                     });
                 };
             add("proxy_guidance", ProxyGuidance());
-            add("mode_idle_direct", ModeIdle(false));
-            add("mode_idle_vpn", ModeIdle(true));
+            add("mode_idle_direct", ModeIdle());
             add("saved_profile_attention", SavedProfileNeedsAttention(
                 "<причина>"
             ));
@@ -334,7 +326,6 @@ namespace LlmFoundationInstaller
             add("reset_ok_managed", ResetResult(true, false, null));
             add("reset_partial", ResetResult(false, false, null));
             add("reset_exception", ResetException("<причина>"));
-            add("saved_vpn", Saved("VPN"));
             add("saved_direct", Saved("Direct"));
             add("saved_proxy", Saved("Proxy"));
             add("save_failed", SaveFailed("<причина>"));

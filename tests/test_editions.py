@@ -4,6 +4,7 @@ import os
 import shutil
 import struct
 import subprocess
+import re
 from pathlib import Path
 
 import pytest
@@ -489,7 +490,6 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
         "Codex",
         "OpenCode",
         "Напрямую",
-        "VPN",
         "SingBox HTTP",
         "SingBox HTTPS",
         "InternalUnsigned",
@@ -716,3 +716,49 @@ def test_powershell_scripts_with_cyrillic_carry_utf8_bom() -> None:
         "эти .ps1 содержат кириллицу без UTF-8 BOM и сломаются "
         "в Windows PowerShell 5.1: " + ", ".join(offenders)
     )
+
+
+def test_vpn_mode_is_gone_from_product_and_tooling() -> None:
+    # VPN убран полностью (решение владельца 2026-09-02). Единственное
+    # допустимое упоминание — миграция старых профилей в ConnectionProfile.Load,
+    # чтобы сохранённый mode=VPN читался как Direct, а не падал.
+    # Допустимые упоминания: миграции старых файлов (только внутри Load),
+    # тесты этих миграций, архив планов/спецификаций.
+    migrations = {
+        REPOSITORY / "src" / "gui" / "ConnectionProfile.cs":
+            ("public static ConnectionStateResult Load", "private static string StateRoot"),
+        REPOSITORY / "src" / "gui" / "LaunchRoutePreferences.cs":
+            ("public static LaunchRoutePreferences Load", "public static LaunchRouteSelection Save"),
+    }
+    offenders = []
+    for folder in ("src", "tools", "tests", "docs"):
+        for path in sorted((REPOSITORY / folder).rglob("*")):
+            if not path.is_file() or path.suffix not in {
+                ".cs", ".xaml", ".py", ".ps1", ".json", ".md", ".cmd",
+            }:
+                continue
+            if "__pycache__" in path.parts or path == Path(__file__).resolve():
+                continue
+            if "superpowers" in path.parts:
+                continue  # архив планов и спецификаций — история решений
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "vpn" not in text.lower():
+                continue
+            if path in migrations:
+                begin, end = migrations[path]
+                load = text.split(begin, 1)[1].split(end, 1)[0]
+                rest = text.replace(load, "")
+                if "vpn" in rest.lower():
+                    offenders.append(f"{path.relative_to(REPOSITORY)} (вне Load)")
+                continue
+            if path.name == "test_gui.py":
+                # тест миграции старых профилей обязан упоминать VPN
+                # все тесты миграции носят префикс test_legacy_vpn_
+                rest = re.sub(
+                    r"def test_legacy_vpn_[^\n]*\n(?:(?!\ndef ).*\n)*", "", text
+                )
+                if "vpn" in rest.lower():
+                    offenders.append(f"{path.relative_to(REPOSITORY)} (вне теста миграции)")
+                continue
+            offenders.append(str(path.relative_to(REPOSITORY)))
+    assert offenders == [], "VPN всё ещё упоминается: " + ", ".join(offenders)

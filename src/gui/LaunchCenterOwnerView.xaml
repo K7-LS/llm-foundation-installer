@@ -140,7 +140,6 @@
               <StackPanel><TextBlock Text="ПРОФИЛЬ МАРШРУТА / ВЫБРАНО" FontFamily="Cascadia Mono" FontSize="10" Foreground="#30BCED" /><TextBlock Text="Выбранный клиент → Локальный шлюз → Провайдер" FontFamily="Bahnschrift SemiCondensed" FontSize="21" FontWeight="SemiBold" Margin="0,5,0,0" /></StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <RadioButton x:Name="RouteDirect" GroupName="Route" Content="НАПРЯМУЮ" IsChecked="True" Style="{StaticResource Route}" />
-                <RadioButton x:Name="RouteVpn" GroupName="Route" Content="VPN" Style="{StaticResource Route}" />
                 <RadioButton x:Name="RouteHttp" GroupName="Route" Content="ПРОКСИ HTTP" Style="{StaticResource Route}" ToolTip="Незашифрованный протокол самого прокси-сервера" />
                 <RadioButton x:Name="RouteHttps" GroupName="Route" Content="ПРОКСИ HTTPS" Style="{StaticResource Route}" Margin="0" ToolTip="TLS-протокол самого прокси-сервера" />
               </StackPanel>
