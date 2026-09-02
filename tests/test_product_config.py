@@ -6,6 +6,7 @@
 
 import json
 import re
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,7 +14,11 @@ from pathlib import Path
 REPOSITORY = Path(__file__).resolve().parents[1]
 CONFIG_PATH = REPOSITORY / "src" / "gui" / "product-config.json"
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+POWERSHELL = (
+    os.environ.get("K7_TEST_POWERSHELL")
+    or shutil.which("pwsh")
+    or shutil.which("powershell.exe")
+)
 
 
 def _config() -> dict:

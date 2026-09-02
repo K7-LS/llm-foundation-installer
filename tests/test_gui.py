@@ -31,7 +31,11 @@ def _gui_source() -> str:
         path.read_text(encoding="utf-8")
         for path in sorted((REPOSITORY_ROOT / "src" / "gui").glob("*.cs"))
     )
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+POWERSHELL = (
+    os.environ.get("K7_TEST_POWERSHELL")
+    or shutil.which("pwsh")
+    or shutil.which("powershell.exe")
+)
 POWERSHELLS = [
     value
     for value in (shutil.which("pwsh"), shutil.which("powershell.exe"))

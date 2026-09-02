@@ -20,7 +20,11 @@ from test_gui import _accepted_foundation
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
 RUNTIME_LOCK = REPOSITORY / "runtime-sources.lock.json"
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+POWERSHELL = (
+    os.environ.get("K7_TEST_POWERSHELL")
+    or shutil.which("pwsh")
+    or shutil.which("powershell.exe")
+)
 
 
 def _sha256(path: Path) -> str:

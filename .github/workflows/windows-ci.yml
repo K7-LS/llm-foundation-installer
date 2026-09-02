@@ -83,6 +83,9 @@ jobs:
         shell: powershell
         env:
           LLM_FOUNDATION_CI_OFFLINE: "1"
+          # Сборки в фикстурах — через Windows PowerShell 5.1, а не pwsh:
+          # иначе этот job проверял бы то же, что и job PowerShell 7.
+          K7_TEST_POWERSHELL: powershell.exe
         run: python -m pytest -q
       - name: Verify tests did not mutate tracked files
         shell: powershell

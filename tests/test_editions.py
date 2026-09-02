@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -11,7 +12,11 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
 EDITION_BUILD_SCRIPT = REPOSITORY / "tools" / "build-edition.ps1"
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+POWERSHELL = (
+    os.environ.get("K7_TEST_POWERSHELL")
+    or shutil.which("pwsh")
+    or shutil.which("powershell.exe")
+)
 
 
 def _run_build(
