@@ -392,6 +392,18 @@ namespace LlmFoundationInstaller
                             continue;
                         }
                     }
+                    if (result.code != 0 &&
+                        ResolveSessionToolCollision(home, result))
+                    {
+                        // Скилл от прежней установки убран в backup —
+                        // планируем заново.
+                        result = await RunFoundationAsync(
+                            bundleRoot,
+                            "plan",
+                            row,
+                            home
+                        );
+                    }
                     if (result.code != 0)
                     {
                         SetStatus(
@@ -892,6 +904,154 @@ namespace LlmFoundationInstaller
                 message = "решение по неизвестным записям не получено";
             }
             return message.Trim();
+        }
+
+        private static readonly string[] SessionToolRoots =
+        {
+            ".claude/skills",
+            ".agents/skills",
+        };
+
+        private static bool ResolveSessionToolCollision(
+            string home,
+            WorkflowRunResult result
+        )
+        {
+            // Движок отказывается ставить session tool поверх каталога,
+            // которого нет в его состоянии и который отличается от пакета:
+            // это скилл прежней установки, и затирать его молча нельзя.
+            // Для неизвестных записей выбор пользователю предлагается, а
+            // здесь возвращался жёсткий отказ без выхода. Предлагаем то же
+            // самое решение: перенести в backup и продолжить.
+            string toolId = SessionToolCollisionId(result);
+            if (String.IsNullOrWhiteSpace(toolId))
+            {
+                return false;
+            }
+            string source = FindSessionToolDirectory(home, toolId);
+            if (source == null)
+            {
+                return false;
+            }
+            MessageBoxResult answer = ShowOwnedMessage(
+                "Скилл «" + toolId + "» уже установлен на этом " +
+                    "компьютере и отличается от версии в пакете.\n\n" +
+                    "Путь: " + source + "\n\n" +
+                    "Да — перенести в backup и поставить версию из " +
+                    "пакета (копия сохранится, ничего не удаляется).\n" +
+                    "Нет — остановить установку и разобраться вручную.",
+                "Установка: скилл от прежней установки",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning
+            );
+            if (answer != MessageBoxResult.Yes)
+            {
+                return false;
+            }
+            try
+            {
+                string backupRoot = Path.Combine(
+                    Path.GetFullPath(home),
+                    ".llm-foundation",
+                    "backups",
+                    "session-tools"
+                );
+                Directory.CreateDirectory(backupRoot);
+                string stamp = DateTime.UtcNow.ToString(
+                    "yyyyMMddTHHmmssZ",
+                    CultureInfo.InvariantCulture
+                );
+                Directory.Move(
+                    source,
+                    Path.Combine(backupRoot, stamp + "-" + toolId)
+                );
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string SessionToolCollisionId(
+            WorkflowRunResult result
+        )
+        {
+            const string marker = "Unmanaged session tool collision:";
+            foreach (string payload in new[] { result.output, result.error })
+            {
+                if (String.IsNullOrWhiteSpace(payload))
+                {
+                    continue;
+                }
+                int index = payload.IndexOf(marker, StringComparison.Ordinal);
+                if (index < 0)
+                {
+                    continue;
+                }
+                string tail = payload.Substring(index + marker.Length);
+                foreach (char terminator in new[]
+                {
+                    '"',
+                    '\n',
+                    '\r',
+                })
+                {
+                    int stop = tail.IndexOf(terminator);
+                    if (stop >= 0)
+                    {
+                        tail = tail.Substring(0, stop);
+                    }
+                }
+                string toolId = tail.Trim();
+                // Имя скилла — один безопасный сегмент пути
+                if (toolId.Length > 0 &&
+                    toolId.Length <= 64 &&
+                    toolId.IndexOfAny(new[]
+                    {
+                        '/',
+                        '\\',
+                        ':',
+                        '.',
+                        ' ',
+                    }) < 0)
+                {
+                    return toolId;
+                }
+            }
+            return null;
+        }
+
+        private static string FindSessionToolDirectory(
+            string home,
+            string toolId
+        )
+        {
+            // Корень скиллов задаётся манифестом пакета, поэтому не
+            // угадываем его, а ищем фактически существующий каталог.
+            string root = Path.GetFullPath(home)
+                .TrimEnd(Path.DirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            foreach (string relative in SessionToolRoots)
+            {
+                string candidate = Path.GetFullPath(
+                    Path.Combine(
+                        root,
+                        relative.Replace('/', Path.DirectorySeparatorChar),
+                        toolId
+                    )
+                );
+                if (candidate.StartsWith(
+                        root,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    Directory.Exists(candidate) &&
+                    (File.GetAttributes(candidate) &
+                        FileAttributes.ReparsePoint) == 0)
+                {
+                    return candidate;
+                }
+            }
+            return null;
         }
 
         private static bool IsUnknownDecisionRequired(
