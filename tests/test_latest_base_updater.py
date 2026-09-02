@@ -127,3 +127,23 @@ def test_session_tool_collision_offers_backup_instead_of_dead_end() -> None:
     assert "Directory.Exists" in finder
     assert "StartsWith" in finder
     assert "ReparsePoint" in finder
+
+
+def test_unknown_entries_are_read_as_json_arrays_not_typed_arrays() -> None:
+    # JavaScriptSerializer отдаёт JSON-массивы как ArrayList. Код приводил
+    # их к object[], получал null и молча возвращался — диалог выбора по
+    # неизвестным записям не показывался НИ РАЗУ: пользователь видел либо
+    # предложение снова нажать «Сформировать план», либо текст ошибки.
+    # Проверено на живом ответе движка: as object[] -> null, через
+    # IEnumerable -> 39 записей.
+    app = _app()
+    window = app.split("private static bool ResolveUnknownDecisions", 1)[1]
+    window = window.split("private static string SessionToolCollisionId", 1)[0]
+    assert "as object[]" not in window, (
+        "JSON-массив нельзя приводить к object[]: JavaScriptSerializer "
+        "возвращает ArrayList, приведение даёт null"
+    )
+    assert "IEnumerable" in window
+    assert "Cast<object>()" in window
+    # строка тоже IEnumerable — она не должна сойти за список записей
+    assert "is string" in window

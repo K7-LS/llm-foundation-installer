@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -768,8 +769,17 @@ namespace LlmFoundationInstaller
             {
                 return false;
             }
-            object[] unknown = unknownValue as object[];
-            if (unknown == null || unknown.Length == 0)
+            // JavaScriptSerializer отдаёт JSON-массивы как ArrayList, а не
+            // как object[]: приведение к object[] давало null, и диалог
+            // выбора не показывался НИ РАЗУ — пользователь видел либо
+            // предложение снова нажать кнопку, либо текст ошибки движка.
+            IEnumerable unknownItems = unknownValue as IEnumerable;
+            if (unknownItems == null || unknownValue is string)
+            {
+                return false;
+            }
+            List<object> unknown = unknownItems.Cast<object>().ToList();
+            if (unknown.Count == 0)
             {
                 return false;
             }
