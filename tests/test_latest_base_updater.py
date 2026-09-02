@@ -94,3 +94,36 @@ def test_installer_prompts_for_every_unknown_before_reconcile() -> None:
     assert "ожидает решения по старой базе" not in app
     assert "UnknownDecisionReason" in app
     assert "остановлен движком" in app
+
+
+def test_session_tool_collision_offers_backup_instead_of_dead_end() -> None:
+    # Движок отказывается ставить session tool поверх каталога, которого нет
+    # в его состоянии и который отличается от пакета: это скилл прежней
+    # установки. Для неизвестных записей выбор предлагается, а здесь был
+    # жёсткий INVALID_PACKAGE без выхода — наблюдалось на рабочей станции
+    # сотрудника (acad-recreation блокировал установку Claude целиком).
+    app = _app()
+    assert "ResolveSessionToolCollision" in app
+    assert "Unmanaged session tool collision:" in app
+
+    window = app.split("private static bool ResolveSessionToolCollision", 1)[1]
+    window = window.split("private static string SessionToolCollisionId", 1)[0]
+    # Пользователь решает сам, копия сохраняется
+    assert "ShowOwnedMessage" in window
+    assert "MessageBoxButton.YesNo" in window
+    assert "backups" in window and "session-tools" in window
+    assert "Directory.Move" in window
+    assert "MessageBoxResult.Yes" in window
+
+    # Имя скилла — один безопасный сегмент: путь не собирается из чужого текста
+    parser = app.split("private static string SessionToolCollisionId", 1)[1]
+    parser = parser.split("private static string FindSessionToolDirectory", 1)[0]
+    assert "IndexOfAny" in parser
+    assert "toolId.Length <= 64" in parser
+
+    # Каталог не угадывается, а ищется фактический, и только внутри профиля
+    finder = app.split("private static string FindSessionToolDirectory", 1)[1]
+    finder = finder.split("private static bool IsUnknownDecisionRequired", 1)[0]
+    assert "Directory.Exists" in finder
+    assert "StartsWith" in finder
+    assert "ReparsePoint" in finder
