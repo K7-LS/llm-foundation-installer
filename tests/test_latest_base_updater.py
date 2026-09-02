@@ -160,3 +160,16 @@ def test_plan_action_count_is_not_read_through_typed_array_cast() -> None:
     window = app.split('"actions",', 1)[1].split("planLines.Add", 1)[0]
     assert "ICollection" in window
     assert "is string" in window
+
+
+def test_partial_install_is_not_reported_as_full_success() -> None:
+    # Ревью Codex: успех одной базы показывался как общий «Установка
+    # завершена», даже если остальные выбранные цели упали. Частичный
+    # результат должен называться частичным: другой тон статуса, шаг
+    # «Готово» не подсвечен как пройденный, в тексте — кто прошёл.
+    app = _app()
+    assert "bool partial = completed.Count < selected.Count;" in app
+    assert "Установка завершена частично: " in app
+    assert 'partial ? "warning" : "success"' in app
+    assert "InstallerView.SetWorkflowStep(view, 7, !partial);" in app
+    assert "MessageBoxImage.Warning" in app
