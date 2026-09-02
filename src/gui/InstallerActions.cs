@@ -555,23 +555,37 @@ namespace LlmFoundationInstaller
                     home,
                     completed
                 );
-                InstallerView.SetWorkflowStep(view, 7, true);
+                // Ревью Codex: успех одной базы показывался как общий
+                // «Установка завершена», даже если остальные выбранные
+                // цели упали на плане, установке или doctor. Частичный
+                // результат называем частичным: другой тон, шаг «Готово»
+                // не подсвечивается как пройденный, в тексте — кто прошёл
+                // и что не завершено.
+                bool partial = completed.Count < selected.Count;
+                InstallerView.SetWorkflowStep(view, 7, !partial);
                 string noticeText = notices.Count == 0
                     ? ""
-                    : " Ограничения: " +
+                    : (partial ? " Не завершено: " : " Ограничения: ") +
                         String.Join(" ", notices.ToArray());
+                string headline = partial
+                    ? "Установка завершена частично: " + completed.Count +
+                        " из " + selected.Count + " (doctor пройден для: " +
+                        String.Join(", ", completed
+                            .Select(row => row.display_name).ToArray()) + ")."
+                    : "Установка завершена. Doctor пройден.";
                 SetStatus(
                     view,
                     report.written
-                        ? "Установка завершена. Doctor пройден. Отчёт: " +
-                            report.path + noticeText
-                        : "Установка завершена. Doctor пройден. " +
-                            "Локальный отчёт не сохранён: " + report.error +
-                            noticeText,
-                    "success"
+                        ? headline + " Отчёт: " + report.path + noticeText
+                        : headline + " Локальный отчёт не сохранён: " +
+                            report.error + noticeText,
+                    partial ? "warning" : "success"
                 );
                 MessageBox.Show(
-                    "Рабочая среда установлена и проверена.\n\n" +
+                    (partial
+                        ? "Установлена часть баз: " + completed.Count +
+                            " из " + selected.Count + ".\n\n"
+                        : "Рабочая среда установлена и проверена.\n\n") +
                     "Авторизация выполняется только в самих клиентах.\n" +
                     "Для обновлений используйте $sync-base.\n" +
                     (report.written
@@ -583,7 +597,9 @@ namespace LlmFoundationInstaller
                             String.Join("\n", notices.ToArray())),
                     "LLM Foundation",
                     MessageBoxButton.OK,
-                    MessageBoxImage.Information
+                    partial
+                        ? MessageBoxImage.Warning
+                        : MessageBoxImage.Information
                 );
             }
             catch (Exception exception)
