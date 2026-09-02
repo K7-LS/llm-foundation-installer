@@ -149,6 +149,22 @@ def test_unknown_entries_are_read_as_json_arrays_not_typed_arrays() -> None:
     assert "is string" in window
 
 
+def test_foundation_process_timeout_is_real() -> None:
+    # Замечание Codex к плану переработки: stdout и stderr читались
+    # синхронно ДО WaitForExit(timeout). Повисший движок держал stdout
+    # открытым, ReadToEnd не возвращался, и таймаут не наступал никогда;
+    # переполненный stderr во время чтения stdout давал pipe-deadlock.
+    # Статический gate: в запуске движка нет синхронного ReadToEnd, оба
+    # потока читаются асинхронно, ожидание ограничено.
+    source = (ROOT / "src" / "gui" / "FoundationWorkflow.cs").read_text(
+        encoding="utf-8"
+    )
+    assert "ReadToEnd()" not in source
+    assert source.count("ReadToEndAsync()") == 2
+    assert "WaitForExit(TimeoutMilliseconds)" in source
+    assert "Task.WaitAll(" in source
+    assert "process.Kill()" in source
+
 def test_plan_action_count_is_not_read_through_typed_array_cast() -> None:
     # Второе место того же корня, что и диалог по неизвестным записям:
     # «actions» из ответа движка проверялись как object[], а JavaScriptSerializer
