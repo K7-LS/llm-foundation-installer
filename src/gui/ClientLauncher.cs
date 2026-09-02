@@ -106,7 +106,7 @@ namespace LlmFoundationInstaller
                     home
                 );
             }
-            if (route != "Direct" && route != "VPN")
+            if (route != "Direct")
             {
                 return Failed(
                     target,

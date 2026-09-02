@@ -72,7 +72,6 @@ def test_pilot_evidence_is_pii_free_and_binds_every_executable_and_runtime(
     assert evidence["runtime"] == record(draft / RUNTIME_FILE)
     assert evidence["network_modes"] == [
         "Direct",
-        "VPN",
         "SingBoxHttp",
         "SingBoxHttps",
     ]

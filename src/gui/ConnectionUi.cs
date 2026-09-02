@@ -55,9 +55,7 @@ namespace LlmFoundationInstaller
                 {
                     ApplyStatus(
                         contract,
-                        ConnectionStatusModel.ModeIdle(
-                            contract.Vpn.IsChecked == true
-                        )
+                        ConnectionStatusModel.ModeIdle()
                     );
                 }
             };
@@ -321,7 +319,7 @@ namespace LlmFoundationInstaller
                     endpoint
                 );
             }
-            if (route == "Direct" || route == "VPN")
+            if (route == "Direct")
             {
                 return ConnectionProbe.Run(home, endpoint);
             }
@@ -336,11 +334,6 @@ namespace LlmFoundationInstaller
             if (route == "Direct")
             {
                 contract.Direct.IsChecked = true;
-                return true;
-            }
-            if (route == "VPN")
-            {
-                contract.Vpn.IsChecked = true;
                 return true;
             }
             if (route == "SingBoxHttp")
@@ -520,11 +513,6 @@ namespace LlmFoundationInstaller
                 contract.Direct.IsChecked = true;
                 return;
             }
-            if (profile.mode == "VPN")
-            {
-                contract.Vpn.IsChecked = true;
-                return;
-            }
             ApplyRoute(
                 contract.View,
                 profile.proxy.type == "HTTPS" ? "SingBoxHttps" : "SingBoxHttp"
@@ -583,7 +571,6 @@ namespace LlmFoundationInstaller
     {
         public UserControl View { get; private set; }
         public RadioButton Direct { get; private set; }
-        public RadioButton Vpn { get; private set; }
         public RadioButton Proxy { get; private set; }
         public RadioButton Http { get; private set; }
         public RadioButton Https { get; private set; }
@@ -604,7 +591,7 @@ namespace LlmFoundationInstaller
         {
             get
             {
-                return new[] { Direct, Vpn, Proxy, Http, Https }
+                return new[] { Direct, Proxy, Http, Https }
                     .Where(route => route != null);
             }
         }
@@ -623,9 +610,7 @@ namespace LlmFoundationInstaller
         {
             get
             {
-                return IsProxy
-                    ? "Proxy"
-                    : (Vpn.IsChecked == true ? "VPN" : "Direct");
+                return IsProxy ? "Proxy" : "Direct";
             }
         }
 
@@ -647,7 +632,6 @@ namespace LlmFoundationInstaller
             ConnectionUiContract contract = new ConnectionUiContract();
             contract.View = view;
             contract.Direct = Required<RadioButton>(view, "DirectMode", "RouteDirect");
-            contract.Vpn = Required<RadioButton>(view, "VpnMode", "RouteVpn");
             contract.Proxy = Optional<RadioButton>(view, "ProxyMode");
             contract.Http = Optional<RadioButton>(view, "RouteHttp");
             contract.Https = Optional<RadioButton>(view, "RouteHttps");
