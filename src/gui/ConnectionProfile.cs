@@ -54,7 +54,7 @@ namespace LlmFoundationInstaller
     {
         private static readonly HashSet<string> Modes =
             new HashSet<string>(
-                new[] { "Direct", "VPN", "Proxy" },
+                new[] { "Direct", "Proxy" },
                 StringComparer.Ordinal
             );
         private static readonly HashSet<string> ProxyTypes =
@@ -277,11 +277,19 @@ namespace LlmFoundationInstaller
                     credential_state = "none"
                 };
             }
-            ConnectionProfile profile = Validate(
+            ConnectionProfile stored =
                 new JavaScriptSerializer().Deserialize<ConnectionProfile>(
                     File.ReadAllText(profilePath, Encoding.UTF8)
-                )
-            );
+                );
+            // Режим VPN убран (решение владельца 2026-09-02): он означал
+            // «прокси не нужен», то есть был Direct с другим текстом.
+            // Профили, сохранённые прежними сборками, читаем как Direct.
+            if (stored != null && stored.mode == "VPN")
+            {
+                stored.mode = "Direct";
+                stored.proxy = null;
+            }
+            ConnectionProfile profile = Validate(stored);
             bool needsPassword = profile.mode == "Proxy" &&
                 profile.proxy.auth.mode == "UsernamePassword";
             string credentialPath = Path.Combine(root, "connection.cred");
