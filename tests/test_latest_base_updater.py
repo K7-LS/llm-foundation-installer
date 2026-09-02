@@ -147,3 +147,16 @@ def test_unknown_entries_are_read_as_json_arrays_not_typed_arrays() -> None:
     assert "Cast<object>()" in window
     # строка тоже IEnumerable — она не должна сойти за список записей
     assert "is string" in window
+
+
+def test_plan_action_count_is_not_read_through_typed_array_cast() -> None:
+    # Второе место того же корня, что и диалог по неизвестным записям:
+    # «actions» из ответа движка проверялись как object[], а JavaScriptSerializer
+    # отдаёт ArrayList — счётчик всегда был 0, и пользователь видел
+    # «0 файлов, backup и doctor» в каждом плане.
+    app = _app()
+    assert "is object[]" not in app
+    assert "((object[])" not in app
+    window = app.split('"actions",', 1)[1].split("planLines.Add", 1)[0]
+    assert "ICollection" in window
+    assert "is string" in window
