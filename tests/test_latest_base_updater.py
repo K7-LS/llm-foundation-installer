@@ -164,3 +164,15 @@ def test_foundation_process_timeout_is_real() -> None:
     assert "WaitForExit(TimeoutMilliseconds)" in source
     assert "Task.WaitAll(" in source
     assert "process.Kill()" in source
+
+def test_plan_action_count_is_not_read_through_typed_array_cast() -> None:
+    # Второе место того же корня, что и диалог по неизвестным записям:
+    # «actions» из ответа движка проверялись как object[], а JavaScriptSerializer
+    # отдаёт ArrayList — счётчик всегда был 0, и пользователь видел
+    # «0 файлов, backup и doctor» в каждом плане.
+    app = _app()
+    assert "is object[]" not in app
+    assert "((object[])" not in app
+    window = app.split('"actions",', 1)[1].split("planLines.Add", 1)[0]
+    assert "ICollection" in window
+    assert "is string" in window
