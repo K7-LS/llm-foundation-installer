@@ -937,10 +937,16 @@ namespace LlmFoundationInstaller
             return message.Trim();
         }
 
+        // Корни скиллов трёх клиентов (из managed_surface их пакетов):
+        // Claude — .claude/skills, Codex — .agents/skills,
+        // OpenCode — .config/opencode/skills. Без третьего корня коллизия
+        // скилла OpenCode оставалась тупиком (ревью Codex, 2026-09-02).
+        // В этапе 3 список должен строиться от манифеста пакета.
         private static readonly string[] SessionToolRoots =
         {
             ".claude/skills",
             ".agents/skills",
+            ".config/opencode/skills",
         };
 
         private static bool ResolveSessionToolCollision(
