@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -378,33 +379,42 @@ namespace LlmFoundationInstaller
             }
             catch
             {
-                // Клиент обновляет себя сам: после автообновления хеш
-                // перестаёт совпадать с зафиксированным, и запуск блокируется
-                // навсегда, хотя файл официальный. Различаем подмену и
-                // штатное обновление — запуск в обоих случаях остановлен,
-                // но причина разная, и по ней видно, что делать.
+                // Клиент обновляет себя сам, и это штатное событие: после
+                // обновления хеш законно расходится с пином. Блокировать
+                // запуск из-за этого нельзя — пин задаёт версию для
+                // установки, а не запрещает обновляться. Принимаем файл,
+                // если он подписан тем же издателем, что объявлен в
+                // client-sources, и сообщаем о расхождении версий обычной
+                // строкой. Блокировка остаётся для неподписанной подмены.
+                LaunchTargetResolution updated = AcceptSelfUpdatedClient(
+                    home,
+                    source,
+                    target
+                );
+                if (updated != null)
+                {
+                    return updated;
+                }
                 return Blocked(
                     target.target_id,
                     target.client_id,
                     target.role,
-                    IsAuthenticSelfUpdate(home, source)
-                        ? "MANAGED_COMMAND_VERSION_DRIFT"
-                        : "MANAGED_COMMAND_INTEGRITY_FAILED"
+                    "MANAGED_COMMAND_INTEGRITY_FAILED"
                 );
             }
         }
 
-        private static bool IsAuthenticSelfUpdate(
+        private static LaunchTargetResolution AcceptSelfUpdatedClient(
             string home,
-            ClientSource source
+            ClientSource source,
+            LaunchTarget target
         )
         {
-            // Признак штатного обновления: файл на месте, подпись валидна и
-            // принадлежит тому же издателю, что объявлен в client-sources.
             if (!source.signature_required ||
                 String.IsNullOrWhiteSpace(source.publisher))
             {
-                return false;
+                // Без подписи обновление неотличимо от подмены.
+                return null;
             }
             try
             {
@@ -412,17 +422,57 @@ namespace LlmFoundationInstaller
                     home,
                     source
                 );
-                if (!File.Exists(executable))
+                ClientBootstrap.VerifyAuthenticode(
+                    executable,
+                    source.publisher
+                );
+                return new LaunchTargetResolution
                 {
-                    return false;
-                }
-                ClientBootstrap.VerifyAuthenticode(executable, source.publisher);
-                return true;
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    launch_mode = "executable",
+                    executable_path = executable,
+                    // Фактический хеш: запуск сверяет именно его.
+                    sha256 = BundleIntegrity.Sha256(executable),
+                    activation_id = null,
+                    package_full_name = null,
+                    action = DescribeClientUpdate(executable, source),
+                    reason = null
+                };
             }
             catch
             {
-                return false;
+                return null;
             }
+        }
+
+        private static string DescribeClientUpdate(
+            string executable,
+            ClientSource source
+        )
+        {
+            string installed = null;
+            try
+            {
+                installed = FileVersionInfo
+                    .GetVersionInfo(executable)
+                    .FileVersion;
+            }
+            catch
+            {
+            }
+            string name = String.IsNullOrWhiteSpace(source.display_name)
+                ? source.id
+                : source.display_name;
+            if (String.IsNullOrWhiteSpace(installed))
+            {
+                return name + ": установлена версия новее, чем в комплекте (" +
+                    source.version + ")";
+            }
+            return name + ": установлена версия " + installed +
+                ", в комплекте " + source.version;
         }
 
         private static LaunchTargetResolution ResolveManagedDesktop(

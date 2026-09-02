@@ -2514,26 +2514,37 @@ namespace LlmFoundationInstaller
             ClientSource source
         )
         {
-            // Путь берётся из записи установки: сам файл мог обновиться,
-            // но его расположение остаётся прежним.
-            string recordPath = ManagedCommandRecordPath(home, source);
-            ManagedCommandRecord record =
-                new JavaScriptSerializer().Deserialize<ManagedCommandRecord>(
-                    File.ReadAllText(recordPath, new UTF8Encoding(false, true))
-                );
-            if (record == null ||
-                String.IsNullOrWhiteSpace(record.relative_path))
+            // Путь считается от источника, а не из файла-записи: запись лежит
+            // на диске и могла быть изменена. Хеш здесь НЕ сверяется — это
+            // задача вызывающего кода.
+            if (!UsesManagedCommand(source))
             {
                 throw new InvalidOperationException(
-                    "Managed command record is invalid"
+                    "Managed command source is invalid"
                 );
             }
-            return Path.GetFullPath(
-                Path.Combine(
-                    Path.GetFullPath(home),
-                    record.relative_path.Replace('/', Path.DirectorySeparatorChar)
-                )
+            string relative = ManagedRelativePath(source).Replace(
+                '/',
+                Path.DirectorySeparatorChar
             );
+            string root = Path.GetFullPath(home)
+                .TrimEnd(Path.DirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            string executable = Path.GetFullPath(
+                Path.Combine(root, relative)
+            );
+            if (!executable.StartsWith(
+                    root,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(executable) ||
+                (File.GetAttributes(executable) &
+                    FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    "Managed command executable is invalid"
+                );
+            }
+            return executable;
         }
 
         internal static string ManagedCommandRecordPath(
