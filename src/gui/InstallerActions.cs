@@ -424,13 +424,18 @@ namespace LlmFoundationInstaller
                         new JavaScriptSerializer().Deserialize<
                             Dictionary<string, object>
                         >(result.output);
+                    // Тот же корень, что и у диалога по неизвестным записям:
+                    // JavaScriptSerializer отдаёт массив как ArrayList, а не
+                    // object[]. Проверка «is object[]» всегда была ложной, и
+                    // в плане пользователю всегда показывалось «0 файлов».
                     object actionsValue;
-                    int actions = plan.TryGetValue(
+                    ICollection actionItems = plan.TryGetValue(
                         "actions",
                         out actionsValue
-                    ) && actionsValue is object[]
-                        ? ((object[])actionsValue).Length
-                        : 0;
+                    ) && !(actionsValue is string)
+                        ? actionsValue as ICollection
+                        : null;
+                    int actions = actionItems == null ? 0 : actionItems.Count;
                     planLines.Add(
                         row.display_name +
                         (String.IsNullOrWhiteSpace(row.latest_base_version)
