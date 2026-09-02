@@ -49,6 +49,23 @@ namespace LlmFoundationInstaller
                 .Deserialize<LaunchRoutePreferences>(
                     File.ReadAllText(path, new UTF8Encoding(false, true))
                 );
+            // Режим VPN убран (решение владельца 2026-09-02). На уже принятых
+            // станциях лежат маршруты, сохранённые прежними сборками:
+            // без миграции Validate отверг бы весь файл, и вместе с VPN
+            // пропал бы нужный SingBox-маршрут соседней цели.
+            if (value != null && value.target_routes != null)
+            {
+                foreach (string targetId in value.target_routes.Keys.ToList())
+                {
+                    if (String.Equals(
+                            value.target_routes[targetId],
+                            "VPN",
+                            StringComparison.Ordinal))
+                    {
+                        value.target_routes[targetId] = "Direct";
+                    }
+                }
+            }
             return Validate(value);
         }
 

@@ -3,6 +3,7 @@ import json
 import shutil
 import struct
 import subprocess
+import re
 from pathlib import Path
 
 import pytest
@@ -716,9 +717,16 @@ def test_vpn_mode_is_gone_from_product_and_tooling() -> None:
     # VPN убран полностью (решение владельца 2026-09-02). Единственное
     # допустимое упоминание — миграция старых профилей в ConnectionProfile.Load,
     # чтобы сохранённый mode=VPN читался как Direct, а не падал.
-    allowed = REPOSITORY / "src" / "gui" / "ConnectionProfile.cs"
+    # Допустимые упоминания: миграции старых файлов (только внутри Load),
+    # тесты этих миграций, архив планов/спецификаций.
+    migrations = {
+        REPOSITORY / "src" / "gui" / "ConnectionProfile.cs":
+            ("public static ConnectionStateResult Load", "private static string StateRoot"),
+        REPOSITORY / "src" / "gui" / "LaunchRoutePreferences.cs":
+            ("public static LaunchRoutePreferences Load", "public static LaunchRouteSelection Save"),
+    }
     offenders = []
-    for folder in ("src", "tools", "tests"):
+    for folder in ("src", "tools", "tests", "docs"):
         for path in sorted((REPOSITORY / folder).rglob("*")):
             if not path.is_file() or path.suffix not in {
                 ".cs", ".xaml", ".py", ".ps1", ".json", ".md", ".cmd",
@@ -726,22 +734,24 @@ def test_vpn_mode_is_gone_from_product_and_tooling() -> None:
                 continue
             if "__pycache__" in path.parts or path == Path(__file__).resolve():
                 continue
+            if "superpowers" in path.parts:
+                continue  # архив планов и спецификаций — история решений
             text = path.read_text(encoding="utf-8", errors="replace")
             if "vpn" not in text.lower():
                 continue
-            if path == allowed:
-                load = text.split("public static ConnectionStateResult Load", 1)[1]
-                load = load.split("private static string StateRoot", 1)[0]
+            if path in migrations:
+                begin, end = migrations[path]
+                load = text.split(begin, 1)[1].split(end, 1)[0]
                 rest = text.replace(load, "")
                 if "vpn" in rest.lower():
                     offenders.append(f"{path.relative_to(REPOSITORY)} (вне Load)")
                 continue
             if path.name == "test_gui.py":
                 # тест миграции старых профилей обязан упоминать VPN
-                body = text.split("def test_legacy_vpn_profile_loads_as_direct", 1)
-                tail = body[1] if len(body) > 1 else ""
-                marker = "\ndef "
-                rest = body[0] + (tail.split(marker, 1)[1] if marker in tail else "")
+                # все тесты миграции носят префикс test_legacy_vpn_
+                rest = re.sub(
+                    r"def test_legacy_vpn_[^\n]*\n(?:(?!\ndef ).*\n)*", "", text
+                )
                 if "vpn" in rest.lower():
                     offenders.append(f"{path.relative_to(REPOSITORY)} (вне теста миграции)")
                 continue

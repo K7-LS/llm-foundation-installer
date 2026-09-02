@@ -6044,3 +6044,52 @@ def test_legacy_vpn_profile_loads_as_direct(gui_bundle: Path, tmp_path: Path):
     assert payload["profile"]["mode"] == "Direct"
     assert payload["profile"]["proxy"] is None
     assert payload["credential_state"] == "none"
+
+
+def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: Path):
+    # Замечание Codex к этапу 0: на уже принятых станциях лежат
+    # launcher-routes.json прежних сборок. Без миграции Validate отверг бы
+    # весь файл — Launch Center сломался бы, а вместе с VPN пропал бы нужный
+    # SingBox-маршрут соседней цели. Смешанный файл: VPN -> Direct по-целево,
+    # остальные маршруты сохраняются как есть.
+    executable = gui_bundle / "LLMFoundationInstaller.exe"
+    home = tmp_path / "legacy-routes-home"
+    (home / ".llm-foundation").mkdir(parents=True)
+    _write_json(
+        home / ".llm-foundation" / "launcher-routes.json",
+        {
+            "schema_version": 1,
+            "target_routes": {
+                "claude-code": "Direct",
+                "codex-desktop": "SingBoxHttps",
+                "opencode-cli": "VPN",
+            },
+        },
+    )
+    loaded = subprocess.run(
+        [str(executable), "--launch-routes-json", str(home)],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert loaded.returncode == 0, loaded.stdout + loaded.stderr
+    assert json.loads(loaded.stdout)["target_routes"] == {
+        "claude-code": "Direct",
+        "codex-desktop": "SingBoxHttps",
+        "opencode-cli": "Direct",
+    }
+    # Save поверх мигрированного файла не должен споткнуться о старое значение
+    saved = subprocess.run(
+        [str(executable), "--save-launch-route-json", str(home), "opencode-cli", "SingBoxHttp"],
+        cwd=gui_bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=30,
+    )
+    assert saved.returncode == 0, saved.stdout + saved.stderr
+    assert json.loads(saved.stdout)["route"] == "SingBoxHttp"
