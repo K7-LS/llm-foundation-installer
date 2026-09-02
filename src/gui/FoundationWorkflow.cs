@@ -21,6 +21,11 @@ namespace LlmFoundationInstaller
 {
     internal static class FoundationWorkflow
     {
+        // Таймаут операции движка (как и прежде — 120 с) и время на
+        // дочитывание потоков после завершения или Kill.
+        internal const int TimeoutMilliseconds = 120000;
+        internal const int DrainMilliseconds = 10000;
+
         private static readonly HashSet<string> Commands =
             new HashSet<string>(
                 new[] { "plan", "install", "doctor", "inventory", "rollback" },
@@ -192,9 +197,20 @@ namespace LlmFoundationInstaller
                         standardError = "Foundation process did not start";
                         return 30;
                     }
-                    standardOutput = process.StandardOutput.ReadToEnd();
-                    standardError = process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(120000))
+                    // Оба потока читаются параллельно и с тем же таймаутом,
+                    // что и ожидание процесса. Прежний порядок — сначала
+                    // ReadToEnd stdout, потом stderr, потом WaitForExit —
+                    // делал таймаут фиктивным: повисший движок держал stdout
+                    // открытым, ReadToEnd не возвращался, и до WaitForExit
+                    // дело не доходило никогда; а переполненный буфер stderr
+                    // во время чтения stdout давал классический pipe-deadlock.
+                    // Замечание Codex к плану переработки, 2026-09-02.
+                    Task<string> outputTask =
+                        process.StandardOutput.ReadToEndAsync();
+                    Task<string> errorTask =
+                        process.StandardError.ReadToEndAsync();
+                    bool exited = process.WaitForExit(TimeoutMilliseconds);
+                    if (!exited)
                     {
                         try
                         {
@@ -203,7 +219,28 @@ namespace LlmFoundationInstaller
                         catch
                         {
                         }
+                    }
+                    // После Kill потоки закрываются, и чтение завершается;
+                    // ограничение здесь — страховка от зависшего дочернего
+                    // процесса, унаследовавшего дескрипторы.
+                    bool drained = Task.WaitAll(
+                        new Task[] { outputTask, errorTask },
+                        DrainMilliseconds
+                    );
+                    standardOutput = outputTask.IsCompleted && !outputTask.IsFaulted
+                        ? outputTask.Result
+                        : "";
+                    standardError = errorTask.IsCompleted && !errorTask.IsFaulted
+                        ? errorTask.Result
+                        : "";
+                    if (!exited)
+                    {
                         standardError = "Foundation operation timed out";
+                        return 30;
+                    }
+                    if (!drained)
+                    {
+                        standardError = "Foundation output could not be read";
                         return 30;
                     }
                     return process.ExitCode;
