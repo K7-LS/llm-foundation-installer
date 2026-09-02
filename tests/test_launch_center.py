@@ -16,7 +16,11 @@ import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
-POWERSHELL = shutil.which("pwsh") or shutil.which("powershell.exe")
+POWERSHELL = (
+    os.environ.get("K7_TEST_POWERSHELL")
+    or shutil.which("pwsh")
+    or shutil.which("powershell.exe")
+)
 TEST_REGISTRY_PREFIX = r"Software\K7AITests"
 
 
