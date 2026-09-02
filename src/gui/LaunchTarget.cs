@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -378,6 +379,22 @@ namespace LlmFoundationInstaller
             }
             catch
             {
+                // Клиент обновляет себя сам, и это штатное событие: после
+                // обновления хеш законно расходится с пином. Блокировать
+                // запуск из-за этого нельзя — пин задаёт версию для
+                // установки, а не запрещает обновляться. Принимаем файл,
+                // если он подписан тем же издателем, что объявлен в
+                // client-sources, и сообщаем о расхождении версий обычной
+                // строкой. Блокировка остаётся для неподписанной подмены.
+                LaunchTargetResolution updated = AcceptSelfUpdatedClient(
+                    home,
+                    source,
+                    target
+                );
+                if (updated != null)
+                {
+                    return updated;
+                }
                 return Blocked(
                     target.target_id,
                     target.client_id,
@@ -385,6 +402,77 @@ namespace LlmFoundationInstaller
                     "MANAGED_COMMAND_INTEGRITY_FAILED"
                 );
             }
+        }
+
+        private static LaunchTargetResolution AcceptSelfUpdatedClient(
+            string home,
+            ClientSource source,
+            LaunchTarget target
+        )
+        {
+            if (!source.signature_required ||
+                String.IsNullOrWhiteSpace(source.publisher))
+            {
+                // Без подписи обновление неотличимо от подмены.
+                return null;
+            }
+            try
+            {
+                string executable = ClientBootstrap.ManagedCommandExecutable(
+                    home,
+                    source
+                );
+                ClientBootstrap.VerifyAuthenticode(
+                    executable,
+                    source.publisher
+                );
+                return new LaunchTargetResolution
+                {
+                    status = "RESOLVED",
+                    target_id = target.target_id,
+                    client_id = target.client_id,
+                    role = target.role,
+                    launch_mode = "executable",
+                    executable_path = executable,
+                    // Фактический хеш: запуск сверяет именно его.
+                    sha256 = BundleIntegrity.Sha256(executable),
+                    activation_id = null,
+                    package_full_name = null,
+                    action = DescribeClientUpdate(executable, source),
+                    reason = null
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string DescribeClientUpdate(
+            string executable,
+            ClientSource source
+        )
+        {
+            string installed = null;
+            try
+            {
+                installed = FileVersionInfo
+                    .GetVersionInfo(executable)
+                    .FileVersion;
+            }
+            catch
+            {
+            }
+            string name = String.IsNullOrWhiteSpace(source.display_name)
+                ? source.id
+                : source.display_name;
+            if (String.IsNullOrWhiteSpace(installed))
+            {
+                return name + ": установлена версия новее, чем в комплекте (" +
+                    source.version + ")";
+            }
+            return name + ": установлена версия " + installed +
+                ", в комплекте " + source.version;
         }
 
         private static LaunchTargetResolution ResolveManagedDesktop(

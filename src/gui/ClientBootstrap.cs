@@ -2509,6 +2509,44 @@ namespace LlmFoundationInstaller
                     StringComparison.Ordinal));
         }
 
+        internal static string ManagedCommandExecutable(
+            string home,
+            ClientSource source
+        )
+        {
+            // Путь считается от источника, а не из файла-записи: запись лежит
+            // на диске и могла быть изменена. Хеш здесь НЕ сверяется — это
+            // задача вызывающего кода.
+            if (!UsesManagedCommand(source))
+            {
+                throw new InvalidOperationException(
+                    "Managed command source is invalid"
+                );
+            }
+            string relative = ManagedRelativePath(source).Replace(
+                '/',
+                Path.DirectorySeparatorChar
+            );
+            string root = Path.GetFullPath(home)
+                .TrimEnd(Path.DirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            string executable = Path.GetFullPath(
+                Path.Combine(root, relative)
+            );
+            if (!executable.StartsWith(
+                    root,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(executable) ||
+                (File.GetAttributes(executable) &
+                    FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    "Managed command executable is invalid"
+                );
+            }
+            return executable;
+        }
+
         internal static string ManagedCommandRecordPath(
             string home,
             ClientSource source
@@ -2931,7 +2969,7 @@ namespace LlmFoundationInstaller
             return powershell;
         }
 
-        private static void VerifyAuthenticode(
+        internal static void VerifyAuthenticode(
             string path,
             string expectedPublisher
         )

@@ -1312,3 +1312,29 @@ def test_official_desktop_lookup_covers_the_current_install_directory() -> None:
     window = window.split("FirstOrDefault(File.Exists)", 1)[0]
     assert '"@opencode-aidesktop"' in window
     assert '"OpenCode"' in window        # прежние пути сохранены
+
+
+def test_signed_self_update_launches_instead_of_blocking() -> None:
+    # Обновление клиента — штатное событие, не авария. Наблюдалось живьём:
+    # Claude Code обновился 2.1.218 -> 2.1.258, подпись Anthropic валидна,
+    # а лаунчер уводил цель в BLOCKED и запуск становился невозможен.
+    # Теперь подписанный файл запускается, а расхождение версий — обычная
+    # строка в интерфейсе.
+    source = (REPOSITORY / "src" / "gui" / "LaunchTarget.cs").read_text(
+        encoding="utf-8"
+    )
+    assert "AcceptSelfUpdatedClient" in source
+    # Тревожного кода состояния больше нет: цель резолвится
+    assert "MANAGED_COMMAND_VERSION_DRIFT" not in source
+
+    window = source.split("private static LaunchTargetResolution AcceptSelfUpdatedClient", 1)[1]
+    window = window.split("private static string DescribeClientUpdate", 1)[0]
+    # Принимаем только подписанный тем же издателем файл
+    assert "source.signature_required" in window
+    assert "source.publisher" in window
+    assert "VerifyAuthenticode" in window
+    # Запуск сверяет хеш: возвращаем фактический, иначе старт упадёт
+    assert 'status = "RESOLVED"' in window
+    assert "BundleIntegrity.Sha256(executable)" in window
+    # Неподписанная подмена по-прежнему блокируется
+    assert "return null;" in window
