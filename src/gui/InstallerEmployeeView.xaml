@@ -225,11 +225,10 @@
             <StackPanel>
               <TextBlock Text="ПОДКЛЮЧЕНИЕ / 02" Style="{StaticResource Label}" />
               <TextBlock Text="Выберите рабочий маршрут" FontFamily="Bahnschrift SemiCondensed" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0" />
-              <TextBlock Text="VPN/Proxy — это только транспорт: режим не подтверждает доступность сервиса в регионе и не используется для обхода ограничений." TextWrapping="Wrap" Foreground="{StaticResource Warning}" FontSize="11" Margin="0,4,0,0" />
+              <TextBlock Text="Прокси — это только транспорт: режим не подтверждает доступность сервиса в регионе и не используется для обхода ограничений." TextWrapping="Wrap" Foreground="{StaticResource Warning}" FontSize="11" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <RadioButton x:Name="DirectMode" GroupName="ConnectionMode" Content="Напрямую" IsChecked="True" FontWeight="SemiBold" Margin="0,0,18,0" />
-              <RadioButton x:Name="VpnMode" GroupName="ConnectionMode" Content="VPN" FontWeight="SemiBold" Margin="0,0,18,0" />
               <RadioButton x:Name="ProxyMode" GroupName="ConnectionMode" Content="SingBox" FontWeight="SemiBold" />
             </StackPanel>
           </Grid>

@@ -46,7 +46,6 @@ namespace LlmFoundationInstaller
             RadioButton direct = view.FindName(
                 "RouteDirect"
             ) as RadioButton;
-            RadioButton vpn = view.FindName("RouteVpn") as RadioButton;
             RadioButton http = view.FindName(
                 "RouteHttp"
             ) as RadioButton;
@@ -152,10 +151,6 @@ namespace LlmFoundationInstaller
                 {
                     return "Direct";
                 }
-                if (vpn != null && vpn.IsChecked == true)
-                {
-                    return "VPN";
-                }
                 if (proxy != null && proxy.IsChecked == true)
                 {
                     return ConnectionUi.SelectedTag(proxyType) == "HTTPS"
@@ -238,10 +233,6 @@ namespace LlmFoundationInstaller
             if (direct != null)
             {
                 direct.Checked += routeChanged;
-            }
-            if (vpn != null)
-            {
-                vpn.Checked += routeChanged;
             }
             if (http != null)
             {
@@ -389,10 +380,6 @@ namespace LlmFoundationInstaller
             if (route == "Direct")
             {
                 return "Только этот клиент запускается напрямую";
-            }
-            if (route == "VPN")
-            {
-                return "Этот клиент использует уже активный системный VPN";
             }
             if (String.Equals(
                     targetId,
@@ -746,31 +733,17 @@ namespace LlmFoundationInstaller
 
         private static string RouteLabel(string route)
         {
-            return String.Equals(
-                    route,
-                    "Direct",
-                    StringComparison.OrdinalIgnoreCase
-                )
-                ? "Напрямую"
-                : (String.Equals(
-                        route,
-                        "VPN",
-                        StringComparison.OrdinalIgnoreCase
-                    )
-                    ? "VPN"
-                    : (String.Equals(
-                            route,
-                            "SingBoxHttp",
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                        ? "SingBox HTTP"
-                        : (String.Equals(
-                                route,
-                                "SingBoxHttps",
-                                StringComparison.OrdinalIgnoreCase
-                            )
-                            ? "SingBox HTTPS"
-                            : (route ?? "Маршрут"))));
+            switch ((route ?? "").ToLowerInvariant())
+            {
+                case "direct":
+                    return "Напрямую";
+                case "singboxhttp":
+                    return "SingBox HTTP";
+                case "singboxhttps":
+                    return "SingBox HTTPS";
+                default:
+                    return route ?? "";
+            }
         }
 
         private static string ResultLabel(string status)
