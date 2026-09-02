@@ -28,7 +28,6 @@ namespace LlmFoundationInstaller
                 new[]
                 {
                     "Direct",
-                    "VPN",
                     "SingBoxHttp",
                     "SingBoxHttps"
                 },

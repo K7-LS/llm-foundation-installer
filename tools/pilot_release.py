@@ -30,7 +30,6 @@ REQUIRED_PILOT_CHECKS = (
     "claude_live_login",
     "provider_eligibility",
     "direct_mode",
-    "vpn_mode",
     "singbox_http_mode",
     "singbox_https_mode",
     "interactive_guide",
@@ -38,7 +37,7 @@ REQUIRED_PILOT_CHECKS = (
     "preserved_user_data",
     "no_reverse_flow",
 )
-NETWORK_MODES = ("Direct", "VPN", "SingBoxHttp", "SingBoxHttps")
+NETWORK_MODES = ("Direct", "SingBoxHttp", "SingBoxHttps")
 EXPECTED_DRAFT_VERDICTS = installer_release.EXPECTED_DRAFT_VERDICTS
 EXPECTED_STABLE_VERDICTS = {
     **installer_release.EXPECTED_BUNDLE_VERDICTS,

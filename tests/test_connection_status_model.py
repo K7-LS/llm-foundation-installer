@@ -63,7 +63,6 @@ def test_status_catalog_smoke_covers_bound_texts(status_catalog: dict):
     assert by_key["mode_idle_direct"]["text"] == (
         "Напрямую: прокси не используется."
     )
-    assert by_key["mode_idle_vpn"]["text"] == "VPN: прокси не требуется."
     assert by_key["proxy_guidance"]["text"].startswith(
         "Заполните сервер, порт, логин и пароль"
     )
