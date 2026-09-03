@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 
 
+APP_VERSION = (
+    Path(__file__).resolve().parents[1] / "APP_VERSION"
+).read_text(encoding="utf-8").strip()
+
+
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
 }
@@ -47,7 +52,7 @@ def employee_bundle(root: Path) -> Path:
         "schema_version": 1,
         "app_id": "k7-ai-edition-bundle",
         "edition_id": "Employee",
-        "version": "0.4.0",
+        "version": APP_VERSION,
         "theme_id": "K7Signal",
         "owner_controlled": False,
         "distribution_allowed": True,
@@ -114,7 +119,7 @@ def canary_value(bundle: Path, evidence_body_sha256) -> dict[str, object]:
     value = {
         "schema_version": 1,
         "target": "employee_edition",
-        "version": "0.4.0",
+        "version": APP_VERSION,
         "generated_at_utc": "2026-07-28T12:00:00Z",
         "bundle": binding,
         "products": {

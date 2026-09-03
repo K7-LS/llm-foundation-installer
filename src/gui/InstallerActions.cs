@@ -550,7 +550,12 @@ namespace LlmFoundationInstaller
                 }
 
                 InstallerView.SetWorkflowStep(view, 6, false);
-                OpenAuthorizationActions(completed);
+                OpenAuthorizationActions(
+                    edition,
+                    bundleRoot,
+                    home,
+                    completed
+                );
                 SuccessReportResult report = TryWriteSuccessReport(
                     home,
                     completed
@@ -678,6 +683,9 @@ namespace LlmFoundationInstaller
         }
 
         private static void OpenAuthorizationActions(
+            EditionProfile edition,
+            string bundleRoot,
+            string home,
             List<TargetRow> targets
         )
         {
@@ -698,34 +706,113 @@ namespace LlmFoundationInstaller
             {
                 return;
             }
+            // Ревью Codex: клиенты открывались через COMSPEC и голые имена
+            // из PATH (Claude/OpenCode) и зашитый AUMID (Codex) — тот же
+            // класс дефекта, что и поиск оболочки через PATH в .cmd.
+            // Теперь цель разрешает тот же LaunchTargetResolver, что и
+            // центр запуска: явный путь управляемой копии либо
+            // activation_id из каталога; отказ показывается, а не глотается.
+            List<string> problems = new List<string>();
             foreach (TargetRow row in targets)
             {
-                if (row.id == "codex")
+                LaunchTargetResolution resolution =
+                    LaunchTargetResolver.Resolve(
+                        edition,
+                        bundleRoot,
+                        home,
+                        AuthorizationLaunchTargetId(row.id)
+                    );
+                if (resolution.status != "RESOLVED")
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "explorer.exe",
-                        Arguments =
-                            "shell:AppsFolder\\" +
-                            "OpenAI.Codex_2p2nqsd0c76g0!App",
-                        UseShellExecute = true
-                    });
+                    problems.Add(
+                        row.display_name + ": " +
+                            (resolution.action ?? resolution.reason)
+                    );
+                    continue;
                 }
-                else
+                try
                 {
-                    string command = row.id == "claude"
-                        ? "claude"
-                        : "opencode";
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = Environment.GetEnvironmentVariable(
-                            "COMSPEC"
-                        ) ?? "cmd.exe",
-                        Arguments = "/d /k " + command,
-                        UseShellExecute = true
-                    });
+                    Process.Start(AuthorizationStartInfo(resolution));
+                }
+                catch (Exception error)
+                {
+                    problems.Add(row.display_name + ": " + error.Message);
                 }
             }
+            if (problems.Count > 0)
+            {
+                MessageBox.Show(
+                    "Не удалось открыть клиенты для авторизации:\n" +
+                        String.Join("\n", problems.ToArray()) +
+                        "\n\nОткройте их из центра запуска.",
+                    "Интерактивная авторизация",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+            }
+        }
+
+        private static string AuthorizationLaunchTargetId(string baseTarget)
+        {
+            // Codex входит через приложение из Store, Claude и OpenCode —
+            // через вход в CLI: те же цели, что открывает центр запуска.
+            if (baseTarget == "codex")
+            {
+                return "codex-desktop";
+            }
+            if (baseTarget == "claude")
+            {
+                return "claude-code";
+            }
+            return "opencode-cli";
+        }
+
+        private static ProcessStartInfo AuthorizationStartInfo(
+            LaunchTargetResolution resolution
+        )
+        {
+            if (resolution.launch_mode == "appx")
+            {
+                return new ProcessStartInfo
+                {
+                    FileName = Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.Windows
+                        ),
+                        "explorer.exe"
+                    ),
+                    Arguments = "shell:AppsFolder\\" +
+                        resolution.activation_id,
+                    UseShellExecute = true
+                };
+            }
+            string directory = Path.GetDirectoryName(
+                resolution.executable_path
+            );
+            if (resolution.role == "cli")
+            {
+                // Интерактивный вход в CLI требует видимого окна консоли,
+                // которое остаётся открытым после выхода клиента.
+                return new ProcessStartInfo
+                {
+                    FileName = Path.Combine(
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.System
+                        ),
+                        "cmd.exe"
+                    ),
+                    Arguments = "/d /k \"" + resolution.executable_path +
+                        "\"",
+                    WorkingDirectory = directory,
+                    UseShellExecute = true
+                };
+            }
+            return new ProcessStartInfo
+            {
+                FileName = resolution.executable_path,
+                WorkingDirectory = directory,
+                UseShellExecute = true
+            };
         }
 
         private static Task<WorkflowRunResult> RunFoundationAsync(

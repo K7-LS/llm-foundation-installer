@@ -168,6 +168,7 @@ jobs:
             }
             return $raw | ConvertFrom-Json
           }
+          $appVersion = ([IO.File]::ReadAllText('APP_VERSION')).Trim()
           $roots = @(
             '.work/release/employee',
             '.work/release/owner'
@@ -191,7 +192,7 @@ jobs:
               $selfTest = Invoke-JsonProduct `
                 -Executable $exe -Argument '--self-test-json'
               if ($selfTest.engine_validated -ne $true -or
-                  $selfTest.version -cne '0.4.0' -or
+                  $selfTest.version -cne $appVersion -or
                   (@($selfTest.targets | Sort-Object) -join ',') -cne
                     'claude,codex,opencode') {
                 throw "Self-test failed: $product"
@@ -207,8 +208,11 @@ jobs:
             }
           }
       - name: Package immutable release candidates
+        id: package
         shell: pwsh
         run: |
+          $appVersion = ([IO.File]::ReadAllText('APP_VERSION')).Trim()
+          "app_version=$appVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           New-Item -ItemType Directory -Path .work/artifacts | Out-Null
           foreach ($edition in @('employee', 'owner')) {
             $root = ".work/release/$edition"
@@ -227,12 +231,12 @@ jobs:
             Compress-Archive -Path "$root/*" `
               -DestinationPath (
                 ".work/artifacts/k7-installer-$edition-" +
-                "0.4.0-r1-publicunsigned.zip"
+                "$appVersion-publicunsigned.zip"
               )
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: k7-installer-0.4.0-r1-publicunsigned
+          name: k7-installer-${{ steps.package.outputs.app_version }}-publicunsigned
           path: .work/artifacts/*.zip
           if-no-files-found: error
           retention-days: 14
