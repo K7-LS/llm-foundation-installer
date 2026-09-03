@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -54,10 +55,24 @@ namespace LlmFoundationInstaller
             @"Software\K7AITests\";
         private const int InternetOptionRefresh = 37;
         private const int InternetOptionSettingsChanged = 39;
+        private const int MoveFileReplaceExisting = 0x1;
+        private const int MoveFileWriteThrough = 0x8;
         private static readonly TimeSpan ReleaseConfirmation =
             TimeSpan.FromSeconds(1);
         private static readonly object Sync = new object();
         private static ActiveSystemProxyLease active;
+
+        [DllImport(
+            "kernel32.dll",
+            CharSet = CharSet.Unicode,
+            SetLastError = true
+        )]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool MoveFileEx(
+            string existingFileName,
+            string newFileName,
+            int flags
+        );
 
         [DllImport("wininet.dll", SetLastError = true)]
         private static extern bool InternetSetOption(
@@ -1072,13 +1087,20 @@ namespace LlmFoundationInstaller
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
                 }
-                if (File.Exists(path))
+                // Переименование поверх существующего имени: у File.Replace
+                // (ReplaceFile) два переименования, и между ними имени нет.
+                // Watchdog и диагностика опираются на File.Exists, а падение
+                // владельца между переименованиями теряло бы файл состояния.
+                if (!MoveFileEx(
+                        temporary,
+                        path,
+                        MoveFileReplaceExisting | MoveFileWriteThrough))
                 {
-                    File.Replace(temporary, path, null, true);
-                }
-                else
-                {
-                    File.Move(temporary, path);
+                    throw new IOException(
+                        new Win32Exception(
+                            Marshal.GetLastWin32Error()
+                        ).Message
+                    );
                 }
             }
             finally

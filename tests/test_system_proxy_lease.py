@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -589,6 +590,72 @@ def test_watchdog_survives_transient_absence_of_state_file(
         if watchdog.poll() is None:
             watchdog.kill()
             watchdog.communicate(timeout=10)
+
+
+def test_state_file_name_never_disappears_while_lease_is_acquired(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # Перезапись PREPARED -> APPLIED обязана быть переименованием поверх
+    # существующего имени: watchdog и диагностика опираются на File.Exists.
+    # ReplaceFile делает два переименования, между ними имени нет.
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    stop_file = tmp_path / "stop"
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetFileAttributesW.restype = ctypes.c_uint32
+    kernel32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+    invalid_attributes = 0xFFFFFFFF
+
+    def _name_exists() -> bool:
+        return (
+            kernel32.GetFileAttributesW(str(state_path))
+            != invalid_attributes
+        )
+
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        deadline = time.monotonic() + 15.0
+        while not _name_exists():
+            assert time.monotonic() < deadline, "state file was not created"
+            assert owner.poll() is None, owner.communicate(timeout=10)
+        misses = 0
+        polls = 0
+        applied_at: float | None = None
+        while True:
+            if not _name_exists():
+                misses += 1
+            polls += 1
+            if applied_at is None:
+                snapshot = _registry_snapshot(registry_key)
+                if snapshot["ProxyServer"] == (APPLIED_PROXY, winreg.REG_SZ):
+                    applied_at = time.monotonic()
+                assert time.monotonic() < deadline, "proxy was not applied"
+            elif time.monotonic() - applied_at > 0.5:
+                break
+        assert polls > 0
+        assert misses == 0, f"state file name vanished {misses} of {polls} polls"
+    finally:
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    assert json.loads(stdout)["cleanup_verified"] is True
 
 
 def test_external_change_is_not_overwritten_and_blocks_next_acquire(
