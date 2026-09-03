@@ -44,6 +44,7 @@ TEST_ONLY_COMMANDS = {
     "--download-client-json",
     "--evaluate-platform-json",
     "--install-client-json",
+    "--install-launch-center-json",
     "--install-runtime-json",
     "--latest-base-json",
     "--launch-routes-json",
@@ -97,7 +98,9 @@ def _table(bundle: Path) -> dict:
 
 
 def test_classification_counts_match_the_report() -> None:
-    assert len(TEST_ONLY_COMMANDS) == 42
+    # 42 точки по классификации от 2026-09-03 + `--install-launch-center-json`
+    # (тестовый хост фичи «установка центра запуска», решение владельца).
+    assert len(TEST_ONLY_COMMANDS) == 43
     assert len(RELEASE_COMMANDS) == 10
     assert not TEST_ONLY_COMMANDS & set(RELEASE_COMMANDS)
 

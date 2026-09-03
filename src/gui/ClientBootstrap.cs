@@ -1644,10 +1644,28 @@ namespace LlmFoundationInstaller
                 "LLM Foundation"
             );
             EnsureSafeDirectory(shortcutRoot);
-            string shortcut = Path.Combine(
-                shortcutRoot,
-                source.id + ".lnk"
+            WriteShortcut(
+                Path.Combine(shortcutRoot, source.id + ".lnk"),
+                executable,
+                "",
+                Path.GetDirectoryName(executable),
+                source.display_name ?? source.id,
+                "Managed desktop shortcut could not be created"
             );
+        }
+
+        // Общий механизм ярлыков (клиенты и центр запуска): WScript.Shell через
+        // Windows PowerShell с ограниченным временем, запись во временный файл
+        // и атомарная подмена; при ошибке прежний ярлык восстанавливается.
+        internal static void WriteShortcut(
+            string shortcut,
+            string target,
+            string arguments,
+            string workingDirectory,
+            string description,
+            string failureMessage
+        )
+        {
             string shortcutIo = ToExtendedLengthPath(shortcut);
             string adjacentTemporary = shortcut + ".install-" +
                 Guid.NewGuid().ToString("N");
@@ -1668,10 +1686,9 @@ namespace LlmFoundationInstaller
                 "$shell=New-Object -ComObject WScript.Shell;" +
                 "$link=$shell.CreateShortcut($env:LLM_SHORTCUT_PATH);" +
                 "$link.TargetPath=$env:LLM_SHORTCUT_TARGET;" +
-                "$link.WorkingDirectory=" +
-                "[System.IO.Path]::GetDirectoryName(" +
-                "$env:LLM_SHORTCUT_TARGET);" +
-                "$link.Description=$env:LLM_SHORTCUT_DESCRIPTION;" +
+                "$link.Arguments=[string]$env:LLM_SHORTCUT_ARGUMENTS;" +
+                "$link.WorkingDirectory=[string]$env:LLM_SHORTCUT_WORKDIR;" +
+                "$link.Description=[string]$env:LLM_SHORTCUT_DESCRIPTION;" +
                 "$link.Save();";
             ProcessStartInfo start = new ProcessStartInfo
             {
@@ -1688,9 +1705,13 @@ namespace LlmFoundationInstaller
             };
             start.EnvironmentVariables["LLM_SHORTCUT_PATH"] =
                 shellTemporary;
-            start.EnvironmentVariables["LLM_SHORTCUT_TARGET"] = executable;
+            start.EnvironmentVariables["LLM_SHORTCUT_TARGET"] = target;
+            start.EnvironmentVariables["LLM_SHORTCUT_ARGUMENTS"] =
+                arguments ?? "";
+            start.EnvironmentVariables["LLM_SHORTCUT_WORKDIR"] =
+                workingDirectory ?? "";
             start.EnvironmentVariables["LLM_SHORTCUT_DESCRIPTION"] =
-                source.display_name ?? source.id;
+                description ?? "";
             try
             {
                 BoundedProcessResult shortcutRun = BoundedProcess.Run(
@@ -1702,9 +1723,7 @@ namespace LlmFoundationInstaller
                     shortcutRun.exit_code != 0 ||
                     !File.Exists(shellTemporary))
                 {
-                    throw new InvalidOperationException(
-                        "Managed desktop shortcut could not be created"
-                    );
+                    throw new InvalidOperationException(failureMessage);
                 }
                 File.Copy(
                     ToExtendedLengthPath(shellTemporary),
@@ -1726,9 +1745,7 @@ namespace LlmFoundationInstaller
                 }
                 if (!File.Exists(shortcutIo))
                 {
-                    throw new InvalidOperationException(
-                        "Managed desktop shortcut could not be created"
-                    );
+                    throw new InvalidOperationException(failureMessage);
                 }
             }
             catch
@@ -2183,7 +2200,7 @@ namespace LlmFoundationInstaller
             }
         }
 
-        private static void EnsureSafeDirectory(string path)
+        internal static void EnsureSafeDirectory(string path)
         {
             string full = Path.GetFullPath(path);
             string root = Path.GetPathRoot(full);
@@ -2760,7 +2777,7 @@ namespace LlmFoundationInstaller
             return Path.Combine(requestedHome, "AppData", "Local");
         }
 
-        private static string RoamingApplicationDataForHome(string home)
+        internal static string RoamingApplicationDataForHome(string home)
         {
             string actualHome = Path.GetFullPath(
                 Environment.GetFolderPath(
@@ -3076,7 +3093,7 @@ namespace LlmFoundationInstaller
             return result.ToString();
         }
 
-        private static string ToExtendedLengthPath(string path)
+        internal static string ToExtendedLengthPath(string path)
         {
             string fullPath = Path.GetFullPath(path);
             if (fullPath.StartsWith(

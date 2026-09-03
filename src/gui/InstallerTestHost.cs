@@ -30,6 +30,7 @@ namespace LlmFoundationInstaller
             Register("--download-client-json", "test", 3, 3, DownloadClientJson);
             Register("--evaluate-platform-json", "test", 3, 3, EvaluatePlatformJson);
             Register("--install-client-json", "test", 3, 3, InstallClientJson);
+            Register("--install-launch-center-json", "test", 1, 1, InstallLaunchCenterJson);
             Register("--install-runtime-json", "test", 2, 2, InstallRuntimeJson);
             Register("--latest-base-json", "test", 2, 2, LatestBaseJson);
             Register("--launch-routes-json", "test", 1, 1, LaunchRoutesJson);
@@ -247,6 +248,21 @@ namespace LlmFoundationInstaller
                 blocked.status == "BLOCKED_NO_DOWNGRADE"
                 ? 20
                 : 0;
+        }
+
+        // Тестовая точка фичи «центр запуска в профиле»: тот же модуль, что зовёт
+        // продуктовый поток установки после успешного doctor.
+        private static int InstallLaunchCenterJson(
+            EditionProfile edition,
+            string bundleRoot,
+            string[] args)
+        {
+            LaunchCenterInstallResult installed = LaunchCenterInstall.Install(
+                bundleRoot,
+                args[1]
+            );
+            WriteOutput(new JavaScriptSerializer().Serialize(installed));
+            return installed.status == "FAILED" ? 20 : 0;
         }
 
         private static int InstallRuntimeJson(

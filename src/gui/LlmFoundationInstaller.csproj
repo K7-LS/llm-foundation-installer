@@ -59,6 +59,7 @@
     <Compile Include="InstallerTestHost.cs" />
     <Compile Include="InstallerView.cs" />
     <Compile Include="LaunchCenterActions.cs" />
+    <Compile Include="LaunchCenterInstall.cs" />
     <Compile Include="LaunchRoutePreferences.cs" />
     <Compile Include="LaunchTarget.cs" />
     <Compile Include="OperatorGuideDashboard.cs" />
