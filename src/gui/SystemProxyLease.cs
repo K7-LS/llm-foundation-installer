@@ -55,6 +55,7 @@ namespace LlmFoundationInstaller
             @"Software\K7AITests\";
         private const int InternetOptionRefresh = 37;
         private const int InternetOptionSettingsChanged = 39;
+        private const int WatchdogReadyTimeoutSeconds = 30;
         private const int MoveFileReplaceExisting = 0x1;
         private const int MoveFileWriteThrough = 0x8;
         private static readonly TimeSpan ReleaseConfirmation =
@@ -163,6 +164,7 @@ namespace LlmFoundationInstaller
                 }
 
                 SystemProxyLeaseState state;
+                string failure = "SYSTEM_PROXY_STATE_WRITE_FAILED";
                 try
                 {
                     state = new SystemProxyLeaseState
@@ -176,10 +178,12 @@ namespace LlmFoundationInstaller
                         applied = AppliedValues(localPort)
                     };
                     WriteStateAtomic(statePath, state);
+                    failure = "SYSTEM_PROXY_WATCHDOG_START_FAILED";
                     StartWatchdog(
                         Process.GetCurrentProcess().Id,
                         home,
-                        registrySubkey
+                        registrySubkey,
+                        statePath
                     );
                 }
                 catch
@@ -195,7 +199,7 @@ namespace LlmFoundationInstaller
                     {
                     }
                     ReleaseMutex(mutex, true);
-                    return Failed("SYSTEM_PROXY_STATE_WRITE_FAILED");
+                    return Failed(failure);
                 }
 
                 List<string> lifecycle = new List<string>
@@ -329,6 +333,46 @@ namespace LlmFoundationInstaller
             {
                 return Failed("SYSTEM_PROXY_STATE_INVALID");
             }
+            // Маркер готовности: владелец считает аренду ACQUIRED только
+            // после того, как watchdog дошёл до цикла опроса.
+            string readyPath = WatchdogReadyPath(statePath);
+            string readyToken = Process.GetCurrentProcess().Id.ToString(
+                System.Globalization.CultureInfo.InvariantCulture
+            );
+            try
+            {
+                File.WriteAllText(
+                    readyPath,
+                    readyToken,
+                    new UTF8Encoding(false)
+                );
+            }
+            catch
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            try
+            {
+                return WatchOwner(
+                    ownerPid,
+                    home,
+                    registrySubkey,
+                    statePath
+                );
+            }
+            finally
+            {
+                RemoveWatchdogMarker(readyPath, readyToken);
+            }
+        }
+
+        private static ProxyRecoveryResult WatchOwner(
+            int ownerPid,
+            string home,
+            string registrySubkey,
+            string statePath
+        )
+        {
             // Владелец переписывает файл состояния через временное имя
             // (PREPARED -> APPLIED), и имя может отсутствовать доли секунды.
             // Освобождение аренды - только устойчивое отсутствие файла при
@@ -1063,6 +1107,35 @@ namespace LlmFoundationInstaller
             return Path.Combine(root, "system-proxy-lease.json");
         }
 
+        private static string WatchdogReadyPath(string statePath)
+        {
+            return Path.Combine(
+                Path.GetDirectoryName(statePath),
+                "system-proxy-watchdog.ready"
+            );
+        }
+
+        private static void RemoveWatchdogMarker(
+            string readyPath,
+            string readyToken
+        )
+        {
+            try
+            {
+                if (File.Exists(readyPath) &&
+                    String.Equals(
+                        File.ReadAllText(readyPath).Trim(),
+                        readyToken,
+                        StringComparison.Ordinal))
+                {
+                    File.Delete(readyPath);
+                }
+            }
+            catch
+            {
+            }
+        }
+
         private static void WriteStateAtomic(
             string path,
             SystemProxyLeaseState state
@@ -1115,9 +1188,15 @@ namespace LlmFoundationInstaller
         private static void StartWatchdog(
             int ownerPid,
             string home,
-            string registrySubkey
+            string registrySubkey,
+            string statePath
         )
         {
+            string readyPath = WatchdogReadyPath(statePath);
+            if (File.Exists(readyPath))
+            {
+                File.Delete(readyPath);
+            }
             string executable = Process.GetCurrentProcess()
                 .MainModule
                 .FileName;
@@ -1149,12 +1228,30 @@ namespace LlmFoundationInstaller
                         "SYSTEM_PROXY_WATCHDOG_START_FAILED"
                     );
                 }
-                if (watchdog.WaitForExit(100) &&
-                    watchdog.ExitCode != 0)
+                // Аренда считается ACQUIRED только после того, как watchdog
+                // дошёл до цикла опроса: 100 мс WaitForExit этого не давали.
+                DateTime deadline = DateTime.UtcNow.AddSeconds(
+                    WatchdogReadyTimeoutSeconds
+                );
+                while (!File.Exists(readyPath))
                 {
-                    throw new InvalidOperationException(
-                        "SYSTEM_PROXY_WATCHDOG_START_FAILED"
-                    );
+                    if (watchdog.HasExited || DateTime.UtcNow >= deadline)
+                    {
+                        try
+                        {
+                            if (!watchdog.HasExited)
+                            {
+                                watchdog.Kill();
+                            }
+                        }
+                        catch
+                        {
+                        }
+                        throw new InvalidOperationException(
+                            "SYSTEM_PROXY_WATCHDOG_START_FAILED"
+                        );
+                    }
+                    Thread.Sleep(25);
                 }
             }
         }

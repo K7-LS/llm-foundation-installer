@@ -379,6 +379,30 @@ def _write_lease_state(
     )
 
 
+def _wait_for_missing(path: Path, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not path.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"expected file to disappear: {path}")
+
+
+def _is_process_alive(pid: int) -> bool:
+    kernel32 = ctypes.windll.kernel32
+    process_query_limited_information = 0x1000
+    still_active = 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_uint32()
+        assert kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _save_proxy_profile(bundle: Path, home: Path, tmp_path: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     profile = tmp_path / "connection.json"
@@ -656,6 +680,49 @@ def test_state_file_name_never_disappears_while_lease_is_acquired(
         stdout, stderr = owner.communicate(timeout=20)
     assert stdout.strip(), stderr
     assert json.loads(stdout)["cleanup_verified"] is True
+
+
+def test_acquire_reports_acquired_only_after_watchdog_is_polling(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # ACQUIRED означает, что watchdog уже в цикле опроса: к моменту
+    # применения прокси рядом с файлом состояния лежит маркер готовности
+    # с PID живого watchdog. Раньше владелец лишь ждал 100 мс после запуска.
+    home = tmp_path / "home"
+    stop_file = tmp_path / "stop"
+    ready = home / ".llm-foundation" / "system-proxy-watchdog.ready"
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        _wait_for_applied(registry_key)
+        assert ready.is_file(), "watchdog ready marker is missing"
+        watchdog_pid = int(ready.read_text(encoding="utf-8").strip())
+        assert watchdog_pid > 0
+        assert watchdog_pid != owner.pid
+        assert _is_process_alive(watchdog_pid)
+    finally:
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    assert json.loads(stdout)["cleanup_verified"] is True
+    _wait_for_missing(ready)
+    assert not _is_process_alive(watchdog_pid)
 
 
 def test_external_change_is_not_overwritten_and_blocks_next_acquire(
