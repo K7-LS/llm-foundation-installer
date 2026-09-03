@@ -1158,7 +1158,7 @@ def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
         (entry["id"], entry["version"], entry["source_kind"])
         for entry in payload["clients"]
     ] == [
-        ("codex-cli", "0.146.0-alpha.3.1", "download"),
+        ("codex-cli", "0.153.0", "download"),
         ("codex-desktop", "store-current", "store"),
         ("claude-code", "2.1.218", "download"),
         ("opencode-cli", "1.18.13", "download"),
@@ -1252,13 +1252,15 @@ def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
         if entry["id"] == "codex-cli"
     )
 
-    assert cli["version"] == "0.146.0-alpha.3.1"
+    # Стабильный релиз rust-v0.153.0 (2026-09-03): исправлен Windows read-only
+    # sandbox (openai/codex#35871, с 0.148); SHA — скрипта install.ps1 релиза.
+    assert cli["version"] == "0.153.0"
     assert cli["url"] == (
         "https://github.com/openai/codex/releases/download/"
-        "rust-v0.146.0-alpha.3.1/install.ps1"
+        "rust-v0.153.0/install.ps1"
     )
     assert cli["sha256"] == (
-        "397cad1d3091728fc59531018c4b2cd99b49b51b36c6ad42f7ec304d8da8ba4f"
+        "391f247de2c70c7e99041979ec02dae7e76be27ac9cfc1dfe7c1eb21d48d8b97"
     )
     assert cli["artifact_kind"] == "powershell-installer-script"
     assert cli["install_mode"] == "official-script"
