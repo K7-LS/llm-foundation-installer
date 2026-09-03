@@ -427,22 +427,22 @@ namespace LlmFoundationInstaller
                 };
                 ConnectionProcessState route =
                     ConnectionStore.ConfigureProcessEnvironment(home, start);
-                using (Process process = Process.Start(start))
+                BoundedProcessResult downloadRun = BoundedProcess.Run(
+                    start,
+                    310000
+                );
+                if (!downloadRun.started)
                 {
-                    if (process == null)
-                    {
-                        throw new InvalidOperationException(
-                            "Latest release download did not start"
-                        );
-                    }
-                    process.StandardOutput.ReadToEnd();
-                    string error = process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(310000) || process.ExitCode != 0)
-                    {
-                        throw new InvalidOperationException(
-                            "Latest release download failed: " + FirstLine(error)
-                        );
-                    }
+                    throw new InvalidOperationException(
+                        "Latest release download did not start"
+                    );
+                }
+                if (downloadRun.timed_out || downloadRun.exit_code != 0)
+                {
+                    throw new InvalidOperationException(
+                        "Latest release download failed: " +
+                            FirstLine(downloadRun.standard_error)
+                    );
                 }
                 FileInfo file = new FileInfo(temporary);
                 if (!file.Exists || file.Length < 1 || file.Length > maximumBytes)

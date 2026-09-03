@@ -3185,6 +3185,19 @@ def test_client_version_detection_timeout_is_real(tmp_path: Path) -> None:
     assert elapsed < 35, elapsed
 
 
+def test_process_modules_have_no_synchronous_process_reads() -> None:
+    # Второй PR по замечанию Codex: оставшиеся запуски процессов
+    # (curl обновления базы 310 с, детектор версии 5 с, probe маршрута
+    # 20 с) — через BoundedProcess.Run. EmbeddedJson, ProductCatalog и
+    # SingBoxConfig читают встроенные ресурсы StreamReader'ом — не процессы.
+    for name in ("BaseReleaseUpdater", "ClientDetector", "SingBoxSession"):
+        source = (REPOSITORY_ROOT / "src" / "gui" / f"{name}.cs").read_text(
+            encoding="utf-8"
+        )
+        assert "ReadToEnd()" not in source, name
+        assert "BoundedProcess.Run(" in source, name
+
+
 def test_client_bootstrap_has_no_synchronous_process_reads() -> None:
     # Статический гейт (как test_foundation_process_timeout_is_real для
     # движка): все запуски процессов в ClientBootstrap идут через общий

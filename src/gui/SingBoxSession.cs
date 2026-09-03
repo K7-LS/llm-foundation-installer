@@ -732,38 +732,35 @@ namespace LlmFoundationInstaller
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
-            using (Process process = Process.Start(start))
+            BoundedProcessResult probeRun = BoundedProcess.Run(
+                start,
+                20000
+            );
+            if (!probeRun.started)
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "PROBE_CLIENT_START_FAILED"
-                    );
-                }
-                string output = process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(20000))
-                {
-                    process.Kill();
-                    process.WaitForExit(5000);
-                    throw new WebException(
-                        "Proxy route probe timed out",
-                        WebExceptionStatus.Timeout
-                    );
-                }
-                if (process.ExitCode != 0)
-                {
-                    throw CurlProbeFailure(process.ExitCode);
-                }
-                int status;
-                if (!Int32.TryParse(output.Trim(), out status) ||
-                    status < 100 ||
-                    status > 599)
-                {
-                    throw new InvalidOperationException(
-                        "ROUTE_PROBE_FAILED"
-                    );
-                }
+                throw new InvalidOperationException(
+                    "PROBE_CLIENT_START_FAILED"
+                );
+            }
+            if (probeRun.timed_out)
+            {
+                throw new WebException(
+                    "Proxy route probe timed out",
+                    WebExceptionStatus.Timeout
+                );
+            }
+            if (probeRun.exit_code != 0)
+            {
+                throw CurlProbeFailure(probeRun.exit_code);
+            }
+            int status;
+            if (!Int32.TryParse(probeRun.standard_output.Trim(), out status) ||
+                status < 100 ||
+                status > 599)
+            {
+                throw new InvalidOperationException(
+                    "ROUTE_PROBE_FAILED"
+                );
             }
         }
 
