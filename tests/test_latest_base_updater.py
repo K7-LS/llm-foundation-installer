@@ -63,7 +63,9 @@ def test_embedded_package_is_only_explicit_latest_failure_fallback() -> None:
     assert 'status = "EMBEDDED_FALLBACK"' in source
     assert "used_embedded_fallback = true" in source
     assert "использован проверенный embedded fallback" in app
-    assert 'args[0] == "--latest-base-json"' in app
+    # Точка зарегистрирована в таблице команд (InstallerTestHost.cs);
+    # её поведение и арность — tests/test_cli_surface.py.
+    assert 'Register("--latest-base-json", "test", 2, 2, LatestBaseJson)' in app
 
 
 def test_latest_base_source_is_compiled_into_every_gui() -> None:
