@@ -6081,7 +6081,7 @@ def test_official_installer_prepends_the_system_directory_to_path(gui_bundle: Pa
     assert 'start.EnvironmentVariables["PATH"]' in window
     assert "SpecialFolder.System" in window
     assert window.index('EnvironmentVariables["PATH"]') < window.index(
-        "Process.Start(start)"
+        "BoundedProcess.Run("
     )
 
 
@@ -6091,7 +6091,10 @@ def test_official_installer_failure_reports_the_installer_output(gui_bundle: Pat
     source = (REPOSITORY_ROOT / "src" / "gui" / "ClientBootstrap.cs").read_text(
         encoding="utf-8"
     )
-    assert "InstallerDiagnostics(installerOutput, installerError)" in source
+    # После перевода на BoundedProcess потоки берутся из результата запуска.
+    assert "InstallerDiagnostics(" in source
+    assert "installerRun.standard_output" in source
+    assert "installerRun.standard_error" in source
     assert "Вывод установщика: " in source
 
 
