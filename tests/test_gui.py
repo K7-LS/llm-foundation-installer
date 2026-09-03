@@ -5813,6 +5813,26 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
             assert required in xaml, resource
 
 
+def test_post_install_authorization_launch_uses_launch_target_resolver():
+    # Ревью Codex: post-install запуск Claude/OpenCode шёл через COMSPEC и
+    # голые имена из PATH, Codex — через зашитый AUMID. Открывать клиенты
+    # обязан тот же LaunchTargetResolver.Resolve (explicit executable_path
+    # управляемой копии, activation_id из каталога), что и центр запуска.
+    source = (
+        REPOSITORY_ROOT / "src" / "gui" / "InstallerActions.cs"
+    ).read_text(encoding="utf-8")
+    start = source.index("private static void OpenAuthorizationActions(")
+    end = source.index("\n        private static ", start + 1)
+    body = source[start:end]
+    assert "LaunchTargetResolver.Resolve(" in body
+    for forbidden in (
+        '"COMSPEC"',
+        "OpenAI.Codex_2p2nqsd0c76g0!App",
+        '? "claude"',
+    ):
+        assert forbidden not in body, forbidden
+
+
 def test_gui_workflow_bootstraps_clients_and_exposes_seven_real_stages():
     source = _gui_source()
     for required in (
