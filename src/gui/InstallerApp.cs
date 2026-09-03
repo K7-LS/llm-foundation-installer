@@ -22,8 +22,8 @@ using System.Windows.Media.Imaging;
 [assembly: AssemblyCompany("LLM Foundation")]
 [assembly: AssemblyProduct("LLM Foundation Installer")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("0.4.0.0")]
-[assembly: AssemblyFileVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.4.1.0")]
+[assembly: AssemblyFileVersion("0.4.1.0")]
 [assembly: ComVisible(false)]
 
 namespace LlmFoundationInstaller

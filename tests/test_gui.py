@@ -25,6 +25,11 @@ FOUNDATION_VERSION = (REPOSITORY_ROOT / "VERSION").read_text(
 ).strip()
 
 
+APP_VERSION = (REPOSITORY_ROOT / "APP_VERSION").read_text(
+    encoding="utf-8"
+).strip()
+
+
 def _gui_source() -> str:
     """Весь GUI-код одной строкой: типы разнесены по модулям (Ф2)."""
     return "\n".join(
@@ -573,7 +578,7 @@ def _accepted_foundation(root: Path) -> Path:
     evidence_value = {
         "schema_version": 1,
         "engine_version": FOUNDATION_VERSION,
-        "installer_version": "0.4.0",
+        "installer_version": APP_VERSION,
         "FOUNDATION_SYNTHETIC": "PASS",
         "deterministic_engine_bundle": "PASS",
     }
@@ -1022,17 +1027,31 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
     assert manifest_path.is_file()
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    app_version = (REPOSITORY_ROOT / "APP_VERSION").read_text(
-        encoding="utf-8"
-    ).strip()
+    app_version = APP_VERSION
     engine_version = (REPOSITORY_ROOT / "VERSION").read_text(
         encoding="utf-8"
     ).strip()
-    assert app_version == "0.4.0"
     assert engine_version == FOUNDATION_VERSION
+    # Версия файла EXE следует за APP_VERSION: у продукта один источник
+    # версии, а не литерал в исходнике.
+    file_version = subprocess.run(
+        [
+            str(POWERSHELL),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Item -LiteralPath '" + str(executable) + "')"
+            ".VersionInfo.FileVersion",
+        ],
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert file_version.returncode == 0, file_version.stderr
+    assert file_version.stdout.strip() == app_version + ".0"
     source = _gui_source()
-    assert '[assembly: AssemblyVersion("0.4.0.0")]' in source
-    assert '[assembly: AssemblyFileVersion("0.4.0.0")]' in source
     assert manifest["version"] == app_version
     assert (gui_bundle / "engine" / "VERSION").read_text(
         encoding="utf-8"

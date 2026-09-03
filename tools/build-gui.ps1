@@ -472,7 +472,7 @@ function Read-AcceptedFoundation {
     }
     if ([int]$Evidence.schema_version -ne 1 -or
         [string]$Evidence.engine_version -cne $FoundationEngineVersion -or
-        [string]$Evidence.installer_version -cne '0.4.0' -or
+        [string]$Evidence.installer_version -cne $Version -or
         [string]$Evidence.FOUNDATION_SYNTHETIC -cne 'PASS' -or
         [string]$Evidence.deterministic_engine_bundle -cne 'PASS' -or
         [string]$Evidence.evidence_body_sha256 -notmatch (

@@ -13,6 +13,9 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY / "tools" / "build-gui.ps1"
 EDITION_BUILD_SCRIPT = REPOSITORY / "tools" / "build-edition.ps1"
+APP_VERSION = (REPOSITORY / "APP_VERSION").read_text(
+    encoding="utf-8"
+).strip()
 POWERSHELL = (
     os.environ.get("K7_TEST_POWERSHELL")
     or shutil.which("pwsh")
@@ -587,7 +590,7 @@ def test_deterministic_edition_bundle_ships_single_installer_exe(
     assert manifest["edition_id"] == "Employee"
     assert manifest["theme_id"] == "K7Signal"
     assert manifest["distribution_mode"] == "Preview"
-    assert manifest["version"] == "0.4.0"
+    assert manifest["version"] == APP_VERSION
     assert manifest["targets"] == ["claude", "codex", "opencode"]
     assert {
         role: value["file"]
@@ -625,7 +628,7 @@ def test_deterministic_edition_bundle_ships_single_installer_exe(
         timeout=30,
     )
     assert self_test.returncode == 0, self_test.stdout + self_test.stderr
-    assert json.loads(self_test.stdout)["version"] == "0.4.0"
+    assert json.loads(self_test.stdout)["version"] == APP_VERSION
     assert (first / "bundle-manifest.json").read_bytes() == (
         second / "bundle-manifest.json"
     ).read_bytes()
