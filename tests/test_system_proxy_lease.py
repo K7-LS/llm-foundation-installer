@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -335,6 +336,85 @@ def _wait_for_file(path: Path, timeout: float = 15.0) -> None:
     raise AssertionError(f"expected file was not created: {path}")
 
 
+def _write_lease_state(
+    state_path: Path,
+    registry_key: str,
+    owner_pid: int,
+    original: dict[str, tuple[object, int] | None],
+) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    applied = {
+        "ProxyEnable": (1, winreg.REG_DWORD),
+        "ProxyServer": (APPLIED_PROXY, winreg.REG_SZ),
+        "ProxyOverride": ("", winreg.REG_SZ),
+        "AutoConfigURL": None,
+    }
+
+    def _values(
+        source: dict[str, tuple[object, int] | None],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "name": name,
+                "exists": entry is not None,
+                "value": None if entry is None else entry[0],
+                "kind": 0 if entry is None else entry[1],
+            }
+            for name, entry in source.items()
+        ]
+
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sid": _current_user_sid(),
+                "owner_pid": owner_pid,
+                "phase": "APPLIED",
+                "registry_subkey": registry_key,
+                "original": _values(original),
+                "applied": _values(applied),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _wait_for_phase(path: Path, phase: str, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if json.loads(path.read_text(encoding="utf-8"))["phase"] == phase:
+                return
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(0.05)
+    raise AssertionError(f"lease state did not reach phase {phase}: {path}")
+
+
+def _wait_for_missing(path: Path, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not path.exists():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"expected file to disappear: {path}")
+
+
+def _is_process_alive(pid: int) -> bool:
+    kernel32 = ctypes.windll.kernel32
+    process_query_limited_information = 0x1000
+    still_active = 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_uint32()
+        assert kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _save_proxy_profile(bundle: Path, home: Path, tmp_path: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     profile = tmp_path / "connection.json"
@@ -491,6 +571,224 @@ def test_owner_crash_is_restored_by_internal_watchdog(
     assert not (
         home / ".llm-foundation" / "system-proxy-lease.json"
     ).exists()
+
+
+def test_watchdog_survives_transient_absence_of_state_file(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # Владелец переписывает файл состояния (PREPARED -> APPLIED) через
+    # временное имя, и наблюдатель может застать миг, когда имени нет.
+    # Watchdog не должен принимать такой разрыв за освобождение аренды:
+    # иначе он завершится, и падение владельца останется без восстановления.
+    before = _registry_snapshot(registry_key)
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    _write_lease_state(state_path, registry_key, os.getpid(), before)
+    watchdog = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-watchdog",
+            str(os.getpid()),
+            str(home),
+            registry_key,
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        aside = state_path.with_name(state_path.name + ".aside")
+        for _ in range(10):
+            state_path.rename(aside)
+            time.sleep(0.3)
+            aside.rename(state_path)
+            time.sleep(0.2)
+        if watchdog.poll() is not None:
+            stdout, stderr = watchdog.communicate(timeout=10)
+            raise AssertionError(
+                "watchdog exited during a transient absence of the state "
+                f"file: {stdout} {stderr}"
+            )
+
+        state_path.unlink()
+        stdout, stderr = watchdog.communicate(timeout=15)
+        assert stdout.strip(), stderr
+        value = json.loads(stdout)
+        assert watchdog.returncode == 0
+        assert value["status"] == "RESTORED"
+        assert value["cleanup_verified"] is True
+        assert _registry_snapshot(registry_key) == before
+    finally:
+        if watchdog.poll() is None:
+            watchdog.kill()
+            watchdog.communicate(timeout=10)
+
+
+def test_state_file_name_never_disappears_while_lease_is_acquired(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # Перезапись PREPARED -> APPLIED обязана быть переименованием поверх
+    # существующего имени: watchdog и диагностика опираются на File.Exists.
+    # ReplaceFile делает два переименования, между ними имени нет.
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    stop_file = tmp_path / "stop"
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetFileAttributesW.restype = ctypes.c_uint32
+    kernel32.GetFileAttributesW.argtypes = [ctypes.c_wchar_p]
+    invalid_attributes = 0xFFFFFFFF
+
+    def _name_exists() -> bool:
+        return (
+            kernel32.GetFileAttributesW(str(state_path))
+            != invalid_attributes
+        )
+
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        deadline = time.monotonic() + 15.0
+        while not _name_exists():
+            assert time.monotonic() < deadline, "state file was not created"
+            assert owner.poll() is None, owner.communicate(timeout=10)
+        misses = 0
+        polls = 0
+        applied_at: float | None = None
+        while True:
+            if not _name_exists():
+                misses += 1
+            polls += 1
+            if applied_at is None:
+                snapshot = _registry_snapshot(registry_key)
+                if snapshot["ProxyServer"] == (APPLIED_PROXY, winreg.REG_SZ):
+                    applied_at = time.monotonic()
+                assert time.monotonic() < deadline, "proxy was not applied"
+            elif time.monotonic() - applied_at > 0.5:
+                break
+    finally:
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    result = json.loads(stdout)
+    assert polls > 0
+    assert misses == 0, (
+        f"state file name vanished {misses} of {polls} polls; "
+        f"owner: {result}; stderr: {stderr}"
+    )
+    assert result["cleanup_verified"] is True
+
+
+def test_state_rewrite_survives_transient_handle_on_state_file(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # CI (job 5.1): перезапись PREPARED -> APPLIED падала, и аренда
+    # откатывалась. Антивирус или индексатор держит свежезаписанный файл,
+    # и переименование поверх получает ACCESS_DENIED / SHARING_VIOLATION.
+    # Владелец обязан повторять переименование, а не откатывать аренду.
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    stop_file = tmp_path / "stop"
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    handle = None
+    try:
+        _wait_for_file(state_path)
+        # open() без FILE_SHARE_DELETE: переименование поверх файла запрещено
+        handle = open(state_path, "rb")
+        time.sleep(1.5)
+        handle.close()
+        handle = None
+        _wait_for_phase(state_path, "APPLIED")
+        _wait_for_applied(registry_key)
+    finally:
+        if handle is not None:
+            handle.close()
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=30)
+    assert stdout.strip(), stderr
+    value = json.loads(stdout)
+    assert value["status"] == "RESTORED", value
+    assert value["cleanup_verified"] is True
+    assert value["lifecycle"] == ["PREPARED", "APPLIED", "RESTORED"]
+
+
+def test_acquire_reports_acquired_only_after_watchdog_is_polling(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # ACQUIRED означает, что watchdog уже в цикле опроса: к моменту
+    # применения прокси рядом с файлом состояния лежит маркер готовности
+    # с PID живого watchdog. Раньше владелец лишь ждал 100 мс после запуска.
+    home = tmp_path / "home"
+    stop_file = tmp_path / "stop"
+    ready = home / ".llm-foundation" / "system-proxy-watchdog.ready"
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        _wait_for_applied(registry_key)
+        assert ready.is_file(), "watchdog ready marker is missing"
+        watchdog_pid = int(ready.read_text(encoding="utf-8").strip())
+        assert watchdog_pid > 0
+        assert watchdog_pid != owner.pid
+        assert _is_process_alive(watchdog_pid)
+    finally:
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=20)
+    assert stdout.strip(), stderr
+    assert json.loads(stdout)["cleanup_verified"] is True
+    _wait_for_missing(ready)
+    assert not _is_process_alive(watchdog_pid)
 
 
 def test_external_change_is_not_overwritten_and_blocks_next_acquire(

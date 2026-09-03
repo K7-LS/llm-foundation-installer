@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -54,8 +55,29 @@ namespace LlmFoundationInstaller
             @"Software\K7AITests\";
         private const int InternetOptionRefresh = 37;
         private const int InternetOptionSettingsChanged = 39;
+        private const int WatchdogReadyTimeoutSeconds = 30;
+        private const int MoveFileReplaceExisting = 0x1;
+        private const int MoveFileWriteThrough = 0x8;
+        private const int ErrorAccessDenied = 5;
+        private const int ErrorSharingViolation = 32;
+        private const int ErrorLockViolation = 33;
+        private const int RenameRetryMilliseconds = 3000;
+        private static readonly TimeSpan ReleaseConfirmation =
+            TimeSpan.FromSeconds(1);
         private static readonly object Sync = new object();
         private static ActiveSystemProxyLease active;
+
+        [DllImport(
+            "kernel32.dll",
+            CharSet = CharSet.Unicode,
+            SetLastError = true
+        )]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool MoveFileEx(
+            string existingFileName,
+            string newFileName,
+            int flags
+        );
 
         [DllImport("wininet.dll", SetLastError = true)]
         private static extern bool InternetSetOption(
@@ -146,6 +168,7 @@ namespace LlmFoundationInstaller
                 }
 
                 SystemProxyLeaseState state;
+                string failure = "SYSTEM_PROXY_STATE_WRITE_FAILED";
                 try
                 {
                     state = new SystemProxyLeaseState
@@ -159,10 +182,12 @@ namespace LlmFoundationInstaller
                         applied = AppliedValues(localPort)
                     };
                     WriteStateAtomic(statePath, state);
+                    failure = "SYSTEM_PROXY_WATCHDOG_START_FAILED";
                     StartWatchdog(
                         Process.GetCurrentProcess().Id,
                         home,
-                        registrySubkey
+                        registrySubkey,
+                        statePath
                     );
                 }
                 catch
@@ -178,7 +203,7 @@ namespace LlmFoundationInstaller
                     {
                     }
                     ReleaseMutex(mutex, true);
-                    return Failed("SYSTEM_PROXY_STATE_WRITE_FAILED");
+                    return Failed(failure);
                 }
 
                 List<string> lifecycle = new List<string>
@@ -312,27 +337,86 @@ namespace LlmFoundationInstaller
             {
                 return Failed("SYSTEM_PROXY_STATE_INVALID");
             }
-            while (File.Exists(statePath))
+            // Маркер готовности: владелец считает аренду ACQUIRED только
+            // после того, как watchdog дошёл до цикла опроса.
+            string readyPath = WatchdogReadyPath(statePath);
+            string readyToken = Process.GetCurrentProcess().Id.ToString(
+                System.Globalization.CultureInfo.InvariantCulture
+            );
+            try
             {
-                bool ownerAlive = IsProcessAlive(ownerPid);
+                File.WriteAllText(
+                    readyPath,
+                    readyToken,
+                    new UTF8Encoding(false)
+                );
+            }
+            catch
+            {
+                return Failed("SYSTEM_PROXY_STATE_INVALID");
+            }
+            try
+            {
+                return WatchOwner(
+                    ownerPid,
+                    home,
+                    registrySubkey,
+                    statePath
+                );
+            }
+            finally
+            {
+                RemoveWatchdogMarker(readyPath, readyToken);
+            }
+        }
+
+        private static ProxyRecoveryResult WatchOwner(
+            int ownerPid,
+            string home,
+            string registrySubkey,
+            string statePath
+        )
+        {
+            // Владелец переписывает файл состояния через временное имя
+            // (PREPARED -> APPLIED), и имя может отсутствовать доли секунды.
+            // Освобождение аренды - только устойчивое отсутствие файла при
+            // живом владельце; иначе watchdog ушёл бы до падения владельца.
+            DateTime? absentSince = null;
+            bool ownerAlive = true;
+            while (true)
+            {
+                ownerAlive = IsProcessAlive(ownerPid);
                 if (!ownerAlive)
+                {
+                    break;
+                }
+                if (File.Exists(statePath))
+                {
+                    absentSince = null;
+                }
+                else if (absentSince == null)
+                {
+                    absentSince = DateTime.UtcNow;
+                }
+                else if (DateTime.UtcNow - absentSince.Value >=
+                    ReleaseConfirmation)
                 {
                     break;
                 }
                 Thread.Sleep(100);
             }
+            if (ownerAlive)
+            {
+                return new ProxyRecoveryResult
+                {
+                    status = "RESTORED",
+                    cleanup_verified = true,
+                    lifecycle = new List<string>(),
+                    reason = null
+                };
+            }
             if (!File.Exists(statePath))
             {
-                if (IsProcessAlive(ownerPid))
-                {
-                    return new ProxyRecoveryResult
-                    {
-                        status = "RESTORED",
-                        cleanup_verified = true,
-                        lifecycle = new List<string>(),
-                        reason = null
-                    };
-                }
                 SingBoxSessionResult cleanWithoutState =
                     SingBoxSession.RecoverOwnedSessions(
                         home,
@@ -1027,6 +1111,35 @@ namespace LlmFoundationInstaller
             return Path.Combine(root, "system-proxy-lease.json");
         }
 
+        private static string WatchdogReadyPath(string statePath)
+        {
+            return Path.Combine(
+                Path.GetDirectoryName(statePath),
+                "system-proxy-watchdog.ready"
+            );
+        }
+
+        private static void RemoveWatchdogMarker(
+            string readyPath,
+            string readyToken
+        )
+        {
+            try
+            {
+                if (File.Exists(readyPath) &&
+                    String.Equals(
+                        File.ReadAllText(readyPath).Trim(),
+                        readyToken,
+                        StringComparison.Ordinal))
+                {
+                    File.Delete(readyPath);
+                }
+            }
+            catch
+            {
+            }
+        }
+
         private static void WriteStateAtomic(
             string path,
             SystemProxyLeaseState state
@@ -1051,13 +1164,34 @@ namespace LlmFoundationInstaller
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(true);
                 }
-                if (File.Exists(path))
+                // Переименование поверх существующего имени: у File.Replace
+                // (ReplaceFile) два переименования, и между ними имени нет.
+                // Watchdog и диагностика опираются на File.Exists, а падение
+                // владельца между переименованиями теряло бы файл состояния.
+                // Антивирус или индексатор может держать свежезаписанный
+                // временный файл либо цель: переименование получает
+                // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION (CI, job 5.1:
+                // аренда откатывалась). Повторяем в пределах
+                // RenameRetryMilliseconds; прочие ошибки — сразу наверх.
+                DateTime deadline = DateTime.UtcNow.AddMilliseconds(
+                    RenameRetryMilliseconds
+                );
+                while (!MoveFileEx(
+                        temporary,
+                        path,
+                        MoveFileReplaceExisting | MoveFileWriteThrough))
                 {
-                    File.Replace(temporary, path, null, true);
-                }
-                else
-                {
-                    File.Move(temporary, path);
+                    int error = Marshal.GetLastWin32Error();
+                    bool transient = error == ErrorAccessDenied ||
+                        error == ErrorSharingViolation ||
+                        error == ErrorLockViolation;
+                    if (!transient || DateTime.UtcNow >= deadline)
+                    {
+                        throw new IOException(
+                            new Win32Exception(error).Message
+                        );
+                    }
+                    Thread.Sleep(25);
                 }
             }
             finally
@@ -1072,9 +1206,15 @@ namespace LlmFoundationInstaller
         private static void StartWatchdog(
             int ownerPid,
             string home,
-            string registrySubkey
+            string registrySubkey,
+            string statePath
         )
         {
+            string readyPath = WatchdogReadyPath(statePath);
+            if (File.Exists(readyPath))
+            {
+                File.Delete(readyPath);
+            }
             string executable = Process.GetCurrentProcess()
                 .MainModule
                 .FileName;
@@ -1106,12 +1246,30 @@ namespace LlmFoundationInstaller
                         "SYSTEM_PROXY_WATCHDOG_START_FAILED"
                     );
                 }
-                if (watchdog.WaitForExit(100) &&
-                    watchdog.ExitCode != 0)
+                // Аренда считается ACQUIRED только после того, как watchdog
+                // дошёл до цикла опроса: 100 мс WaitForExit этого не давали.
+                DateTime deadline = DateTime.UtcNow.AddSeconds(
+                    WatchdogReadyTimeoutSeconds
+                );
+                while (!File.Exists(readyPath))
                 {
-                    throw new InvalidOperationException(
-                        "SYSTEM_PROXY_WATCHDOG_START_FAILED"
-                    );
+                    if (watchdog.HasExited || DateTime.UtcNow >= deadline)
+                    {
+                        try
+                        {
+                            if (!watchdog.HasExited)
+                            {
+                                watchdog.Kill();
+                            }
+                        }
+                        catch
+                        {
+                        }
+                        throw new InvalidOperationException(
+                            "SYSTEM_PROXY_WATCHDOG_START_FAILED"
+                        );
+                    }
+                    Thread.Sleep(25);
                 }
             }
         }
