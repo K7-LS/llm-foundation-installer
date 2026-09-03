@@ -54,29 +54,20 @@ namespace LlmFoundationInstaller
                     StandardOutputEncoding = Encoding.UTF8,
                     StandardErrorEncoding = Encoding.UTF8
                 };
-                using (Process process = Process.Start(start))
+                BoundedProcessResult versionRun = BoundedProcess.Run(
+                    start,
+                    5000
+                );
+                if (!versionRun.started ||
+                    versionRun.timed_out ||
+                    !versionRun.drained)
                 {
-                    if (process == null)
-                    {
-                        return null;
-                    }
-                    string output = process.StandardOutput.ReadToEnd() + " " +
-                        process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(5000))
-                    {
-                        try
-                        {
-                            process.Kill();
-                        }
-                        catch
-                        {
-                        }
-                        return null;
-                    }
-                    System.Text.RegularExpressions.Match match =
-                        Version.Match(output);
-                    return match.Success ? match.Groups[1].Value : null;
+                    return null;
                 }
+                System.Text.RegularExpressions.Match match = Version.Match(
+                    versionRun.standard_output + " " + versionRun.standard_error
+                );
+                return match.Success ? match.Groups[1].Value : null;
             }
             catch
             {
