@@ -13,6 +13,7 @@ import struct
 import subprocess
 import textwrap
 import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -3124,6 +3125,78 @@ def test_codex_older_version_is_selected_for_update(
     }
 
 
+def test_client_version_detection_timeout_is_real(tmp_path: Path) -> None:
+    # Ревью Codex: 23 синхронных ReadToEnd перед WaitForExit(timeout)
+    # делали таймауты фиктивными. Детектор версии (10 с): клиент, который
+    # напечатал версию и держит stdout, держал план установки, пока сам не
+    # выйдет. Ожидание обязано быть ограниченным, а повисший клиент —
+    # не обнаруженным.
+    home = tmp_path / "employee-home"
+    managed_dir = home / ".llm-foundation" / "bin"
+    managed_dir.mkdir(parents=True)
+    # PATH внутри процесса детектора пуст — команда задержки с полным путём;
+    # ping — внук, он наследует пайпы EXE и живёт после Kill родителя.
+    (managed_dir / "fixture-client.cmd").write_bytes(
+        b"@echo off" + b"\r\n"
+        + b"echo 1.0.0" + b"\r\n"
+        + b"%SystemRoot%\\System32\\ping.exe -n 61 127.0.0.1 >nul" + b"\r\n"
+    )
+    source_lock = _local_client_source_lock(
+        tmp_path / "client-sources.test.json",
+        artifact_kind="portable-command",
+        install_mode="managed-bin",
+        detect_commands=["fixture-client.cmd"],
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    # Вывод — в файлы, а не в пайпы: EOF пайпа держал бы внук-ping,
+    # а измеряется завершение самого EXE.
+    stdout_path = tmp_path / "plan.stdout"
+    stderr_path = tmp_path / "plan.stderr"
+    started = time.monotonic()
+    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+        plan = subprocess.Popen(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--client-plan-json",
+                str(home),
+                "fixture-client",
+            ],
+            cwd=bundle,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        try:
+            plan.wait(timeout=35)
+        finally:
+            if plan.poll() is None:
+                plan.kill()
+                plan.wait(timeout=10)
+    elapsed = time.monotonic() - started
+    output = stdout_path.read_text(encoding="utf-8")
+    assert plan.returncode == 0, output + stderr_path.read_text(
+        encoding="utf-8"
+    )
+    payload = json.loads(output)
+    assert payload["detected_version"] is None
+    assert elapsed < 35, elapsed
+
+
+def test_client_bootstrap_has_no_synchronous_process_reads() -> None:
+    # Статический гейт (как test_foundation_process_timeout_is_real для
+    # движка): все запуски процессов в ClientBootstrap идут через общий
+    # BoundedProcess.Run — параллельное чтение потоков, реальный таймаут,
+    # Kill и ограниченный дренаж.
+    source = (REPOSITORY_ROOT / "src" / "gui" / "ClientBootstrap.cs").read_text(
+        encoding="utf-8"
+    )
+    assert "ReadToEnd()" not in source
+    assert source.count("BoundedProcess.Run(") == 7
+
+
 def test_target_plan_passes_detected_codex_version_to_foundation(
     tmp_path: Path,
 ):
@@ -6047,7 +6120,7 @@ def test_official_installer_prepends_the_system_directory_to_path(gui_bundle: Pa
     assert 'start.EnvironmentVariables["PATH"]' in window
     assert "SpecialFolder.System" in window
     assert window.index('EnvironmentVariables["PATH"]') < window.index(
-        "Process.Start(start)"
+        "BoundedProcess.Run("
     )
 
 
@@ -6057,7 +6130,10 @@ def test_official_installer_failure_reports_the_installer_output(gui_bundle: Pat
     source = (REPOSITORY_ROOT / "src" / "gui" / "ClientBootstrap.cs").read_text(
         encoding="utf-8"
     )
-    assert "InstallerDiagnostics(installerOutput, installerError)" in source
+    # После перевода на BoundedProcess потоки берутся из результата запуска.
+    assert "InstallerDiagnostics(" in source
+    assert "installerRun.standard_output" in source
+    assert "installerRun.standard_error" in source
     assert "Вывод установщика: " in source
 
 

@@ -304,24 +304,23 @@ namespace LlmFoundationInstaller
                 source.store_identity;
             AddWindowsPowerShellModulePath(start);
             string output;
-            using (Process process = Process.Start(start))
+            BoundedProcessResult probeRun = BoundedProcess.Run(
+                start,
+                30000
+            );
+            if (!probeRun.started)
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "Microsoft Store package probe could not start"
-                    );
-                }
-                output = process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(30000) ||
-                    process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        "Microsoft Store package probe failed"
-                    );
-                }
+                throw new InvalidOperationException(
+                    "Microsoft Store package probe could not start"
+                );
             }
+            if (!probeRun.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    "Microsoft Store package probe failed"
+                );
+            }
+            output = probeRun.standard_output;
             StorePackageProbe probe = new JavaScriptSerializer()
                 .Deserialize<StorePackageProbe>(output);
             return ValidateStoreProbe(source, probe);
@@ -446,36 +445,28 @@ namespace LlmFoundationInstaller
                     home,
                     start
                 );
-                using (Process process = Process.Start(start))
+                BoundedProcessResult downloadRun = BoundedProcess.Run(
+                    start,
+                    310000
+                );
+                if (!downloadRun.started)
                 {
-                    if (process == null)
-                    {
-                        throw new InvalidOperationException(
-                            "Client download process could not start"
-                        );
-                    }
-                    process.StandardOutput.ReadToEnd();
-                    process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(310000))
-                    {
-                        try
-                        {
-                            process.Kill();
-                        }
-                        catch
-                        {
-                        }
-                        throw new InvalidOperationException(
-                            "Client download timed out"
-                        );
-                    }
-                    if (process.ExitCode != 0)
-                    {
-                        throw new InvalidOperationException(
-                            "Client download failed with curl exit " +
-                            process.ExitCode
-                        );
-                    }
+                    throw new InvalidOperationException(
+                        "Client download process could not start"
+                    );
+                }
+                if (downloadRun.timed_out)
+                {
+                    throw new InvalidOperationException(
+                        "Client download timed out"
+                    );
+                }
+                if (downloadRun.exit_code != 0)
+                {
+                    throw new InvalidOperationException(
+                        "Client download failed with curl exit " +
+                        downloadRun.exit_code
+                    );
                 }
                 if (!File.Exists(partialPath) ||
                     new FileInfo(partialPath).Length < 1)
@@ -1019,41 +1010,36 @@ namespace LlmFoundationInstaller
                 Path.PathSeparator +
                 Environment.GetEnvironmentVariable("PATH");
             ConnectionStore.ConfigureProcessEnvironment(home, start);
-            using (Process process = Process.Start(start))
+            // Вывод официального установщика раньше читался и молча
+            // выбрасывался: падение выглядело как «failed with exit 1»
+            // без причины — на машине без админ-прав разбор был
+            // невозможен. Теперь хвост потоков идёт в сообщение.
+            BoundedProcessResult installerRun = BoundedProcess.Run(
+                start,
+                600000
+            );
+            if (!installerRun.started)
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "Official client installer could not start"
-                    );
-                }
-                // Вывод официального установщика раньше читался и молча
-                // выбрасывался: падение выглядело как «failed with exit 1»
-                // без причины — на машине без админ-прав разбор был
-                // невозможен. Теперь хвост потоков идёт в сообщение.
-                string installerOutput = process.StandardOutput.ReadToEnd();
-                string installerError = process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(600000))
-                {
-                    try
-                    {
-                        process.Kill();
-                    }
-                    catch
-                    {
-                    }
-                    throw new InvalidOperationException(
-                        "Official client installer timed out"
-                    );
-                }
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        "Official client installer failed with exit " +
-                        process.ExitCode +
-                        InstallerDiagnostics(installerOutput, installerError)
-                    );
-                }
+                throw new InvalidOperationException(
+                    "Official client installer could not start"
+                );
+            }
+            if (installerRun.timed_out)
+            {
+                throw new InvalidOperationException(
+                    "Official client installer timed out"
+                );
+            }
+            if (installerRun.exit_code != 0)
+            {
+                throw new InvalidOperationException(
+                    "Official client installer failed with exit " +
+                    installerRun.exit_code +
+                    InstallerDiagnostics(
+                        installerRun.standard_output,
+                        installerRun.standard_error
+                    )
+                );
             }
             string installedVersion = DetectVersion(home, source);
             if (!String.Equals(
@@ -1188,30 +1174,21 @@ namespace LlmFoundationInstaller
             };
             start.EnvironmentVariables["LLM_CLIENT_SCRIPT"] =
                 Path.GetFullPath(scriptPath);
-            using (Process process = Process.Start(start))
+            BoundedProcessResult validationRun = BoundedProcess.Run(
+                start,
+                30000
+            );
+            if (!validationRun.started)
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "PowerShell installer script AST validation failed"
-                    );
-                }
-                process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(30000) ||
-                    process.ExitCode != 0)
-                {
-                    try
-                    {
-                        process.Kill();
-                    }
-                    catch
-                    {
-                    }
-                    throw new InvalidOperationException(
-                        "PowerShell installer script failed AST validation"
-                    );
-                }
+                throw new InvalidOperationException(
+                    "PowerShell installer script AST validation failed"
+                );
+            }
+            if (validationRun.timed_out || validationRun.exit_code != 0)
+            {
+                throw new InvalidOperationException(
+                    "PowerShell installer script failed AST validation"
+                );
             }
         }
 
@@ -1716,24 +1693,18 @@ namespace LlmFoundationInstaller
                 source.display_name ?? source.id;
             try
             {
-                using (Process process = Process.Start(start))
+                BoundedProcessResult shortcutRun = BoundedProcess.Run(
+                    start,
+                    30000
+                );
+                if (!shortcutRun.started ||
+                    shortcutRun.timed_out ||
+                    shortcutRun.exit_code != 0 ||
+                    !File.Exists(shellTemporary))
                 {
-                    if (process == null)
-                    {
-                        throw new InvalidOperationException(
-                            "Managed desktop shortcut could not be created"
-                        );
-                    }
-                    process.StandardOutput.ReadToEnd();
-                    process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(30000) ||
-                        process.ExitCode != 0 ||
-                        !File.Exists(shellTemporary))
-                    {
-                        throw new InvalidOperationException(
-                            "Managed desktop shortcut could not be created"
-                        );
-                    }
+                    throw new InvalidOperationException(
+                        "Managed desktop shortcut could not be created"
+                    );
                 }
                 File.Copy(
                     ToExtendedLengthPath(shellTemporary),
@@ -2352,29 +2323,18 @@ namespace LlmFoundationInstaller
                 start.RedirectStandardError = true;
                 start.StandardOutputEncoding = Encoding.UTF8;
                 start.StandardErrorEncoding = Encoding.UTF8;
-                using (Process process = Process.Start(start))
+                BoundedProcessResult versionRun = BoundedProcess.Run(
+                    start,
+                    10000
+                );
+                if (!versionRun.Succeeded)
                 {
-                    if (process == null)
-                    {
-                        return null;
-                    }
-                    string output = process.StandardOutput.ReadToEnd() + " " +
-                        process.StandardError.ReadToEnd();
-                    if (!process.WaitForExit(10000) ||
-                        process.ExitCode != 0)
-                    {
-                        try
-                        {
-                            process.Kill();
-                        }
-                        catch
-                        {
-                        }
-                        return null;
-                    }
-                    Match match = VersionPattern.Match(output);
-                    return match.Success ? match.Groups[1].Value : null;
+                    return null;
                 }
+                Match match = VersionPattern.Match(
+                    versionRun.standard_output + " " + versionRun.standard_error
+                );
+                return match.Success ? match.Groups[1].Value : null;
             }
             catch
             {
@@ -3018,23 +2978,23 @@ namespace LlmFoundationInstaller
                     ? ""
                     : ";" + inheritedModules);
             string output;
-            using (Process process = Process.Start(start))
+            BoundedProcessResult signatureRun = BoundedProcess.Run(
+                start,
+                30000
+            );
+            if (!signatureRun.started)
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "Authenticode verification could not start"
-                    );
-                }
-                output = process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
-                if (!process.WaitForExit(30000) || process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        "Authenticode verification failed"
-                    );
-                }
+                throw new InvalidOperationException(
+                    "Authenticode verification could not start"
+                );
             }
+            if (!signatureRun.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    "Authenticode verification failed"
+                );
+            }
+            output = signatureRun.standard_output;
             SignatureProbe result = new JavaScriptSerializer()
                 .Deserialize<SignatureProbe>(output);
             if (result == null ||
