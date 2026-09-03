@@ -556,6 +556,19 @@ namespace LlmFoundationInstaller
                     home,
                     completed
                 );
+                // Решение владельца (2026-09-03): центр запуска должен быть под
+                // рукой без папки комплекта — копия в профиле и ярлыки; отказ
+                // не роняет установку, а становится предупреждением.
+                LaunchCenterInstallResult launcher = LaunchCenterInstall.Install(
+                    bundleRoot,
+                    home
+                );
+                string launcherText = launcher.status == "FAILED"
+                    ? " Центр запуска не скопирован в профиль (" +
+                        launcher.reason +
+                        "); запускайте его из папки комплекта."
+                    : " Центр запуска: ярлык «K7 Launch Center» на рабочем " +
+                        "столе и в меню Пуск.";
                 SuccessReportResult report = TryWriteSuccessReport(
                     home,
                     completed
@@ -581,8 +594,10 @@ namespace LlmFoundationInstaller
                 SetStatus(
                     view,
                     report.written
-                        ? headline + " Отчёт: " + report.path + noticeText
-                        : headline + " Локальный отчёт не сохранён: " +
+                        ? headline + launcherText + " Отчёт: " + report.path +
+                            noticeText
+                        : headline + launcherText +
+                            " Локальный отчёт не сохранён: " +
                             report.error + noticeText,
                     partial ? "warning" : "success"
                 );
@@ -591,6 +606,7 @@ namespace LlmFoundationInstaller
                         ? "Установлена часть баз: " + completed.Count +
                             " из " + selected.Count + ".\n\n"
                         : "Рабочая среда установлена и проверена.\n\n") +
+                    launcherText.Trim() + "\n" +
                     "Авторизация выполняется только в самих клиентах.\n" +
                     "Для обновлений используйте $sync-base.\n" +
                     (report.written
