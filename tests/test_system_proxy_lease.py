@@ -379,6 +379,18 @@ def _write_lease_state(
     )
 
 
+def _wait_for_phase(path: Path, phase: str, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if json.loads(path.read_text(encoding="utf-8"))["phase"] == phase:
+                return
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(0.05)
+    raise AssertionError(f"lease state did not reach phase {phase}: {path}")
+
+
 def _wait_for_missing(path: Path, timeout: float = 15.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -673,13 +685,67 @@ def test_state_file_name_never_disappears_while_lease_is_acquired(
                 assert time.monotonic() < deadline, "proxy was not applied"
             elif time.monotonic() - applied_at > 0.5:
                 break
-        assert polls > 0
-        assert misses == 0, f"state file name vanished {misses} of {polls} polls"
     finally:
         stop_file.write_text("stop", encoding="utf-8")
         stdout, stderr = owner.communicate(timeout=20)
     assert stdout.strip(), stderr
-    assert json.loads(stdout)["cleanup_verified"] is True
+    result = json.loads(stdout)
+    assert polls > 0
+    assert misses == 0, (
+        f"state file name vanished {misses} of {polls} polls; "
+        f"owner: {result}; stderr: {stderr}"
+    )
+    assert result["cleanup_verified"] is True
+
+
+def test_state_rewrite_survives_transient_handle_on_state_file(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # CI (job 5.1): перезапись PREPARED -> APPLIED падала, и аренда
+    # откатывалась. Антивирус или индексатор держит свежезаписанный файл,
+    # и переименование поверх получает ACCESS_DENIED / SHARING_VIOLATION.
+    # Владелец обязан повторять переименование, а не откатывать аренду.
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    stop_file = tmp_path / "stop"
+    owner = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-test-json",
+            "hold",
+            str(home),
+            registry_key,
+            "43191",
+            str(stop_file),
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    handle = None
+    try:
+        _wait_for_file(state_path)
+        # open() без FILE_SHARE_DELETE: переименование поверх файла запрещено
+        handle = open(state_path, "rb")
+        time.sleep(1.5)
+        handle.close()
+        handle = None
+        _wait_for_phase(state_path, "APPLIED")
+        _wait_for_applied(registry_key)
+    finally:
+        if handle is not None:
+            handle.close()
+        stop_file.write_text("stop", encoding="utf-8")
+        stdout, stderr = owner.communicate(timeout=30)
+    assert stdout.strip(), stderr
+    value = json.loads(stdout)
+    assert value["status"] == "RESTORED", value
+    assert value["cleanup_verified"] is True
+    assert value["lifecycle"] == ["PREPARED", "APPLIED", "RESTORED"]
 
 
 def test_acquire_reports_acquired_only_after_watchdog_is_polling(

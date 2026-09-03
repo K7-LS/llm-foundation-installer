@@ -58,6 +58,10 @@ namespace LlmFoundationInstaller
         private const int WatchdogReadyTimeoutSeconds = 30;
         private const int MoveFileReplaceExisting = 0x1;
         private const int MoveFileWriteThrough = 0x8;
+        private const int ErrorAccessDenied = 5;
+        private const int ErrorSharingViolation = 32;
+        private const int ErrorLockViolation = 33;
+        private const int RenameRetryMilliseconds = 3000;
         private static readonly TimeSpan ReleaseConfirmation =
             TimeSpan.FromSeconds(1);
         private static readonly object Sync = new object();
@@ -1164,16 +1168,30 @@ namespace LlmFoundationInstaller
                 // (ReplaceFile) два переименования, и между ними имени нет.
                 // Watchdog и диагностика опираются на File.Exists, а падение
                 // владельца между переименованиями теряло бы файл состояния.
-                if (!MoveFileEx(
+                // Антивирус или индексатор может держать свежезаписанный
+                // временный файл либо цель: переименование получает
+                // ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION (CI, job 5.1:
+                // аренда откатывалась). Повторяем в пределах
+                // RenameRetryMilliseconds; прочие ошибки — сразу наверх.
+                DateTime deadline = DateTime.UtcNow.AddMilliseconds(
+                    RenameRetryMilliseconds
+                );
+                while (!MoveFileEx(
                         temporary,
                         path,
                         MoveFileReplaceExisting | MoveFileWriteThrough))
                 {
-                    throw new IOException(
-                        new Win32Exception(
-                            Marshal.GetLastWin32Error()
-                        ).Message
-                    );
+                    int error = Marshal.GetLastWin32Error();
+                    bool transient = error == ErrorAccessDenied ||
+                        error == ErrorSharingViolation ||
+                        error == ErrorLockViolation;
+                    if (!transient || DateTime.UtcNow >= deadline)
+                    {
+                        throw new IOException(
+                            new Win32Exception(error).Message
+                        );
+                    }
+                    Thread.Sleep(25);
                 }
             }
             finally
