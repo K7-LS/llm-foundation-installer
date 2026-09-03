@@ -115,3 +115,47 @@ def test_test_host_lists_every_command(employee_installer_bundle: Path) -> None:
     assert (watchdog["min_args"], watchdog["max_args"]) == (2, 3)
     assert (commands["--workflow-json"]["min_args"],
             commands["--workflow-json"]["max_args"]) == (4, 4)
+
+
+def test_release_build_lists_only_product_and_tool_commands(
+    release_bundle: Path,
+) -> None:
+    table = _table(release_bundle)
+    assert table["test_hooks"] is False
+    assert {
+        row["name"]: row["kind"] for row in table["commands"]
+    } == RELEASE_COMMANDS
+
+
+def test_release_build_rejects_test_only_command_that_test_host_serves(
+    release_bundle: Path,
+    employee_installer_bundle: Path,
+) -> None:
+    # Чистая точка без аргументов и побочных эффектов: тестовый хост
+    # отвечает JSON, релиз — «Неподдерживаемая команда» с кодом 2.
+    served = _run(employee_installer_bundle, "--connection-status-texts-json")
+    assert served.returncode == 0, served.stdout + served.stderr
+    json.loads(served.stdout)
+    rejected = _run(release_bundle, "--connection-status-texts-json")
+    assert rejected.returncode == 2, rejected.stdout + rejected.stderr
+    assert "Неподдерживаемая команда" in rejected.stderr
+    assert rejected.stdout.strip() == ""
+
+
+def test_release_build_still_serves_tool_commands(release_bundle: Path) -> None:
+    result = _run(release_bundle, "--self-test-json")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["app_id"] == "llm-foundation-installer"
+
+
+def test_test_host_source_is_fenced_and_release_path_has_no_flag() -> None:
+    source = (REPOSITORY / "src" / "gui" / "InstallerTestHost.cs").read_text(
+        encoding="utf-8"
+    )
+    lines = [line.strip() for line in source.splitlines() if line.strip()]
+    assert lines[0] == "#if K7_TEST_HOOKS"
+    assert lines[-1] == "#endif"
+    edition_build = (REPOSITORY / "tools" / "build-edition.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "TestHooks" not in edition_build

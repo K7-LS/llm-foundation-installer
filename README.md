@@ -80,6 +80,16 @@ Center сам запускает и останавливает sing-box; отд�
 Публично подписанный вариант сейчас отложен владельцем. Это не блокирует
 внутренний неподписанный релиз после фактического пилота.
 
+Тестовый хост. Релизный EXE отвечает только на команды продукта и
+инструментов — их печатает `LLMFoundationInstaller.exe --commands-json`
+(`--catalog-json`, `--workflow-json`, `--resolve-launch-target-json`,
+`--self-test-json`, `--product-json`, `--launch-center-product-json`,
+`--ensure-runtime-json`, `--launch-center-ui`, `--system-proxy-watchdog`).
+42 test-only точки живут в `src/gui/InstallerTestHost.cs` и компилируются
+только с флагом `tools/build-gui.ps1 -TestHooks` (define `K7_TEST_HOOKS`) —
+так собирают бандлы тесты. `build-edition.ps1` флага не имеет: релизный
+комплект тестовый хост не содержит. Гейт — `tests/test_cli_surface.py`.
+
 ## Сборка и тесты
 
 Нужны Python 3.12, PowerShell 7, Windows PowerShell 5.1 и Roslyn из Visual

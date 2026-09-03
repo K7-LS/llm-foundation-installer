@@ -22,9 +22,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon Condition="'$(K7ApplicationIcon)' != ''">$(K7ApplicationIcon)</ApplicationIcon>
     <DefineConstants Condition="'$(K7ExtraDefines)' != ''">$(DefineConstants);$(K7ExtraDefines)</DefineConstants>
-    <!-- Тестовый хост: test-only CLI-точки (InstallerTestHost.cs). Пока
-         включён по умолчанию; релизный путь отключит его следующим шагом. -->
-    <DefineConstants Condition="'$(K7TestHooks)' != 'false'">$(DefineConstants);K7_TEST_HOOKS</DefineConstants>
+    <!-- Тестовый хост: test-only CLI-точки (InstallerTestHost.cs) компилируются
+         только через tools/build-gui.ps1 -TestHooks; релизный EXE их не содержит. -->
+    <DefineConstants Condition="'$(K7TestHooks)' == 'true'">$(DefineConstants);K7_TEST_HOOKS</DefineConstants>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>

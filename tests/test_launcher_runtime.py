@@ -67,6 +67,7 @@ def _build(
             "-NonInteractive",
             "-File",
             str(BUILD_SCRIPT),
+            "-TestHooks",
             "-OutputRoot",
             str(output),
             "-Edition",

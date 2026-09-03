@@ -39,6 +39,7 @@ def _run_build(
         "-NonInteractive",
         "-File",
         str(BUILD_SCRIPT),
+        "-TestHooks",
         "-OutputRoot",
         str(output),
     ]

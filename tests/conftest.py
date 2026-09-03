@@ -30,24 +30,35 @@ POWERSHELL = (
 )
 
 
-def _build_shared_bundle(output: Path, edition: str, product_role: str) -> Path:
+def _build_shared_bundle(
+    output: Path,
+    edition: str,
+    product_role: str,
+    *,
+    test_hooks: bool = True,
+) -> Path:
+    # Тесты собирают тестовый хост (-TestHooks): в нём есть test-only
+    # CLI-точки. Релизная поверхность — test_hooks=False.
+    command = [
+        POWERSHELL,
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(BUILD_SCRIPT),
+        "-OutputRoot",
+        str(output),
+        "-Edition",
+        edition,
+        "-ProductRole",
+        product_role,
+    ]
+    if test_hooks:
+        command.append("-TestHooks")
     result = subprocess.run(
-        [
-            POWERSHELL,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(BUILD_SCRIPT),
-            "-OutputRoot",
-            str(output),
-            "-Edition",
-            edition,
-            "-ProductRole",
-            product_role,
-        ],
+        command,
         cwd=REPOSITORY_ROOT,
         capture_output=True,
         text=True,
@@ -99,3 +110,14 @@ def owner_launch_center_bundle(shared_bundle) -> Path:
 @pytest.fixture(scope="session")
 def employee_launch_center_bundle(shared_bundle) -> Path:
     return shared_bundle("Employee", "LaunchCenter")
+
+
+@pytest.fixture(scope="session")
+def release_bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Employee/Installer без тестового хоста — поверхность релизного EXE."""
+    if POWERSHELL is None:
+        pytest.skip("PowerShell is required to build the Windows GUI")
+    root = tmp_path_factory.mktemp("release-employee-installer")
+    return _build_shared_bundle(
+        root / "bundle", "Employee", "Installer", test_hooks=False
+    )
