@@ -54,6 +54,8 @@ namespace LlmFoundationInstaller
             @"Software\K7AITests\";
         private const int InternetOptionRefresh = 37;
         private const int InternetOptionSettingsChanged = 39;
+        private static readonly TimeSpan ReleaseConfirmation =
+            TimeSpan.FromSeconds(1);
         private static readonly object Sync = new object();
         private static ActiveSystemProxyLease active;
 
@@ -312,27 +314,46 @@ namespace LlmFoundationInstaller
             {
                 return Failed("SYSTEM_PROXY_STATE_INVALID");
             }
-            while (File.Exists(statePath))
+            // Владелец переписывает файл состояния через временное имя
+            // (PREPARED -> APPLIED), и имя может отсутствовать доли секунды.
+            // Освобождение аренды - только устойчивое отсутствие файла при
+            // живом владельце; иначе watchdog ушёл бы до падения владельца.
+            DateTime? absentSince = null;
+            bool ownerAlive = true;
+            while (true)
             {
-                bool ownerAlive = IsProcessAlive(ownerPid);
+                ownerAlive = IsProcessAlive(ownerPid);
                 if (!ownerAlive)
+                {
+                    break;
+                }
+                if (File.Exists(statePath))
+                {
+                    absentSince = null;
+                }
+                else if (absentSince == null)
+                {
+                    absentSince = DateTime.UtcNow;
+                }
+                else if (DateTime.UtcNow - absentSince.Value >=
+                    ReleaseConfirmation)
                 {
                     break;
                 }
                 Thread.Sleep(100);
             }
+            if (ownerAlive)
+            {
+                return new ProxyRecoveryResult
+                {
+                    status = "RESTORED",
+                    cleanup_verified = true,
+                    lifecycle = new List<string>(),
+                    reason = null
+                };
+            }
             if (!File.Exists(statePath))
             {
-                if (IsProcessAlive(ownerPid))
-                {
-                    return new ProxyRecoveryResult
-                    {
-                        status = "RESTORED",
-                        cleanup_verified = true,
-                        lifecycle = new List<string>(),
-                        reason = null
-                    };
-                }
                 SingBoxSessionResult cleanWithoutState =
                     SingBoxSession.RecoverOwnedSessions(
                         home,

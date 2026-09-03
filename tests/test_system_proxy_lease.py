@@ -335,6 +335,49 @@ def _wait_for_file(path: Path, timeout: float = 15.0) -> None:
     raise AssertionError(f"expected file was not created: {path}")
 
 
+def _write_lease_state(
+    state_path: Path,
+    registry_key: str,
+    owner_pid: int,
+    original: dict[str, tuple[object, int] | None],
+) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    applied = {
+        "ProxyEnable": (1, winreg.REG_DWORD),
+        "ProxyServer": (APPLIED_PROXY, winreg.REG_SZ),
+        "ProxyOverride": ("", winreg.REG_SZ),
+        "AutoConfigURL": None,
+    }
+
+    def _values(
+        source: dict[str, tuple[object, int] | None],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "name": name,
+                "exists": entry is not None,
+                "value": None if entry is None else entry[0],
+                "kind": 0 if entry is None else entry[1],
+            }
+            for name, entry in source.items()
+        ]
+
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sid": _current_user_sid(),
+                "owner_pid": owner_pid,
+                "phase": "APPLIED",
+                "registry_subkey": registry_key,
+                "original": _values(original),
+                "applied": _values(applied),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _save_proxy_profile(bundle: Path, home: Path, tmp_path: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     profile = tmp_path / "connection.json"
@@ -491,6 +534,61 @@ def test_owner_crash_is_restored_by_internal_watchdog(
     assert not (
         home / ".llm-foundation" / "system-proxy-lease.json"
     ).exists()
+
+
+def test_watchdog_survives_transient_absence_of_state_file(
+    lease_bundle: Path,
+    tmp_path: Path,
+    registry_key: str,
+) -> None:
+    # Владелец переписывает файл состояния (PREPARED -> APPLIED) через
+    # временное имя, и наблюдатель может застать миг, когда имени нет.
+    # Watchdog не должен принимать такой разрыв за освобождение аренды:
+    # иначе он завершится, и падение владельца останется без восстановления.
+    before = _registry_snapshot(registry_key)
+    home = tmp_path / "home"
+    state_path = home / ".llm-foundation" / "system-proxy-lease.json"
+    _write_lease_state(state_path, registry_key, os.getpid(), before)
+    watchdog = subprocess.Popen(
+        [
+            str(lease_bundle / "LLMFoundationInstaller.exe"),
+            "--system-proxy-watchdog",
+            str(os.getpid()),
+            str(home),
+            registry_key,
+        ],
+        cwd=lease_bundle,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+    )
+    try:
+        aside = state_path.with_name(state_path.name + ".aside")
+        for _ in range(10):
+            state_path.rename(aside)
+            time.sleep(0.3)
+            aside.rename(state_path)
+            time.sleep(0.2)
+        if watchdog.poll() is not None:
+            stdout, stderr = watchdog.communicate(timeout=10)
+            raise AssertionError(
+                "watchdog exited during a transient absence of the state "
+                f"file: {stdout} {stderr}"
+            )
+
+        state_path.unlink()
+        stdout, stderr = watchdog.communicate(timeout=15)
+        assert stdout.strip(), stderr
+        value = json.loads(stdout)
+        assert watchdog.returncode == 0
+        assert value["status"] == "RESTORED"
+        assert value["cleanup_verified"] is True
+        assert _registry_snapshot(registry_key) == before
+    finally:
+        if watchdog.poll() is None:
+            watchdog.kill()
+            watchdog.communicate(timeout=10)
 
 
 def test_external_change_is_not_overwritten_and_blocks_next_acquire(
