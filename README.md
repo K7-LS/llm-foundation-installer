@@ -90,6 +90,29 @@ Center сам запускает и останавливает sing-box; отд�
 так собирают бандлы тесты. `build-edition.ps1` флага не имеет: релизный
 комплект тестовый хост не содержит. Гейт — `tests/test_cli_surface.py`.
 
+## Команды EXE
+
+Релизный EXE отвечает только на команды из этой таблицы; тот же список
+печатает `--commands-json`, а тест `tests/test_cli_surface.py` сверяет
+таблицу с фактической поверхностью EXE. Число аргументов — после имени
+команды.
+
+| Команда | Кто использует | Аргументов | Назначение |
+|---|---|---|---|
+| `--launch-center-ui` | `.cmd` центра запуска в комплекте, ярлык | 0 | открыть окно центра запуска |
+| `--launch-center-product-json` | `hub_canary.py` | 0 | описание целей запуска в роли центра запуска (JSON) |
+| `--product-json` | `hub_canary.py` | 0 | описание продукта и целей запуска (JSON) |
+| `--catalog-json` | `hub_canary.py`, `worksite-diagnostics.ps1` | 0 | каталог целей, состояние пакетов, право установки |
+| `--self-test-json` | `hub_canary.py`, CI релиза | 0 | самопроверка: движок, платформа, версия комплекта |
+| `--commands-json` | тесты, диагностика | 0 | таблица команд этого EXE (`test_hooks`, `commands`) |
+| `--ensure-runtime-json <home>` | `hub_canary.py` | 1 | установить или проверить runtime sing-box в профиле |
+| `--resolve-launch-target-json <home> <target>` | `worksite-diagnostics.ps1` | 2 | разрешить цель запуска: путь клиента и режим |
+| `--workflow-json <команда> <target> <home> <версия>` | `hub_canary.py`, `worksite-diagnostics.ps1` | 4 | команда движка foundation: plan, install, doctor и другие |
+| `--system-proxy-watchdog <pid> <state> [<subkey>]` | сам EXE (`SystemProxyLease`) | 2–3 | сторож системного прокси при аварии владельца маршрута |
+
+Служебные команды автотестов (42) собираются только в тестовом хосте
+(`build-gui.ps1 -TestHooks`, см. «Режимы сборки»).
+
 ## Сборка и тесты
 
 Нужны Python 3.12, PowerShell 7, Windows PowerShell 5.1 и Roslyn из Visual

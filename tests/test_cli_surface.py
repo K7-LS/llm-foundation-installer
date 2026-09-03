@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -146,6 +147,34 @@ def test_release_build_still_serves_tool_commands(release_bundle: Path) -> None:
     result = _run(release_bundle, "--self-test-json")
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["app_id"] == "llm-foundation-installer"
+
+
+def _readme_command_table() -> dict[str, tuple[int, int]]:
+    """Строки таблицы «## Команды EXE» в README: имя → (min_args, max_args)."""
+    text = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    assert "## Команды EXE" in text, "в README нет раздела «Команды EXE»"
+    section = text.split("## Команды EXE", 1)[1].split("\n## ", 1)[0]
+    rows: dict[str, tuple[int, int]] = {}
+    for line in section.splitlines():
+        match = re.match(
+            r"^\| `(--[a-z-]+)[^`]*` \| [^|]+ \| (\d+)(?:–(\d+))? \|", line
+        )
+        if match:
+            low = int(match.group(2))
+            rows[match.group(1)] = (low, int(match.group(3) or low))
+    return rows
+
+
+def test_readme_command_table_matches_release_surface(
+    release_bundle: Path,
+) -> None:
+    # Гейт полноты: таблица команд в README — ровно поверхность релизного
+    # EXE (имена и число аргументов), ни больше ни меньше.
+    exe = {
+        row["name"]: (row["min_args"], row["max_args"])
+        for row in _table(release_bundle)["commands"]
+    }
+    assert _readme_command_table() == exe
 
 
 def test_test_host_source_is_fenced_and_release_path_has_no_flag() -> None:
