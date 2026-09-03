@@ -18,6 +18,7 @@ param(
     [string]$ProductConfigPath,
     [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
+    [switch]$TestHooks,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampServer = 'http://timestamp.digicert.com'
 )
@@ -1541,6 +1542,11 @@ $DotnetArguments = @(
 )
 if ($Edition -ceq 'Owner' -and $IsPublicUnsigned) {
     $DotnetArguments += '-p:K7ExtraDefines=K7_OWNER_DISTRIBUTION_ALLOWED'
+}
+if ($TestHooks) {
+    # Тестовый хост: test-only CLI-точки (src/gui/InstallerTestHost.cs)
+    # компилируются только с этим флагом; релизные сборки его не передают.
+    $DotnetArguments += '-p:K7TestHooks=true'
 }
 $DotnetOutput = & dotnet @DotnetArguments 2>&1
 $BuiltExecutable = Join-Path $BuildOutput 'LLMFoundationInstaller.exe'

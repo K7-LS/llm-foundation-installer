@@ -94,6 +94,7 @@ def test_build_rejects_probe_url_outside_approved_hosts(tmp_path: Path):
             "-NonInteractive",
             "-File",
             str(BUILD_SCRIPT),
+            "-TestHooks",
             "-OutputRoot",
             str(tmp_path / "out"),
             "-Edition",

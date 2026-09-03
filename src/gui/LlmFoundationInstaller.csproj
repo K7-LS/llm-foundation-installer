@@ -22,6 +22,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon Condition="'$(K7ApplicationIcon)' != ''">$(K7ApplicationIcon)</ApplicationIcon>
     <DefineConstants Condition="'$(K7ExtraDefines)' != ''">$(DefineConstants);$(K7ExtraDefines)</DefineConstants>
+    <!-- Тестовый хост: test-only CLI-точки (InstallerTestHost.cs) компилируются
+         только через tools/build-gui.ps1 -TestHooks; релизный EXE их не содержит. -->
+    <DefineConstants Condition="'$(K7TestHooks)' == 'true'">$(DefineConstants);K7_TEST_HOOKS</DefineConstants>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -51,7 +54,9 @@
     <Compile Include="FoundationWorkflow.cs" />
     <Compile Include="InstallerActions.cs" />
     <Compile Include="InstallerApp.cs" />
+    <Compile Include="InstallerCommands.cs" />
     <Compile Include="InstallerModels.cs" />
+    <Compile Include="InstallerTestHost.cs" />
     <Compile Include="InstallerView.cs" />
     <Compile Include="LaunchCenterActions.cs" />
     <Compile Include="LaunchRoutePreferences.cs" />
