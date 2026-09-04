@@ -6,7 +6,9 @@ using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 
@@ -948,7 +950,6 @@ namespace LlmFoundationInstaller
             }
             VerifyPowerShellInstallerScript(scriptPath);
             string binRoot = ManagedBinRoot(home, source);
-            EnsureSafeDirectory(binRoot);
             string clientHome = Path.Combine(
                 Path.GetFullPath(home),
                 ".llm-foundation",
@@ -957,6 +958,7 @@ namespace LlmFoundationInstaller
                 "codex-home"
             );
             EnsureSafeDirectory(clientHome);
+            EnsureSafeOfficialBinRoot(binRoot, clientHome);
             string curl = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.System),
                 "curl.exe"
@@ -1016,7 +1018,7 @@ namespace LlmFoundationInstaller
             // невозможен. Теперь хвост потоков идёт в сообщение.
             BoundedProcessResult installerRun = BoundedProcess.Run(
                 start,
-                600000
+                OfficialInstallerTimeoutMilliseconds
             );
             if (!installerRun.started)
             {
@@ -1094,6 +1096,119 @@ namespace LlmFoundationInstaller
             return ". Вывод установщика: " + tail;
         }
 
+        // Пакет Codex CLI — ~130 МБ; на канале 200–300 КБ/с это 8–11 минут.
+        // Жёсткие 300 с обрывали загрузку на середине. Теперь предел задаёт
+        // сам официальный скрипт через -TimeoutSec, а без него действует
+        // контроль зависания (curl --speed-limit/--speed-time) и потолок ниже.
+        private const int OfficialDownloadMaxSeconds = 1800;
+        private const int OfficialInstallerTimeoutMilliseconds = 2400000;
+
+        // Официальный установщик Codex (standalone-раскладка) держит видимый
+        // bin junction'ом на <codex-home>\packages\standalone\current\bin и
+        // сам перенацеливает его при обновлении. Это его раскладка, а не
+        // подмена: такой junction пропускаем, если его реальная цель лежит
+        // внутри codex-home клиента. Любой другой reparse point по-прежнему
+        // отвергается — иначе запись ушла бы за пределы клиента.
+        private static void EnsureSafeOfficialBinRoot(
+            string binRoot,
+            string clientHome
+        )
+        {
+            string full = Path.GetFullPath(binRoot);
+            EnsureSafeDirectory(Path.GetDirectoryName(full));
+            string fullIo = ToExtendedLengthPath(full);
+            if (!Directory.Exists(fullIo) ||
+                (File.GetAttributes(fullIo) & FileAttributes.ReparsePoint) == 0)
+            {
+                EnsureSafeDirectory(full);
+                return;
+            }
+            string resolved = ResolveFinalDirectoryPath(full);
+            string owner = Path.GetFullPath(clientHome)
+                .TrimEnd(Path.DirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            if (String.IsNullOrWhiteSpace(resolved) ||
+                !resolved.StartsWith(owner, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Client bin junction is a reparse point outside the client home"
+                );
+            }
+            AssertNoReparseAncestors(resolved);
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string lpFileName,
+            uint dwDesiredAccess,
+            uint dwShareMode,
+            IntPtr lpSecurityAttributes,
+            uint dwCreationDisposition,
+            uint dwFlagsAndAttributes,
+            IntPtr hTemplateFile
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle hFile,
+            StringBuilder lpszFilePath,
+            uint cchFilePath,
+            uint dwFlags
+        );
+
+        // Реальный путь каталога сквозь junction'ы и symlink'и (без префикса \\?\).
+        private static string ResolveFinalDirectoryPath(string path)
+        {
+            const uint shareAll = 0x7;
+            const uint openExisting = 3;
+            const uint backupSemantics = 0x02000000;
+            using (SafeFileHandle handle = CreateFileW(
+                ToExtendedLengthPath(path),
+                0,
+                shareAll,
+                IntPtr.Zero,
+                openExisting,
+                backupSemantics,
+                IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    return null;
+                }
+                StringBuilder buffer = new StringBuilder(1024);
+                uint length = GetFinalPathNameByHandleW(
+                    handle,
+                    buffer,
+                    (uint)buffer.Capacity,
+                    0
+                );
+                if (length > buffer.Capacity)
+                {
+                    buffer.EnsureCapacity((int)length + 1);
+                    length = GetFinalPathNameByHandleW(
+                        handle,
+                        buffer,
+                        (uint)buffer.Capacity,
+                        0
+                    );
+                }
+                if (length == 0)
+                {
+                    return null;
+                }
+                string final = buffer.ToString();
+                if (final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal))
+                {
+                    return @"\\" + final.Substring(8);
+                }
+                if (final.StartsWith(@"\\?\", StringComparison.Ordinal))
+                {
+                    return final.Substring(4);
+                }
+                return final;
+            }
+        }
+
         private static string BuildOfficialScriptWrapper()
         {
             return
@@ -1101,7 +1216,10 @@ namespace LlmFoundationInstaller
                 "function Invoke-WebRequest {" +
                 "[CmdletBinding()]param(" +
                 "[Parameter(Mandatory=$true)][string]$Uri," +
-                "[string]$OutFile,[switch]$UseBasicParsing);" +
+                "[string]$OutFile,[switch]$UseBasicParsing," +
+                "[int]$TimeoutSec);" +
+                "$maxTime=if($TimeoutSec -gt 0){$TimeoutSec}" +
+                "else{" + OfficialDownloadMaxSeconds + "};" +
                 "$owned=[string]::IsNullOrWhiteSpace($OutFile);" +
                 "$target=if($owned){" +
                 "[IO.Path]::Combine([IO.Path]::GetTempPath()," +
@@ -1109,7 +1227,8 @@ namespace LlmFoundationInstaller
                 "}else{$OutFile+'.curl-'+[guid]::NewGuid().ToString('N')};" +
                 "try{" +
                 "& $env:LLM_CURL_PATH --fail --location --silent " +
-                "--show-error --max-time 300 " +
+                "--show-error --max-time $maxTime " +
+                "--speed-limit 1024 --speed-time 60 " +
                 "--proto $env:LLM_CURL_PROTOCOLS " +
                 "--proto-redir $env:LLM_CURL_PROTOCOLS " +
                 "--output $target -- $Uri;" +
@@ -1129,8 +1248,10 @@ namespace LlmFoundationInstaller
                 "};" +
                 "function Invoke-RestMethod {" +
                 "[CmdletBinding()]param(" +
-                "[Parameter(Mandatory=$true)][string]$Uri);" +
-                "$response=Invoke-WebRequest -UseBasicParsing -Uri $Uri;" +
+                "[Parameter(Mandatory=$true)][string]$Uri," +
+                "[int]$TimeoutSec);" +
+                "$response=Invoke-WebRequest -UseBasicParsing -Uri $Uri " +
+                "-TimeoutSec $TimeoutSec;" +
                 "return $response.Content|ConvertFrom-Json -ErrorAction Stop" +
                 "};" +
                 "& $env:LLM_CLIENT_SCRIPT -Release $env:CODEX_RELEASE;";
