@@ -344,7 +344,36 @@ def _local_client_source_lock(
     target: str = "fixture",
     role: str = "cli",
     required_for_employee: bool = False,
+    bundled_assets: list[dict] | None = None,
 ) -> Path:
+    client = {
+        "id": client_id,
+        "target": target,
+        "display_name": "Fixture Client",
+        "role": role,
+        "required_for_base": True,
+        "required_for_employee": required_for_employee,
+        "version": version,
+        "source_kind": "download",
+        "url": url,
+        "sha256": sha256,
+        "artifact_kind": artifact_kind,
+        "archive_entry": archive_entry,
+        "publisher": publisher,
+        "signature_required": signature_required,
+        "install_mode": install_mode,
+        "detect_commands": (
+            detect_commands
+            if detect_commands is not None
+            else [f"{client_id}.exe"]
+        ),
+        "version_arguments": ["--version"],
+        "store_identity": None,
+        "store_publisher": None,
+        "store_signature_kind": None,
+    }
+    if bundled_assets is not None:
+        client["bundled_assets"] = bundled_assets
     _write_json(
         path,
         {
@@ -356,34 +385,7 @@ def _local_client_source_lock(
                 "architecture": "x64",
                 "minimum_build": 19041,
             },
-            "clients": [
-                {
-                    "id": client_id,
-                    "target": target,
-                    "display_name": "Fixture Client",
-                    "role": role,
-                    "required_for_base": True,
-                    "required_for_employee": required_for_employee,
-                    "version": version,
-                    "source_kind": "download",
-                    "url": url,
-                    "sha256": sha256,
-                    "artifact_kind": artifact_kind,
-                    "archive_entry": archive_entry,
-                    "publisher": publisher,
-                    "signature_required": signature_required,
-                    "install_mode": install_mode,
-                    "detect_commands": (
-                        detect_commands
-                        if detect_commands is not None
-                        else [f"{client_id}.exe"]
-                    ),
-                    "version_arguments": ["--version"],
-                    "store_identity": None,
-                    "store_publisher": None,
-                    "store_signature_kind": None,
-                }
-            ],
+            "clients": [client],
         },
     )
     return path
@@ -1264,6 +1266,25 @@ def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
     )
     assert cli["artifact_kind"] == "powershell-installer-script"
     assert cli["install_mode"] == "official-script"
+    # Файлы установщика в комплекте (решение владельца 2026-09-04, A + B):
+    # пакет ~130 МБ на канале 200–300 КБ/с не проходил сетью; SHA — из
+    # codex-package_SHA256SUMS релиза.
+    assert [asset["file"] for asset in cli["bundled_assets"]] == [
+        "codex-release-0.153.0.json",
+        "codex-package_SHA256SUMS",
+        "codex-package-x86_64-pc-windows-msvc.tar.gz",
+    ]
+    package = cli["bundled_assets"][2]
+    assert package["url"] == (
+        "https://releases.openai.com/codex/releases/0.153.0/"
+        "codex-package-x86_64-pc-windows-msvc.tar.gz"
+    )
+    assert package["sha256"] == (
+        "dba6a113d7ab279b30772fcdc5d7f352c3a28556a49a1ea311b4ac8603dec807"
+    )
+    assert package["bytes"] == 135999589
+    for asset in cli["bundled_assets"]:
+        assert asset["url"].startswith("https://releases.openai.com/codex/")
 
 
 def test_store_record_validation_accepts_only_locked_codex_identity(
@@ -2721,6 +2742,156 @@ def test_official_script_rejects_bin_junction_outside_client_home(
         assert installed.returncode != 0
         assert "reparse point" in (installed.stdout + installed.stderr).lower()
         assert not (outside / "fixture-client.cmd").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+_BUNDLED_ASSET_SCRIPT = b"""[CmdletBinding()]
+param([string]$Release)
+$ErrorActionPreference = 'Stop'
+$metadata = Invoke-WebRequest -UseBasicParsing -Uri (
+    $env:LLM_FIXTURE_BASE + '/release.json'
+) -TimeoutSec 30
+# $Release is the script parameter: PowerShell variable names are
+# case-insensitive, so the parsed object needs a distinct name.
+$releaseInfo = [string]$metadata.Content | ConvertFrom-Json
+if ($releaseInfo.version -cne $Release) {
+    throw ('release metadata differs: ' + [string]$metadata.Content)
+}
+$archive = Join-Path $env:TEMP ('fixture-' + [guid]::NewGuid().ToString('N'))
+Invoke-WebRequest -UseBasicParsing -Uri (
+    $env:LLM_FIXTURE_BASE + '/fixture-package.bin'
+) -OutFile $archive -TimeoutSec 300
+$payload = (Get-Content -LiteralPath $archive -Raw).Trim()
+Remove-Item -LiteralPath $archive -Force
+New-Item -ItemType Directory -Force -Path $env:CODEX_INSTALL_DIR | Out-Null
+$command = Join-Path $env:CODEX_INSTALL_DIR 'fixture-client.cmd'
+('@echo off`r`necho fixture-client ' + $payload) |
+    Set-Content -LiteralPath $command -Encoding Ascii
+"""
+
+
+def _bundled_asset_fixture(tmp_path: Path, package_on_disk: bytes):
+    # Сервер отдаёт только install.ps1; метаданные и пакет должны прийти из
+    # файлов комплекта. Любой запрос к ним — провал (сеть не нужна).
+    class Handler(http.server.BaseHTTPRequestHandler):
+        paths: list[str] = []
+
+        def do_GET(self):
+            type(self).paths.append(self.path)
+            if self.path != "/install.ps1":
+                self.send_response(500)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header(
+                "Content-Length", str(len(_BUNDLED_ASSET_SCRIPT))
+            )
+            self.end_headers()
+            self.wfile.write(_BUNDLED_ASSET_SCRIPT)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    release = b'{"version":"1.0.0"}'
+    package = b"1.0.0\n"
+    source_lock = _local_client_source_lock(
+        tmp_path / "client-sources.test.json",
+        url=base_url + "/install.ps1",
+        sha256=hashlib.sha256(_BUNDLED_ASSET_SCRIPT).hexdigest(),
+        artifact_kind="powershell-installer-script",
+        install_mode="official-script",
+        detect_commands=["fixture-client.cmd"],
+        bundled_assets=[
+            {
+                "file": "fixture-release.json",
+                "url": base_url + "/release.json",
+                "sha256": hashlib.sha256(release).hexdigest(),
+                "bytes": len(release),
+            },
+            {
+                "file": "fixture-package.bin",
+                "url": base_url + "/fixture-package.bin",
+                "sha256": hashlib.sha256(package).hexdigest(),
+                "bytes": len(package),
+            },
+        ],
+    )
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        client_sources_lock=source_lock,
+        allow_local_test_sources=True,
+    )
+    (bundle / "fixture-release.json").write_bytes(release)
+    (bundle / "fixture-package.bin").write_bytes(package_on_disk)
+    return server, thread, Handler, base_url, bundle
+
+
+def _run_bundled_install(bundle: Path, home: Path, base_url: str, tmp_path: Path):
+    environment = os.environ.copy()
+    environment["LLM_FIXTURE_BASE"] = base_url
+    return subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--install-client-json",
+            str(home),
+            "fixture-client",
+            str(tmp_path / "client-staging"),
+        ],
+        cwd=bundle,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=60,
+    )
+
+
+def test_official_script_uses_bundled_assets_without_network(tmp_path: Path):
+    server, thread, handler, base_url, bundle = _bundled_asset_fixture(
+        tmp_path, b"1.0.0\n"
+    )
+    try:
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = _run_bundled_install(bundle, home, base_url, tmp_path)
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert json.loads(installed.stdout)["status"] == "INSTALLED"
+        assert handler.paths == ["/install.ps1"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_official_script_rejects_tampered_bundled_asset(tmp_path: Path):
+    # Файл комплекта есть, но SHA-256 не совпал с lock: отказ до запуска
+    # скрипта, без тихого ухода в сеть — как у архива sing-box.
+    server, thread, handler, base_url, bundle = _bundled_asset_fixture(
+        tmp_path, b"9.9.9\n"
+    )
+    try:
+        home = tmp_path / "employee-home"
+        home.mkdir()
+        installed = _run_bundled_install(bundle, home, base_url, tmp_path)
+        assert installed.returncode != 0
+        assert "integrity" in (installed.stdout + installed.stderr).lower()
+        assert handler.paths == ["/install.ps1"]
+        assert not (
+            home
+            / ".llm-foundation"
+            / "clients"
+            / "fixture-client"
+            / "bin"
+            / "fixture-client.cmd"
+        ).exists()
     finally:
         server.shutdown()
         server.server_close()

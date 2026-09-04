@@ -530,6 +530,7 @@ def _build_edition(
     *,
     runtime_lock: Path | None = None,
     runtime_archive: Path | None = None,
+    client_asset_root: Path | None = None,
 ) -> Path:
     command = [
             str(POWERSHELL),
@@ -555,6 +556,8 @@ def _build_edition(
         )
     if runtime_archive is not None:
         command.extend(["-RuntimeArchive", str(runtime_archive)])
+    if client_asset_root is not None:
+        command.extend(["-ClientAssetRoot", str(client_asset_root)])
     result = subprocess.run(
         command,
         cwd=REPOSITORY,
@@ -697,6 +700,82 @@ def test_edition_bundle_carries_hash_bound_runtime_sidecar(
         "sha256": archive_hash,
         "bytes": archive.stat().st_size,
     }
+
+
+def _codex_asset_root(tmp_path: Path) -> Path:
+    # Маленькие реальные файлы релиза rust-v0.153.0 из tests/fixtures;
+    # пакет 129 МБ в репозиторий не кладётся — в Preview он необязателен.
+    root = tmp_path / "client-assets"
+    target = root / "codex-cli" / "0.153.0"
+    target.mkdir(parents=True)
+    fixtures = REPOSITORY / "tests" / "fixtures" / "codex-cli" / "0.153.0"
+    for name in ("codex-release-0.153.0.json", "codex-package_SHA256SUMS"):
+        shutil.copyfile(fixtures / name, target / name)
+    return root
+
+
+def test_edition_bundle_carries_hash_bound_client_assets(
+    tmp_path: Path,
+) -> None:
+    lock = json.loads(
+        (REPOSITORY / "client-sources.lock.json").read_text(encoding="utf-8")
+    )
+    codex = next(entry for entry in lock["clients"] if entry["id"] == "codex-cli")
+    expected = [
+        asset
+        for asset in codex["bundled_assets"]
+        if asset["file"] != "codex-package-x86_64-pc-windows-msvc.tar.gz"
+    ]
+
+    bundle = _build_edition(
+        tmp_path / "bundle",
+        "Employee",
+        client_asset_root=_codex_asset_root(tmp_path),
+    )
+    manifest = json.loads(
+        (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["client_assets"] == {"codex-cli": expected}
+    for asset in expected:
+        copied = bundle / asset["file"]
+        assert copied.stat().st_size == asset["bytes"]
+        assert hashlib.sha256(copied.read_bytes()).hexdigest() == asset["sha256"]
+
+
+def test_edition_bundle_rejects_bundled_asset_that_differs_from_lock(
+    tmp_path: Path,
+) -> None:
+    root = _codex_asset_root(tmp_path)
+    (root / "codex-cli" / "0.153.0" / "codex-package_SHA256SUMS").write_bytes(
+        b"tampered\n"
+    )
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY / "tools" / "build-edition.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "bundle"),
+            "-Edition",
+            "Employee",
+            "-DistributionMode",
+            "Preview",
+            "-ClientAssetRoot",
+            str(root),
+        ],
+        cwd=REPOSITORY,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "differs from ClientSourcesLock" in result.stdout + result.stderr
+    assert not (tmp_path / "bundle").exists()
 
 
 def test_powershell_scripts_with_cyrillic_carry_utf8_bom() -> None:

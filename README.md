@@ -14,8 +14,11 @@
 может закрыть live-гейт без повторного автоматического блокирования; оно не
 подменяет подпись Authenticode, если выбирается публичный канал.
 
-Каждая версия — единый комплект с двумя EXE, `bundle-manifest.json` и
-закреплённой средой SingBox. Программы работают от текущего пользователя,
+Каждая версия — единый комплект с двумя EXE, `bundle-manifest.json`,
+закреплённой средой SingBox и файлами официального установщика Codex
+(`codex-package-*.tar.gz`, `codex-package_SHA256SUMS`,
+`codex-release-*.json`): установка Codex CLI идёт из комплекта, без
+скачивания ~130 МБ на рабочем месте. Программы работают от текущего пользователя,
 не требуют прав администратора и не собирают учётные данные LLM.
 
 ## Что делает установщик
@@ -151,7 +154,25 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
   -FoundationPackageRoot <принятый-пакет-foundation> `
   -ClientSourcesLock .\client-sources.lock.json `
   -RuntimeSourcesLock .\runtime-sources.lock.json `
-  -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip
+  -RuntimeArchive .\.work\runtime-cache\sing-box-1.13.14-windows-amd64.zip `
+  -ClientAssetRoot .\.work\client-assets
+```
+
+`-ClientAssetRoot` — кеш файлов официальных установщиков из
+`bundled_assets` в `client-sources.lock.json`, раскладка
+`<ClientAssetRoot>\<client id>\<version>\<file>`; сборка сверяет SHA-256 и
+размер с lock и копирует файлы рядом с EXE. Вне Preview файлы обязательны;
+в Preview без кеша комплект качает их сетью на рабочем месте. Заполнить кеш:
+
+```powershell
+$root = '.\.work\client-assets\codex-cli\0.153.0'
+New-Item -ItemType Directory -Force $root | Out-Null
+curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
+  -o "$root\codex-release-0.153.0.json" https://releases.openai.com/codex/releases/0.153.0/release.json
+curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
+  -o "$root\codex-package_SHA256SUMS" https://releases.openai.com/codex/releases/0.153.0/codex-package_SHA256SUMS
+curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
+  -o "$root\codex-package-x86_64-pc-windows-msvc.tar.gz" https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.gz
 ```
 
 Версия для сотрудников содержит официальный закреплённый Claude Code, но не
