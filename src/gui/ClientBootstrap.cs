@@ -47,6 +47,17 @@ namespace LlmFoundationInstaller
         public string store_application_id { get; set; }
         public string store_executable { get; set; }
         public string store_entry_point { get; set; }
+        // Файлы, которые официальный установщик иначе качал бы из сети:
+        // комплект несёт их рядом с EXE, обёртка отдаёт по URL без сети.
+        public List<BundledAsset> bundled_assets { get; set; }
+    }
+
+    internal sealed class BundledAsset
+    {
+        public string file { get; set; }
+        public string url { get; set; }
+        public string sha256 { get; set; }
+        public long bytes { get; set; }
     }
 
     internal sealed class ClientSourceLock
@@ -164,6 +175,9 @@ namespace LlmFoundationInstaller
                     "downloads.claude.ai",
                     "github.com",
                     "openai.com",
+                    // Первичный источник релизов Codex в официальном install.ps1
+                    // (release.json, SHA256SUMS, пакет) — файлы комплекта.
+                    "releases.openai.com",
                     "apps.microsoft.com"
                 },
                 StringComparer.OrdinalIgnoreCase
@@ -793,6 +807,7 @@ namespace LlmFoundationInstaller
                     StringComparison.Ordinal))
             {
                 return InstallOfficialPowerShellScript(
+                    bundleRoot,
                     home,
                     source,
                     stagedPath
@@ -931,6 +946,7 @@ namespace LlmFoundationInstaller
         }
 
         private static ClientInstallResult InstallOfficialPowerShellScript(
+            string bundleRoot,
             string home,
             ClientSource source,
             string scriptPath
@@ -987,6 +1003,12 @@ namespace LlmFoundationInstaller
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            Dictionary<string, string> bundledAssets = ResolveBundledAssets(
+                bundleRoot,
+                source
+            );
+            start.EnvironmentVariables["LLM_BUNDLED_ASSET_MAP"] =
+                EncodeBundledAssetMap(bundledAssets);
             start.EnvironmentVariables["CODEX_NON_INTERACTIVE"] = "1";
             start.EnvironmentVariables["CODEX_RELEASE"] = source.version;
             start.EnvironmentVariables["LLM_CLIENT_SCRIPT"] =
@@ -1223,6 +1245,19 @@ namespace LlmFoundationInstaller
                 "$maxTime=if($TimeoutSec -gt 0){$TimeoutSec}" +
                 "else{" + OfficialDownloadMaxSeconds + "};" +
                 "$owned=[string]::IsNullOrWhiteSpace($OutFile);" +
+                "$bundled=$null;" +
+                "foreach($line in ($env:LLM_BUNDLED_ASSET_MAP -split " +
+                "[string][char]10)){" +
+                "$pair=$line -split [string][char]9,2;" +
+                "if($pair.Count -eq 2 -and $pair[0] -ceq $Uri){$bundled=$pair[1]}};" +
+                "if($bundled){" +
+                "if(-not $owned){" +
+                "if(Test-Path -LiteralPath $OutFile){" +
+                "throw 'Network destination already exists'};" +
+                "Copy-Item -LiteralPath $bundled -Destination $OutFile;" +
+                "return};" +
+                "return [pscustomobject]@{Content=[IO.File]::ReadAllText(" +
+                "$bundled,[Text.Encoding]::UTF8)}};" +
                 "$target=if($owned){" +
                 "[IO.Path]::Combine([IO.Path]::GetTempPath()," +
                 "'llm-curl-'+[guid]::NewGuid().ToString('N')+'.part')" +
@@ -2016,6 +2051,122 @@ namespace LlmFoundationInstaller
             return true;
         }
 
+        // bundled_assets допустимы только у official-script: имя файла —
+        // плоское (лежит рядом с EXE), URL — тот, который запросит скрипт,
+        // SHA-256 и размер — для fail-closed сверки перед запуском.
+        private static void ValidateBundledAssets(
+            ClientSource source,
+            ClientSourceLock value
+        )
+        {
+            if (source.bundled_assets == null)
+            {
+                return;
+            }
+            if (!String.Equals(
+                    source.install_mode,
+                    "official-script",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Bundled assets are only supported for official scripts"
+                );
+            }
+            HashSet<string> names = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            HashSet<string> urls = new HashSet<string>(
+                StringComparer.Ordinal
+            );
+            foreach (BundledAsset asset in source.bundled_assets)
+            {
+                Uri assetUri;
+                if (asset == null ||
+                    String.IsNullOrWhiteSpace(asset.file) ||
+                    asset.file != Path.GetFileName(asset.file) ||
+                    asset.file.StartsWith(".", StringComparison.Ordinal) ||
+                    !names.Add(asset.file) ||
+                    String.IsNullOrWhiteSpace(asset.url) ||
+                    !urls.Add(asset.url) ||
+                    !Uri.TryCreate(asset.url, UriKind.Absolute, out assetUri) ||
+                    assetUri.UserInfo.Length != 0 ||
+                    String.IsNullOrWhiteSpace(asset.sha256) ||
+                    !Regex.IsMatch(
+                        asset.sha256,
+                        "^[0-9a-f]{64}$",
+                        RegexOptions.CultureInvariant) ||
+                    asset.bytes <= 0)
+                {
+                    throw new InvalidOperationException(
+                        "Bundled asset record is invalid"
+                    );
+                }
+                if (value.official_only &&
+                    (assetUri.Scheme != Uri.UriSchemeHttps ||
+                        !OfficialHosts.Contains(assetUri.Host)))
+                {
+                    throw new InvalidOperationException(
+                        "Bundled asset URL is not approved"
+                    );
+                }
+            }
+        }
+
+        // Файлы комплекта для официального скрипта: отсутствующий файл —
+        // штатный путь через сеть; присутствующий, но не совпавший по SHA-256
+        // или размеру — отказ до запуска скрипта (подмена рядом с EXE).
+        private static Dictionary<string, string> ResolveBundledAssets(
+            string bundleRoot,
+            ClientSource source
+        )
+        {
+            Dictionary<string, string> resolved =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+            if (source.bundled_assets == null)
+            {
+                return resolved;
+            }
+            string root = Path.GetFullPath(bundleRoot);
+            foreach (BundledAsset asset in source.bundled_assets)
+            {
+                string path = Path.Combine(root, asset.file);
+                string pathIo = ToExtendedLengthPath(path);
+                if (!File.Exists(pathIo))
+                {
+                    continue;
+                }
+                FileAttributes attributes = File.GetAttributes(pathIo);
+                if ((attributes & FileAttributes.ReparsePoint) != 0 ||
+                    new FileInfo(pathIo).Length != asset.bytes ||
+                    !String.Equals(
+                        BundleIntegrity.Sha256(pathIo),
+                        asset.sha256,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Bundled client asset integrity failed: " + asset.file
+                    );
+                }
+                resolved[asset.url] = path;
+            }
+            return resolved;
+        }
+
+        private static string EncodeBundledAssetMap(
+            Dictionary<string, string> assets
+        )
+        {
+            StringBuilder builder = new StringBuilder();
+            foreach (KeyValuePair<string, string> pair in assets)
+            {
+                builder.Append(pair.Key);
+                builder.Append('\t');
+                builder.Append(pair.Value);
+                builder.Append('\n');
+            }
+            return builder.ToString();
+        }
+
         private static void Validate(ClientSourceLock value)
         {
             if (value == null || value.schema_version != 1 ||
@@ -2076,6 +2227,7 @@ namespace LlmFoundationInstaller
                         "Client source URL is not approved"
                     );
                 }
+                ValidateBundledAssets(source, value);
                 if (value.official_only)
                 {
                     if (value.test_only ||

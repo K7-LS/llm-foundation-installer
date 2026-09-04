@@ -1,0 +1,805 @@
+{
+  "assets": [
+    {
+      "name": "argument-comment-lint",
+      "digest": "sha256:cc12cd592b66fc87eee7f965f6601b07c092882eeb21912499e6bc163a9d0d73",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/argument-comment-lint"
+    },
+    {
+      "name": "argument-comment-lint-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:47791533ca7a5c386974f36293efc6c8692422ca3f02967ae0db49d039a4685a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/argument-comment-lint-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "argument-comment-lint-aarch64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:41ceff67b94f406c52a7ba4fbf4db7a9b1977f3232aaa5db7731d3327e32d1aa",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/argument-comment-lint-aarch64-unknown-linux-gnu.tar.gz"
+    },
+    {
+      "name": "argument-comment-lint-x86_64-pc-windows-msvc.zip",
+      "digest": "sha256:d80362330194e9ca24b24d5669c84782d72e0e197b4c4771c3f9f89744b0aa7d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/argument-comment-lint-x86_64-pc-windows-msvc.zip"
+    },
+    {
+      "name": "argument-comment-lint-x86_64-unknown-linux-gnu.tar.gz",
+      "digest": "sha256:c3da32585d2f5625dd6ccddc5101837cfb4205b20e5d60ef98354003765dcfaf",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/argument-comment-lint-x86_64-unknown-linux-gnu.tar.gz"
+    },
+    {
+      "name": "bwrap",
+      "digest": "sha256:03afec721593e96399992dc6f37ccc8950b0dd599b0d12d022986948d83d0a27",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap"
+    },
+    {
+      "name": "bwrap-aarch64-unknown-linux-musl.sigstore",
+      "digest": "sha256:0f4fa430caf27671c520d40292ddef0cc05c9e99523cb0247f9fbc38815538d6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-aarch64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "bwrap-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:dc0ac45532ef1ba5d5247b6fcd39fa9d56949ab731d77870c3350f97bc889272",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "bwrap-aarch64-unknown-linux-musl.zst",
+      "digest": "sha256:23f0103eaee51974f6ab3ba48902fb256bccf0ee669ffe8ed6ed768d998ad1e6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-aarch64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "bwrap-x86_64-unknown-linux-musl.sigstore",
+      "digest": "sha256:0eb3ef7922a8bf5c19b362e38e8ac4bbf4a0bd52727baf2401e1ae4e9b25e713",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-x86_64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "bwrap-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:983b9dc035e91b0346455eee0fa1b74f441be39c72dd05471e00113f04427546",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "bwrap-x86_64-unknown-linux-musl.zst",
+      "digest": "sha256:f7c730d20d7d13db8e4b858f9a5735614616ae5426edd2edacb3b8e58186cd93",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/bwrap-x86_64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex",
+      "digest": "sha256:1d222c50a8c6ce9f1a96553b34a1830c8153c5f37c19eb16e69a78e002e88e31",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex"
+    },
+    {
+      "name": "codex-aarch64-apple-darwin.dmg",
+      "digest": "sha256:9416face9b3fc48e17abea3abb8467071468102aef71ed9cea3093fe549aa173",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-apple-darwin.dmg"
+    },
+    {
+      "name": "codex-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:8cdecd0b8ebe23f20eb373010fd91e9517977e840b68941ef6a646b409cb32e1",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-aarch64-apple-darwin.zst",
+      "digest": "sha256:3618a24bb91181a43e4803a15590f17d03f7ce68052220e93396debe8affbe15",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:13f958407a5817f2a88775339d73c3eeb9c6fa3c8c1532c5e73f0036421485d3",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:d94862d8568acb251f49a9759e779a27bd1f3997327dd616a94837113d128f30",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:f379aac8524bfb14e03f1152654952ba217fb485b6cf33015716cb17e2ecdc61",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:6217e30002af7740ec1b3922c127d492ee40379b638864d23bfb8e9cc2cfa378",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-aarch64-unknown-linux-musl.sigstore",
+      "digest": "sha256:b6990f1cf81a10f4578449731731f1c90b4d8ffe3b4062de235756080378cc6e",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:cc2c0c365d4d51c18163bba93cce5b922836900ca867f5bcf89b0e714a952a53",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-aarch64-unknown-linux-musl.zst",
+      "digest": "sha256:29976c8c33c0464914639edc12dd75f102f38d20c181ff59355c8af98fd78ce0",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-aarch64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-app-server",
+      "digest": "sha256:1eb1b6875c65ff6e2d0b8f236cc9e7f714bf5fee504afff19a2d2b198d48904c",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server"
+    },
+    {
+      "name": "codex-app-server-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:4293c483605cae9e3fa413add08ec394bb5f8e52c1762567444551f7c763e143",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-app-server-aarch64-apple-darwin.zst",
+      "digest": "sha256:5f8fa1f3ceb3c61f402af793884c50e65324324a300fecb1132ba164291e14ea",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-app-server-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:d8f2c9a1ef3f380a30a0465fecd68660bb14235eb1ad3438dd9ff5068c05874b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-app-server-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:23242a62a1e62059b5d3e1e56703e63a0b3942fd470bf876c18a85f0152bb97b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-app-server-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:0cb9540c499658567f69c6a76bf5858f23cab6db2ea7a77ee53c1ac1da6c87c8",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-app-server-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:7677d6e76a2ca912f13bf6ec05aea1f371d5175574d300d940b8da75e95c669e",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-app-server-aarch64-unknown-linux-musl.sigstore",
+      "digest": "sha256:18b8cb62dd0ad3c6d30c08a5eb3f2aad41232a60e12df1a3b04a862cc2c86357",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-app-server-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:25a9ea1d024702d8d1dd2f6b11775b1d444d8cf8775db97b01ed79c59c36732b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-app-server-aarch64-unknown-linux-musl.zst",
+      "digest": "sha256:5778f642cb0b7d45ddbfb353fcea3e5f305acd6205ef769251a765668125ad52",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-aarch64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:3aaefb44ee8650e51db90a8c131fb266bd3ec5c0d1de0455ed3c7a489ebaf207",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-apple-darwin.tar.zst",
+      "digest": "sha256:40e9b8d547eac3fd634c4ad0f13d38b4eac426caa65ddc97f172be48a021df2a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-apple-darwin.tar.zst"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:96aa0d410fcbfed0a1534911ee6f5f946e760b6df4fec736fda903b7513729f5",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-pc-windows-msvc.tar.zst",
+      "digest": "sha256:fe167c4ae97a28f6fc6c39dd4f392b5f77de00cfaac29c63615f28ec71ccc50b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-pc-windows-msvc.tar.zst"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:b31aca44be27130bcaa2c01fc0f925a4b21e94ba606fa99010389c4a390fe6e4",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-aarch64-unknown-linux-musl.tar.zst",
+      "digest": "sha256:1494633665c924b5059825aa052b4f39c21ee543c030bb9898a53af1ea05844a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.zst"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:0c847bcc5c94e559fe2aa64c51acc09b0e0d80fb433f5ffc7129b7307f5fa345",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-apple-darwin.tar.zst",
+      "digest": "sha256:1f62fbfb31eebf7792559fb682c755b328c6322489055a580fb776616631ee37",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-apple-darwin.tar.zst"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:ea746cebfcfe6be1f4d2cdd0b34bbd84b8fec7fb8f13874833123789fa295f7c",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-pc-windows-msvc.tar.zst",
+      "digest": "sha256:c9233af3b85dae3e18f9de70ec848d2ede9667af4bf551ac898be4408c7f8d46",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-pc-windows-msvc.tar.zst"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:497bbf5294ec2168ec36499d3af8355ac9a51f1348c3ca673179832ecfa49505",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-app-server-package-x86_64-unknown-linux-musl.tar.zst",
+      "digest": "sha256:f2ba9985e5e43e364b44089c4241ae37a7dcb46e0b6b4f40afbcd5ee161cb863",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-package-x86_64-unknown-linux-musl.tar.zst"
+    },
+    {
+      "name": "codex-app-server-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:557914d00949b24c17024b076ed0f81492b41b2b80e549a21827dd70b5c648da",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-app-server-x86_64-apple-darwin.zst",
+      "digest": "sha256:10380cfe4dabd7dae8e24682e99eb8e89f0d2e19344973093559c58a179e06e1",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-app-server-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:8fb65ce8f626a289faa24d68b6d77d789c7d3bdafb174c940c2b9aa55e3cfb05",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-app-server-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:7aef0160c8cd01f7b93c3c7ab74e4ba8b618ea65584ce899723df24fdae4d4e6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-app-server-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:e796bd51508415c1b0fae671b2f99b4f47958ebef0cf515f9476aec6e4b0698d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-app-server-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:7650394dbb24a998350ea50c075d846455f3590e80a41bf503228821d26849b6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-app-server-x86_64-unknown-linux-musl.sigstore",
+      "digest": "sha256:3bd1c2cd85003932189d18c4257d9b884b5a08aed722aa8b53e716029a3718f3",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-app-server-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:e30ee3c1a669fb35bb58ef9aba57ba57c7611559259a9435ab98082ec1ccbf6a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-app-server-x86_64-unknown-linux-musl.zst",
+      "digest": "sha256:ed70935839c1e630b297117517e9002baf5624abe4addefeaf9066dc588cbb35",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-app-server-x86_64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:85fdb0461636e9d5806fa200b4f000a5cd287456f366f6af4797a4c32d5d50e9",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-apple-darwin.zst",
+      "digest": "sha256:3cdcd62ec7f89d1fbb2e8083243325526fa373ee8d5e0742e215c9c3b808e251",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:46f52a2734e63b004478edaae4da7cdd09d29e10278d7b5dc16a1c6ba70bad1d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:0f1aa781f2952fc18f9a317e1288fe1215444f33f01b82d41c3a71dc824ec47b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:33992e0d489789ec4bf61161027fa00b5aa74508569b7ed7eb1834b12f9c81a6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:efbc52b9d73a0507e581e4adb7697c0bc99cc6132df97053be1dd3f8b1f6a18f",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.sigstore",
+      "digest": "sha256:d1527f94c869f0e8ec7690b1570adbf37caeb7114dc5793dbb26b48088b63325",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:269d6006fb55c95f876454fc03ed3755c367c1c376b77a985d0029395a5a7736",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.zst",
+      "digest": "sha256:4bf94e33301e566584cecba18d26e8def2921a5417a8255b4ac24665dc6ac5b2",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-aarch64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:c984956643d39207a23261804b3a893f85a3a52b928094b8df131905c4272ffc",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-apple-darwin.zst",
+      "digest": "sha256:f8e8e5289271fe0b5b9e22d80f1e6edf98abbc3af9c8f331830a7f67cd24684a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:b5bd9b83f8d2c16e4a4c29bcb39e380fcc7d74e5a56d97f0ade26e9b446f7ab3",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:d95764a2b8a9d6db15e4031ce6de44b10b1257ff6dc6ef215a778c2911400371",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:fdd9e24d4763b11a16fa7ad8e093713163eaa889ff0d5b637e4c49361dfd1d6a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:a00480c4dd1e83afdc2302ee608ef2daabe9b3184d2eef107f114ab41b9b77e1",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.sigstore",
+      "digest": "sha256:4479429db47e950343d7e515c2f5bcaa20713512d841f5f02cd76755070b7248",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:2b817a495e35a53333e94b35af9ed879e180f9b28fd57ef15ace9a857ba86f2c",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.zst",
+      "digest": "sha256:55132c1ff0c29e479d31200e58185e4c098607c8628284c80018fc4077bab985",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-code-mode-host-x86_64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-command-runner",
+      "digest": "sha256:4eb8c25df644e158cbb7e644ede7f4c13ee0c9e2f21ae18d968bf15b024d1a45",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner"
+    },
+    {
+      "name": "codex-command-runner-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:2f6c064a231b47a1b6ed7387fc566d7f7633906576ce28059855126e3087a687",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-command-runner-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:76a769f0f12b306cdddae0c95386dc038f7bf35e3f669380d1fe82bfac086a8f",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-command-runner-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:7a2fa75f4cfc10bc6bd2b0300489fef3c60ea3d6cadae8a4c917fc07c6906c88",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-command-runner-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:7490eeee93afc7d5ae270eb0263d44e062a75044996aeedfff8892daa5fdd04f",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-command-runner-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:1ed001295558a262244266343491d5109395b6603f2c3acc6fdf9ccf5aeeb58a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:69f395830e485fc7ef5d9e8be63d6ffc624b8f7b0cd705dc22ec9fa1998a3c52",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:30fbaf552e967d3bf1af273454f62d8c04d0a6a7d9c38c743bcf5f13afa040c7",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-command-runner-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:911b146a23e55155f9bfbf946528467a4c66d30d41d795fe5111eb4c634e3d6d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-command-runner-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-npm-0.153.0.tgz",
+      "digest": "sha256:0dc1968cc6075929d70d7ab1421122743a9f8237a8cc9ac69e2e8f2768798fef",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-darwin-arm64-0.153.0.tgz",
+      "digest": "sha256:ce03d32fe1cb0c4a02bf86a139a43519bb791c2ba6fe56d665c34fcadcbc7c00",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-darwin-arm64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-darwin-x64-0.153.0.tgz",
+      "digest": "sha256:c636191070281854d869b3ff3f6efe506db81c9eb7035930440c8afb29d626a4",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-darwin-x64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-linux-arm64-0.153.0.tgz",
+      "digest": "sha256:1c65fda30a919908688147b67b1b195ab635bd4a5eac49ffa7be527a13af0a09",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-linux-arm64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-linux-x64-0.153.0.tgz",
+      "digest": "sha256:856f408ea61b44a381b7d6fb7c82365dfcef649ae2a340fc01282cf63c30cd8a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-linux-x64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-win32-arm64-0.153.0.tgz",
+      "digest": "sha256:e390adc8ef145ea5bf0b687408b0d36ed9abdf879b41265148e3474f4bc81fad",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-win32-arm64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-npm-win32-x64-0.153.0.tgz",
+      "digest": "sha256:30f28ce47e7b1c9ba79ceefb60ba9902253f5a1ec831dedc75f120e99e138bdb",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-npm-win32-x64-0.153.0.tgz"
+    },
+    {
+      "name": "codex-package-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:136dcb640e7ccdb018a354b9c1ef269f88b3137a5c84b1416a3b7d3d6b904299",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-package-aarch64-apple-darwin.tar.zst",
+      "digest": "sha256:e2d9b159309d2083ee4d978c9136ed4d2ee6cc10864ec6d73ab61bd0b6473408",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-apple-darwin.tar.zst"
+    },
+    {
+      "name": "codex-package-aarch64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:c65f36a29f7ddfba6848fc9ddbaa7cb257f0c315d6e5d7fa54d9045df41d3573",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-package-aarch64-pc-windows-msvc.tar.zst",
+      "digest": "sha256:86a68740dee7d7ad9115d59f07f7bbee611110f1fad2030d835b09dfc1e7fa40",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-pc-windows-msvc.tar.zst"
+    },
+    {
+      "name": "codex-package-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:076b2b7512bad8b96e24370c031d2d1311f983e98650af9824639a619fa99be4",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-package-aarch64-unknown-linux-musl.tar.zst",
+      "digest": "sha256:9ceb71bd557a1d92f14e6ee24a5da566308f0ee0e5fe1047fc906cf417a4ce6f",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-aarch64-unknown-linux-musl.tar.zst"
+    },
+    {
+      "name": "codex-package-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:ff23ca96a16ae9981eb437b702ed1e66a1a2927e5c33698b05fa3e27537b75d2",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-package-x86_64-apple-darwin.tar.zst",
+      "digest": "sha256:ebf4098f4121a772241e9f53f76e1302b56fbe8a35f0cc9f5cee38d433d42d82",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-apple-darwin.tar.zst"
+    },
+    {
+      "name": "codex-package-x86_64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:dba6a113d7ab279b30772fcdc5d7f352c3a28556a49a1ea311b4ac8603dec807",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-package-x86_64-pc-windows-msvc.tar.zst",
+      "digest": "sha256:b7e27ce931c58265230766bbd27b21aa16f28631906b21674bbf726e19e1dedc",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.zst"
+    },
+    {
+      "name": "codex-package-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:27b0d7a753ac190c343918541a42067be307cc88a32b1a9feaf6f93648a0e9ea",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-package-x86_64-unknown-linux-musl.tar.zst",
+      "digest": "sha256:0929be35b92bff38de173524e54b3aba0a1b3b49333bef229a58bdd5184d170b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-unknown-linux-musl.tar.zst"
+    },
+    {
+      "name": "codex-package_SHA256SUMS",
+      "digest": "sha256:21db5fb87191c300721481f6406f0e9d763d935402f640f295ed44bac234c394",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-package_SHA256SUMS"
+    },
+    {
+      "name": "codex-responses-api-proxy",
+      "digest": "sha256:aae33bb117718dbd30a13efc11a5c74f3e3c7529e8b63782fb59351f81dddf81",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:3263533ea6560444b765e51f8b39c85038bbfdca56faf748e1725eba9a6984f7",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-apple-darwin.zst",
+      "digest": "sha256:03ecd33eb03015db3f5d70010a6751ee39c3f36bda575423f24fd192759a0390",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:ffa9e228d4ddf4b8252fa0a0a525a840f413630cc8474ab2e4cea6c11f554479",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:c65fd69d7e174ef5e9f6f683160376d54746adddb8eb70ff31b4c195cc99ae0d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:ceffd3e8ed5a0d80c50b19354ba502dc7ff92eecb50ac3d111c95b4e2115f274",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:e83256014231387a03f665aefd006116cab0a07794ffc4a1d9d055e5bdbdd03c",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-unknown-linux-musl.sigstore",
+      "digest": "sha256:262c1b345948eb4b1c3a2b117c9cb4ef4e6fc539c5d43a82dce5c332385b5b32",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:4883882388fb6d770a256ce36924ffcf54ad765387c7bd519be9a39f205fc9df",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-aarch64-unknown-linux-musl.zst",
+      "digest": "sha256:66cc764988da47672939fce4ccc6de4ecad0a7d52ad35784b9d8b607d8caeb17",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-aarch64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-responses-api-proxy-npm-0.153.0.tgz",
+      "digest": "sha256:5f6e057223192c034788aba84eaed2859e7d927eac9d3c2ac4d9f0f2e2204aa6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-npm-0.153.0.tgz"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:d01d198c3037522a343bbc819f6b42a4b05a59c3b6dab9a14091e79ec7737af7",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-apple-darwin.zst",
+      "digest": "sha256:f180c71809c243d1cc1e859fd85fbfe1a68af33441de09f43b8a3db0c0c9bbdd",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:d607aa5ea4273c10f1c265b2aa53ccddc62c1b587bab44ff8a20ec7f4141c100",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:dd79963a858412b1453ae7d625230f5c22591d5cd57783254822f3c5d9b013a4",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:5f0b669459919876759aeb4c5c8c663a5053f8181b7e6bea2e7f393c6b29d0a0",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:ac0a3faddcaf5af1619a43c5bb3c0fe3e36b7f5c34ea1219cc4ddd8125dc24a0",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-unknown-linux-musl.sigstore",
+      "digest": "sha256:bb17af318702a5e3e9ba4884e8433b8ccffb56fcca0a7cbfa8697b362415ab7d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:57dc356985d8c04113da5fa3172bc958bdd6d2cbe88be1f2c139bd221f39fc91",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-responses-api-proxy-x86_64-unknown-linux-musl.zst",
+      "digest": "sha256:f4cce158e5a93adbeceb9706089a4a3d8d6761fd9c3aeea5e53b322189a178e6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-responses-api-proxy-x86_64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "codex-sdk-npm-0.153.0.tgz",
+      "digest": "sha256:f5754d6351976b46b369533967e4f6286df3cf7441aa50467fd1941d2564963a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-sdk-npm-0.153.0.tgz"
+    },
+    {
+      "name": "codex-symbols-aarch64-apple-darwin-app-server.tar.gz",
+      "digest": "sha256:243aeb84558be3c5e384dc4bfda0063fe1934ca867065c0a8c94abfdba0e3f33",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-aarch64-apple-darwin-app-server.tar.gz"
+    },
+    {
+      "name": "codex-symbols-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:7db601d7d2477a9e845de937ea44026216895f1bdfcb2d86dfb610aca848edad",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-aarch64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-symbols-aarch64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:2fa981f59b04825a4389d5ddd9e755983d78bf47ca93be1c5a9fbf5f6a51ce11",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-aarch64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-symbols-aarch64-unknown-linux-musl-app-server.tar.gz",
+      "digest": "sha256:e7b3b855be1874ad09324a41a42a790ffdffecd8b6846d9250d7e67a90869b0d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-aarch64-unknown-linux-musl-app-server.tar.gz"
+    },
+    {
+      "name": "codex-symbols-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:74403bc838b61d531511cdd0a012274fca90720557673300f8b4180fb2f6b639",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-aarch64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-symbols-x86_64-apple-darwin-app-server.tar.gz",
+      "digest": "sha256:1c0e7b916eca771ec41b400de37b889263e85516ef40bf97a9eb58cd949fae28",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-x86_64-apple-darwin-app-server.tar.gz"
+    },
+    {
+      "name": "codex-symbols-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:e9f3708a87a1d15e29c852b900a7afa9afd7ecbc35e7fa7ae0b7b9ab391c71c5",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-symbols-x86_64-pc-windows-msvc.tar.gz",
+      "digest": "sha256:49cda9476f7726d7e2a12a7d7a5f6d19b5639988a43a07131dffcb8e12779498",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-x86_64-pc-windows-msvc.tar.gz"
+    },
+    {
+      "name": "codex-symbols-x86_64-unknown-linux-musl-app-server.tar.gz",
+      "digest": "sha256:ee5fb3de7339def124857ff50711481b3d31305e4f1af6dce567b47585b912a5",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-x86_64-unknown-linux-musl-app-server.tar.gz"
+    },
+    {
+      "name": "codex-symbols-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:0be02f092c60cc6348ceeac6167e94f09468264fb06017ebcb50f632664517b1",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-symbols-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-windows-sandbox-setup",
+      "digest": "sha256:ac8c27f8e9749811c9a35515924f08b3ee20ba79a1667ea2c5a239405f1e0d50",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe",
+      "digest": "sha256:c2b170d4968b31bd3f5db8db0f511b5057fb7de576e8bbb8c3cea08f7b96a1dc",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:9ec3517224e31f8a4c3eceec186a83c35f86e26b180602611418ae02dcb68239",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:6f50d0b083cfedab8062600d6d17f6921efca306909045a2b2f6ab57a4c61995",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:6c6ded59ba4bec9e183af63e667c568c14de0f8e16aee7d129509edca7e43547",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-aarch64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:2a77368d026f9b6d54b63e05c814d57e25a6b41ba812bb3026cedc61005bc1af",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:809dd2c0b6f2e27ec6139f67793dbf1822a041817235d04d088b01342bb00a47",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:3dbdb06cf243649fd5c7eb957801fb2ae6405d82b709ba0be2a1ef964de7fcc0",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:b8776f8e81e1108e7f7a3bd673be59ab8c44c66b91f1a13cd743ba3e8d419b0e",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-x86_64-apple-darwin.dmg",
+      "digest": "sha256:0bc0b6d1c01cdc1a3db129e129d3e38610da91def524479bf35871368af9b9a1",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-apple-darwin.dmg"
+    },
+    {
+      "name": "codex-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:668309c7d7cc1ebee5f9b4485739f92fd5556b0805bd9f49a3479302b5f68adc",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-apple-darwin.tar.gz"
+    },
+    {
+      "name": "codex-x86_64-apple-darwin.zst",
+      "digest": "sha256:8164506c486f249f50bda4ec9e70b3c4431aee8d7808a33bf1b7c83d384d8397",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-apple-darwin.zst"
+    },
+    {
+      "name": "codex-x86_64-pc-windows-msvc.exe",
+      "digest": "sha256:0f8ed9678bca539aa6517adb0c8d50ad9a94ff5df4d21e149ae700d219fff69d",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-pc-windows-msvc.exe"
+    },
+    {
+      "name": "codex-x86_64-pc-windows-msvc.exe.tar.gz",
+      "digest": "sha256:a8c18cc50670015c64debf7c09c00c248a7357c1d895afb432ff56be02edb24b",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-pc-windows-msvc.exe.tar.gz"
+    },
+    {
+      "name": "codex-x86_64-pc-windows-msvc.exe.zip",
+      "digest": "sha256:26e9933833e3b52e65bfb6ad6848e3dcf43b3ae93e98cb10fd307ba9ff772055",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-pc-windows-msvc.exe.zip"
+    },
+    {
+      "name": "codex-x86_64-pc-windows-msvc.exe.zst",
+      "digest": "sha256:23b242f38a19516e39fe0f43deb004b147fec554ae6191c6b893526e688235ff",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-pc-windows-msvc.exe.zst"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-musl.sigstore",
+      "digest": "sha256:4592dafca8a86798e30ee3772cd960c355a0fcfbf6db8f542a5537e0c5ab6597",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-unknown-linux-musl.sigstore"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:35a82c153d83959de09c2cb84ac70ba69d05788aeeb08d4a95ca68e39f86680e",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-unknown-linux-musl.tar.gz"
+    },
+    {
+      "name": "codex-x86_64-unknown-linux-musl.zst",
+      "digest": "sha256:d9da04b33d6070ed3d52b8992099a3510d496ef1a93e0ecb2a7489628e0af7e4",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/codex-x86_64-unknown-linux-musl.zst"
+    },
+    {
+      "name": "config-schema.json",
+      "digest": "sha256:692da7699367f6f4fbbd46c0021278c1311440bcebf0bcb9b836690c05e56196",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/config-schema.json"
+    },
+    {
+      "name": "install.ps1",
+      "digest": "sha256:391f247de2c70c7e99041979ec02dae7e76be27ac9cfc1dfe7c1eb21d48d8b97",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/install.ps1"
+    },
+    {
+      "name": "install.sh",
+      "digest": "sha256:ba92dd27e5c06f0d3bbc58bfa4b9cfb6599cd2742fbb1f92a2765e6c07dedb5a",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/install.sh"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-macosx_10_9_x86_64.whl",
+      "digest": "sha256:e275511d8e6c8c80084e86d58a8d837cf7df19799091ca31f09828f1529a8411",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-macosx_10_9_x86_64.whl"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-macosx_11_0_arm64.whl",
+      "digest": "sha256:138aa478f4abb035894e1194a7f424353ecd263a0ce0bec3349942a6f29d7693",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-macosx_11_0_arm64.whl"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-manylinux_2_17_aarch64.whl",
+      "digest": "sha256:202de25e6aaa52ada4b2cb49ac7561602bdd80d0fe02b5e8659f6f58687079f9",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-manylinux_2_17_aarch64.whl"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-manylinux_2_17_x86_64.whl",
+      "digest": "sha256:8f9fb4b031c9eb0dc3d836a396f5cf8b0fd8bb7d8dd7355bbc43a2f8331c1dd6",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-manylinux_2_17_x86_64.whl"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-win_amd64.whl",
+      "digest": "sha256:5fe60b355ba3e6cd214002d3a333b3a5ccf67c15b5f2eec0ef3899034179a5a2",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-win_amd64.whl"
+    },
+    {
+      "name": "openai_codex_cli_bin-0.153.0-py3-none-win_arm64.whl",
+      "digest": "sha256:b56dca2eb2b19dc1df9502a3b7e3c49e28730aab24474a6175cf301cb79d7bd8",
+      "browser_download_url": "https://releases.openai.com/codex/releases/0.153.0/openai_codex_cli_bin-0.153.0-py3-none-win_arm64.whl"
+    }
+  ],
+  "tag_name": "rust-v0.153.0"
+}
