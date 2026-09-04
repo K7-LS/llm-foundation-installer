@@ -743,6 +743,45 @@ def test_edition_bundle_carries_hash_bound_client_assets(
         assert hashlib.sha256(copied.read_bytes()).hexdigest() == asset["sha256"]
 
 
+def test_edition_build_warns_only_about_named_missing_bundled_assets(
+    tmp_path: Path,
+) -> None:
+    # Клиенты без bundled_assets не должны порождать пустых предупреждений
+    # (@($null) в PowerShell): вне Preview такая «пустая» запись роняла сборку.
+    # В кеше нет только пакета 129 МБ — ровно одно предупреждение с его именем.
+    result = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPOSITORY / "tools" / "build-edition.ps1"),
+            "-OutputRoot",
+            str(tmp_path / "bundle"),
+            "-Edition",
+            "Employee",
+            "-DistributionMode",
+            "Preview",
+            "-ClientAssetRoot",
+            str(_codex_asset_root(tmp_path)),
+        ],
+        cwd=REPOSITORY,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    warnings = [
+        line
+        for line in (result.stdout + result.stderr).splitlines()
+        if "Bundled asset not found" in line
+    ]
+    assert len(warnings) == 1, warnings
+    assert "codex-package-x86_64-pc-windows-msvc.tar.gz" in warnings[0]
+
+
 def test_edition_bundle_rejects_bundled_asset_that_differs_from_lock(
     tmp_path: Path,
 ) -> None:

@@ -131,7 +131,10 @@ $ClientLockPath = if ([string]::IsNullOrWhiteSpace($ClientSourcesLock)) {
 $ClientLockValue = Get-Content -LiteralPath $ClientLockPath -Raw |
     ConvertFrom-Json
 foreach ($ClientEntry in @($ClientLockValue.clients)) {
-    $Assets = @($ClientEntry.bundled_assets)
+    # У клиента без bundled_assets свойство отсутствует: @($null) даёт массив
+    # из одного $null, и цикл шёл по пустой записи (пустое предупреждение в
+    # Preview, исключение вне Preview).
+    $Assets = @($ClientEntry.bundled_assets | Where-Object { $null -ne $_ })
     if ($Assets.Count -eq 0) { continue }
     $Records = @()
     foreach ($Asset in $Assets) {
