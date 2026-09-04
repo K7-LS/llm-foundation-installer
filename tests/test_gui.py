@@ -2472,10 +2472,16 @@ if ((Get-Command Invoke-WebRequest).CommandType -cne 'Function' -or
     throw 'safe curl wrappers are not active'
 }
 $metadata = Invoke-RestMethod -Uri ($env:LLM_FIXTURE_BASE + '/metadata')
+# Official install.ps1 (rust-v0.153.0) passes -TimeoutSec and -OutFile;
+# the wrapper must accept them or the script treats the source as down.
 $response = Invoke-WebRequest -UseBasicParsing -Uri (
     $env:LLM_FIXTURE_BASE + '/payload'
-)
-if ($Release -cne '1.0.0' -or $metadata.version -cne '1.0.0') {
+) -TimeoutSec 30
+$archive = Join-Path $env:TEMP ('fixture-' + [guid]::NewGuid().ToString('N'))
+Invoke-WebRequest -UseBasicParsing -Uri ($env:LLM_FIXTURE_BASE + '/payload') -OutFile $archive -TimeoutSec 300
+$saved = (Get-Content -LiteralPath $archive -Raw).Trim()
+Remove-Item -LiteralPath $archive -Force
+if ($Release -cne '1.0.0' -or $metadata.version -cne '1.0.0' -or $saved -cne '1.0.0') {
     throw 'release metadata differs'
 }
 New-Item -ItemType Directory -Force -Path $env:CODEX_INSTALL_DIR | Out-Null
@@ -2549,6 +2555,172 @@ $command = Join-Path $env:CODEX_INSTALL_DIR 'fixture-client.cmd'
 
         assert installed.returncode == 0, installed.stdout + installed.stderr
         assert json.loads(installed.stdout)["status"] == "INSTALLED"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _try_mklink_junction(link: Path, target: Path) -> bool:
+    created = subprocess.run(
+        [
+            os.environ.get("COMSPEC", "cmd.exe"),
+            "/d",
+            "/c",
+            "mklink",
+            "/J",
+            str(link),
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    return created.returncode == 0
+
+
+def _serve_official_script(script: bytes):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        requests = 0
+
+        def do_GET(self):
+            type(self).requests += 1
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(script)))
+            self.end_headers()
+            self.wfile.write(script)
+
+        def log_message(self, *args):
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, Handler
+
+
+_OFFICIAL_UPGRADE_SCRIPT = b"""[CmdletBinding()]
+param([string]$Release)
+$ErrorActionPreference = 'Stop'
+if ($Release -cne '1.0.0') { throw 'release was not pinned' }
+$item = Get-Item -LiteralPath $env:CODEX_INSTALL_DIR -Force
+if (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw 'visible bin junction was replaced by a directory'
+}
+$command = Join-Path $env:CODEX_INSTALL_DIR 'fixture-client.cmd'
+'@echo off`r`necho fixture-client 1.0.0' |
+    Set-Content -LiteralPath $command -Encoding Ascii
+"""
+
+
+def test_official_script_upgrade_accepts_installer_owned_bin_junction(
+    tmp_path: Path,
+):
+    # Официальный установщик Codex (standalone-раскладка) делает видимый
+    # bin junction'ом на codex-home\packages\standalone\current\bin.
+    # Повторная установка (подъём пина) обязана проходить через этот
+    # junction, а не отвергать его как «reparse point в staging».
+    home = tmp_path / "employee-home"
+    client = home / ".llm-foundation" / "clients" / "fixture-client"
+    current_bin = (
+        client / "codex-home" / "packages" / "standalone" / "current" / "bin"
+    )
+    current_bin.mkdir(parents=True)
+    (current_bin / "fixture-client.cmd").write_text(
+        "@echo off\r\necho fixture-client 0.9.0\r\n", encoding="ascii"
+    )
+    if not _try_mklink_junction(client / "bin", current_bin):
+        pytest.skip("Windows junction fixture is unavailable")
+
+    server, thread, handler = _serve_official_script(_OFFICIAL_UPGRADE_SCRIPT)
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/install.ps1",
+            sha256=hashlib.sha256(_OFFICIAL_UPGRADE_SCRIPT).hexdigest(),
+            artifact_kind="powershell-installer-script",
+            install_mode="official-script",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=60,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        assert json.loads(installed.stdout)["status"] == "INSTALLED"
+        assert "1.0.0" in (current_bin / "fixture-client.cmd").read_text(
+            encoding="ascii"
+        )
+        assert (client / "bin").is_dir()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_official_script_rejects_bin_junction_outside_client_home(
+    tmp_path: Path,
+):
+    # Junction, ведущий за пределы клиента, — подмена, а не раскладка
+    # официального установщика: установка отвергается, скрипт не пишет.
+    home = tmp_path / "employee-home"
+    client = home / ".llm-foundation" / "clients" / "fixture-client"
+    client.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if not _try_mklink_junction(client / "bin", outside):
+        pytest.skip("Windows junction fixture is unavailable")
+
+    server, thread, handler = _serve_official_script(_OFFICIAL_UPGRADE_SCRIPT)
+    try:
+        source_lock = _local_client_source_lock(
+            tmp_path / "client-sources.test.json",
+            url=f"http://127.0.0.1:{server.server_port}/install.ps1",
+            sha256=hashlib.sha256(_OFFICIAL_UPGRADE_SCRIPT).hexdigest(),
+            artifact_kind="powershell-installer-script",
+            install_mode="official-script",
+            detect_commands=["fixture-client.cmd"],
+        )
+        bundle = _build_gui_bundle(
+            tmp_path / "bundle",
+            client_sources_lock=source_lock,
+            allow_local_test_sources=True,
+        )
+        installed = subprocess.run(
+            [
+                str(bundle / "LLMFoundationInstaller.exe"),
+                "--install-client-json",
+                str(home),
+                "fixture-client",
+                str(tmp_path / "client-staging"),
+            ],
+            cwd=bundle,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=60,
+        )
+        assert installed.returncode != 0
+        assert "reparse point" in (installed.stdout + installed.stderr).lower()
+        assert not (outside / "fixture-client.cmd").exists()
     finally:
         server.shutdown()
         server.server_close()
