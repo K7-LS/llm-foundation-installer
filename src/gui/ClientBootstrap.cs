@@ -433,7 +433,8 @@ namespace LlmFoundationInstaller
                     FileName = curl,
                     Arguments =
                         "--fail --location --silent --show-error " +
-                        "--max-time 300 --output " +
+                        "--max-time " + OfficialDownloadMaxSeconds + " " +
+                        "--speed-limit 1024 --speed-time 60 --output " +
                         QuoteArgument(curlOutputPath) + " " +
                         QuoteArgument(source.url),
                     UseShellExecute = false,
@@ -449,7 +450,7 @@ namespace LlmFoundationInstaller
                 );
                 BoundedProcessResult downloadRun = BoundedProcess.Run(
                     start,
-                    310000
+                    ClientDownloadTimeoutMilliseconds
                 );
                 if (!downloadRun.started)
                 {
@@ -1101,6 +1102,7 @@ namespace LlmFoundationInstaller
         // сам официальный скрипт через -TimeoutSec, а без него действует
         // контроль зависания (curl --speed-limit/--speed-time) и потолок ниже.
         private const int OfficialDownloadMaxSeconds = 1800;
+        private const int ClientDownloadTimeoutMilliseconds = 1810000;
         private const int OfficialInstallerTimeoutMilliseconds = 2400000;
 
         // Официальный установщик Codex (standalone-раскладка) держит видимый
