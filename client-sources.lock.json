@@ -32,7 +32,27 @@
       ],
       "store_identity": null,
       "store_publisher": null,
-      "store_signature_kind": null
+      "store_signature_kind": null,
+      "bundled_assets": [
+        {
+          "file": "codex-release-0.153.0.json",
+          "url": "https://releases.openai.com/codex/releases/0.153.0/release.json",
+          "sha256": "566eaf0da0d580a5f450685f6c6bb02c9a3561b8962a539452779669b3ed72ff",
+          "bytes": 47504
+        },
+        {
+          "file": "codex-package_SHA256SUMS",
+          "url": "https://releases.openai.com/codex/releases/0.153.0/codex-package_SHA256SUMS",
+          "sha256": "21db5fb87191c300721481f6406f0e9d763d935402f640f295ed44bac234c394",
+          "bytes": 1392
+        },
+        {
+          "file": "codex-package-x86_64-pc-windows-msvc.tar.gz",
+          "url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.gz",
+          "sha256": "dba6a113d7ab279b30772fcdc5d7f352c3a28556a49a1ea311b4ac8603dec807",
+          "bytes": 135999589
+        }
+      ]
     },
     {
       "id": "codex-desktop",

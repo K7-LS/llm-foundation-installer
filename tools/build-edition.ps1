@@ -13,6 +13,7 @@ param(
     [string]$ClientSourcesLock,
     [string]$RuntimeSourcesLock,
     [string]$RuntimeArchive,
+    [string]$ClientAssetRoot,
     [string]$OfficeCliBinaryPath,
     [switch]$AllowLocalTestSources,
     [string]$SigningCertificateThumbprint,
@@ -113,6 +114,65 @@ else {
         file = $RuntimeFileName
         sha256 = Get-Sha256 $RuntimeArchive
         bytes = (Get-Item -LiteralPath $RuntimeArchive).Length
+    }
+}
+
+# Файлы официальных установщиков в комплекте (bundled_assets в lock):
+# ищутся в <ClientAssetRoot>\<client id>\<version>\<file>, сверяются по
+# SHA-256 и размеру и копируются рядом с EXE. Вне Preview файл обязателен;
+# в Preview без ClientAssetRoot комплект собирается как раньше (сеть).
+$ClientAssetRecords = [ordered]@{}
+$ClientAssetCopies = @()
+$ClientLockPath = if ([string]::IsNullOrWhiteSpace($ClientSourcesLock)) {
+    Join-Path $RepositoryRoot 'client-sources.lock.json'
+} else {
+    [IO.Path]::GetFullPath($ClientSourcesLock)
+}
+$ClientLockValue = Get-Content -LiteralPath $ClientLockPath -Raw |
+    ConvertFrom-Json
+foreach ($ClientEntry in @($ClientLockValue.clients)) {
+    $Assets = @($ClientEntry.bundled_assets)
+    if ($Assets.Count -eq 0) { continue }
+    $Records = @()
+    foreach ($Asset in $Assets) {
+        $AssetSource = $null
+        if (-not [string]::IsNullOrWhiteSpace($ClientAssetRoot)) {
+            $AssetSource = Join-Path (Join-Path (Join-Path (
+                [IO.Path]::GetFullPath($ClientAssetRoot)
+            ) $ClientEntry.id) ([string]$ClientEntry.version)) $Asset.file
+        }
+        if ($null -eq $AssetSource -or
+            -not (Test-Path -LiteralPath $AssetSource -PathType Leaf)) {
+            if ($DistributionMode -cne 'Preview') {
+                throw ('Bundled asset is missing: ' + $Asset.file)
+            }
+            Write-Warning ('Bundled asset not found, bundle will download it: ' +
+                $Asset.file)
+            continue
+        }
+        if ((Get-Item -LiteralPath $AssetSource).Attributes -band
+                [IO.FileAttributes]::ReparsePoint) {
+            throw ('Bundled asset is unsafe: ' + $Asset.file)
+        }
+        if ((Get-Sha256 $AssetSource) -cne [string]$Asset.sha256 -or
+            (Get-Item -LiteralPath $AssetSource).Length -ne [long]$Asset.bytes) {
+            throw ('Bundled asset differs from ClientSourcesLock: ' + $Asset.file)
+        }
+        $Records += [ordered]@{
+            file = [string]$Asset.file
+            url = [string]$Asset.url
+            sha256 = [string]$Asset.sha256
+            bytes = [long]$Asset.bytes
+        }
+        $ClientAssetCopies += [pscustomobject]@{
+            Source = $AssetSource
+            File = [string]$Asset.file
+            Sha256 = [string]$Asset.sha256
+            Bytes = [long]$Asset.bytes
+        }
+    }
+    if ($Records.Count -gt 0) {
+        $ClientAssetRecords[[string]$ClientEntry.id] = @($Records)
     }
 }
 
@@ -231,6 +291,15 @@ try {
         }
     }
 
+    foreach ($Copy in $ClientAssetCopies) {
+        $AssetOutput = Join-Path $OutputRoot $Copy.File
+        Copy-Item -LiteralPath $Copy.Source -Destination $AssetOutput
+        if ((Get-Sha256 $AssetOutput) -cne $Copy.Sha256 -or
+            (Get-Item -LiteralPath $AssetOutput).Length -ne $Copy.Bytes) {
+            throw ('Copied bundled asset differs: ' + $Copy.File)
+        }
+    }
+
     $Manifest = [ordered]@{
         schema_version = 1
         app_id = 'k7-ai-edition-bundle'
@@ -245,6 +314,7 @@ try {
         targets = @($InstallerManifest.targets)
         verdicts = $InstallerManifest.verdicts
         runtime = $RuntimeRecord
+        client_assets = $ClientAssetRecords
         launch_center_fallback = [ordered]@{
             product_role = 'LaunchCenter'
             file = $LaunchCenterFallbackName
