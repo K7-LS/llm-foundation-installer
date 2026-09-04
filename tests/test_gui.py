@@ -3858,6 +3858,37 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
     assert "Заполните сервер, порт, логин и пароль" in source
 
 
+def test_launch_center_ui_opens_launch_center_view_in_single_installer_exe(
+    tmp_path: Path,
+):
+    # Ярлык «K7 Launch Center» и .cmd запускают единый EXE (встроенная роль
+    # Installer) с --launch-center-ui. Окно обязано быть центром запуска,
+    # а не установщиком: на canary 0.4.4 обе машины получали установщик
+    # под заголовком «Launch Center».
+    foundation = _accepted_foundation(tmp_path)
+    bundle = _build_gui_bundle(
+        tmp_path / "bundle",
+        foundation_package_root=foundation,
+        allow_local_test_sources=True,
+        edition="Employee",
+        product_role="Installer",
+    )
+    result = subprocess.run(
+        [str(bundle / "LLMFoundationInstaller.exe"), "--launch-center-view-json"],
+        cwd=bundle,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["product_role"] == "LaunchCenter"
+    assert "Launch Center" in payload["window_title"]
+    assert payload["view"] == "LaunchCenterEmployeeView.xaml"
+
+
 def test_connection_ui_contract_diagnostics_are_localized_for_users():
     source = _gui_source()
 
