@@ -10,8 +10,8 @@ using System.Windows;
 [assembly: AssemblyCompany("LLM Foundation")]
 [assembly: AssemblyProduct("LLM Foundation Installer")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("0.4.2.0")]
-[assembly: AssemblyFileVersion("0.4.2.0")]
+[assembly: AssemblyVersion("0.4.3.0")]
+[assembly: AssemblyFileVersion("0.4.3.0")]
 [assembly: ComVisible(false)]
 
 namespace LlmFoundationInstaller
