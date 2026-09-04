@@ -48,6 +48,7 @@ TEST_ONLY_COMMANDS = {
     "--install-runtime-json",
     "--latest-base-json",
     "--launch-routes-json",
+    "--launch-center-view-json",
     "--launch-target-json",
     "--preflight-json",
     "--preflight-store-record-json",
@@ -99,8 +100,9 @@ def _table(bundle: Path) -> dict:
 
 def test_classification_counts_match_the_report() -> None:
     # 42 точки по классификации от 2026-09-03 + `--install-launch-center-json`
-    # (тестовый хост фичи «установка центра запуска», решение владельца).
-    assert len(TEST_ONLY_COMMANDS) == 43
+    # (тестовый хост фичи «установка центра запуска», решение владельца)
+    # + `--launch-center-view-json` (путь ярлыка: --launch-center-ui → окно).
+    assert len(TEST_ONLY_COMMANDS) == 44
     assert len(RELEASE_COMMANDS) == 10
     assert not TEST_ONLY_COMMANDS & set(RELEASE_COMMANDS)
 

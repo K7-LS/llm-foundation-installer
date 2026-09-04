@@ -10,8 +10,8 @@ using System.Windows;
 [assembly: AssemblyCompany("LLM Foundation")]
 [assembly: AssemblyProduct("LLM Foundation Installer")]
 [assembly: AssemblyCopyright("Copyright 2026")]
-[assembly: AssemblyVersion("0.4.4.0")]
-[assembly: AssemblyFileVersion("0.4.4.0")]
+[assembly: AssemblyVersion("0.4.5.0")]
+[assembly: AssemblyFileVersion("0.4.5.0")]
 [assembly: ComVisible(false)]
 
 namespace LlmFoundationInstaller
@@ -77,7 +77,7 @@ namespace LlmFoundationInstaller
                     MinHeight = 720,
                     WindowStartupLocation = WindowStartupLocation.CenterScreen,
                     Background = EditionTheme.WindowBackground(edition),
-                    Content = InstallerView.Create(bundleRoot)
+                    Content = InstallerView.Create(bundleRoot, edition, true)
                 };
                 application.Run(window);
                 return 0;

@@ -34,6 +34,7 @@ namespace LlmFoundationInstaller
             Register("--install-runtime-json", "test", 2, 2, InstallRuntimeJson);
             Register("--latest-base-json", "test", 2, 2, LatestBaseJson);
             Register("--launch-routes-json", "test", 1, 1, LaunchRoutesJson);
+            Register("--launch-center-view-json", "test", 0, 0, LaunchCenterViewJson);
             Register("--launch-target-json", "test", 3, 3, LaunchTargetJson);
             Register("--preflight-json", "test", 0, 0, PreflightJson);
             Register("--preflight-store-record-json", "test", 1, 1, PreflightStoreRecordJson);
@@ -427,6 +428,43 @@ namespace LlmFoundationInstaller
                 1440,
                 900
             );
+            previewApp.Shutdown();
+            return 0;
+        }
+
+        // Путь ярлыка «K7 Launch Center»: единый EXE (роль Installer) с
+        // --launch-center-ui. Команда переключает роль, затем окно строится
+        // тем же вызовом, что и в InstallerApp.Main; отчёт — какой вид загружен.
+        private static int LaunchCenterViewJson(
+            EditionProfile edition,
+            string bundleRoot,
+            string[] args)
+        {
+            int exitCode;
+            if (!InstallerCommands.TryRun(
+                    edition,
+                    bundleRoot,
+                    new[] { "--launch-center-ui" },
+                    out exitCode) ||
+                exitCode != InstallerCommands.ContinueToUi)
+            {
+                WriteError("--launch-center-ui did not continue to UI");
+                return 20;
+            }
+            Application previewApp = new Application();
+            UserControl view = InstallerView.Create(
+                bundleRoot,
+                edition,
+                false
+            );
+            WriteOutput(new JavaScriptSerializer().Serialize(
+                new Dictionary<string, object>
+                {
+                    { "product_role", edition.product_role },
+                    { "view", view.Tag as string },
+                    { "window_title", EditionTheme.WindowTitle(edition) }
+                }
+            ));
             previewApp.Shutdown();
             return 0;
         }

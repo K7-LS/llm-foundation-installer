@@ -26,7 +26,23 @@ namespace LlmFoundationInstaller
             bool loadConnectionState = true
         )
         {
-            EditionProfile edition = EditionProfile.LoadEmbedded();
+            return Create(
+                bundleRoot,
+                EditionProfile.LoadEmbedded(),
+                loadConnectionState
+            );
+        }
+
+        // Роль берёт профиль вызывающего: --launch-center-ui переключает
+        // её в профиле, загруженном в Main. Повторная загрузка встроенного
+        // профиля возвращала Installer, и окно центра запуска получало вид
+        // установщика под заголовком «Launch Center» (canary 0.4.4).
+        public static UserControl Create(
+            string bundleRoot,
+            EditionProfile edition,
+            bool loadConnectionState
+        )
+        {
             string viewResource = EditionTheme.ViewResource(edition);
             UserControl view;
             try
@@ -80,6 +96,7 @@ namespace LlmFoundationInstaller
                     loadConnectionState
                 );
                 ChromeProxyLauncher.Bind(view);
+                view.Tag = viewResource;
                 return view;
             }
         }
