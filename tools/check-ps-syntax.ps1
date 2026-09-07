@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
     [string]$Root
@@ -11,16 +11,28 @@ $OutputEncoding = $Utf8NoBom
 $Failed = $false
 # Только файлы, которые видит git под $Root: отслеживаемые и новые
 # неигнорируемые. Артефакты в .work/, .worktrees/, dist/ и вложенные
-# worktree не проверяются; core.quotePath=false отдаёт не-ASCII пути как есть.
-$Paths = @(& git -C $Root -c core.quotePath=false ls-files `
-    --cached --others --exclude-standard -- '*.ps1')
+# worktree не проверяются. core.quotePath=false отдаёт не-ASCII пути как
+# есть; :(icase) не различает регистр расширения, как -Filter на Windows.
+$Paths = @(git -C $Root -c core.quotePath=false ls-files `
+    --cached --others --exclude-standard -- ':(icase)*.ps1')
 if ($LASTEXITCODE -ne 0) {
-    throw ('git ls-files failed for ' + $Root + ' (exit ' + $LASTEXITCODE + ')')
+    [Console]::Error.WriteLine(
+        'git ls-files failed for ' + $Root + ' (exit ' + $LASTEXITCODE + ')'
+    )
+    exit 1
 }
+# Записи индекса, которых уже нет на диске, пропускаем (git ls-files --cached
+# перечисляет и их).
 $Files = @($Paths |
     ForEach-Object { Join-Path $Root $_ } |
     Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
     ForEach-Object { Get-Item -LiteralPath $_ })
+# Пустой список — ошибка вызова (например, -Root внутри игнорируемого
+# каталога), а не успешная проверка нуля файлов.
+if ($Files.Count -eq 0) {
+    [Console]::Error.WriteLine('No .ps1 files are visible to git under ' + $Root)
+    exit 1
+}
 foreach ($File in $Files) {
     $Tokens = $null
     $Errors = $null
