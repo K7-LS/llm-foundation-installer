@@ -165,14 +165,14 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
 в Preview без кеша комплект качает их сетью на рабочем месте. Заполнить кеш:
 
 ```powershell
-$root = '.\.work\client-assets\codex-cli\0.153.0'
+$root = '.\.work\client-assets\codex-cli\0.153.1'
 New-Item -ItemType Directory -Force $root | Out-Null
 curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
-  -o "$root\codex-release-0.153.0.json" https://releases.openai.com/codex/releases/0.153.0/release.json
+  -o "$root\codex-release-0.153.1.json" https://releases.openai.com/codex/releases/0.153.1/release.json
 curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
-  -o "$root\codex-package_SHA256SUMS" https://releases.openai.com/codex/releases/0.153.0/codex-package_SHA256SUMS
+  -o "$root\codex-package_SHA256SUMS" https://releases.openai.com/codex/releases/0.153.1/codex-package_SHA256SUMS
 curl.exe --fail --location --proto =https -C - --speed-limit 1024 --speed-time 60 `
-  -o "$root\codex-package-x86_64-pc-windows-msvc.tar.gz" https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.gz
+  -o "$root\codex-package-x86_64-pc-windows-msvc.tar.gz" https://releases.openai.com/codex/releases/0.153.1/codex-package-x86_64-pc-windows-msvc.tar.gz
 ```
 
 Версия для сотрудников содержит официальный закреплённый Claude Code, но не

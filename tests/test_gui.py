@@ -1160,7 +1160,7 @@ def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
         (entry["id"], entry["version"], entry["source_kind"])
         for entry in payload["clients"]
     ] == [
-        ("codex-cli", "0.153.0", "download"),
+        ("codex-cli", "0.153.1", "download"),
         ("codex-desktop", "store-current", "store"),
         ("claude-code", "2.1.218", "download"),
         ("opencode-cli", "1.18.13", "download"),
@@ -1254,12 +1254,12 @@ def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
         if entry["id"] == "codex-cli"
     )
 
-    # Стабильный релиз rust-v0.153.0 (2026-09-03): исправлен Windows read-only
-    # sandbox (openai/codex#35871, с 0.148); SHA — скрипта install.ps1 релиза.
-    assert cli["version"] == "0.153.0"
+    # Закреплён официальный rust-v0.153.1, совместимый с проверенным ядром.
+    # SHA install.ps1 совпадает с 0.153.0; архив и метаданные релиза изменились.
+    assert cli["version"] == "0.153.1"
     assert cli["url"] == (
         "https://github.com/openai/codex/releases/download/"
-        "rust-v0.153.0/install.ps1"
+        "rust-v0.153.1/install.ps1"
     )
     assert cli["sha256"] == (
         "391f247de2c70c7e99041979ec02dae7e76be27ac9cfc1dfe7c1eb21d48d8b97"
@@ -1270,21 +1270,50 @@ def test_codex_cli_source_is_bound_to_exact_compatible_release_asset():
     # пакет ~130 МБ на канале 200–300 КБ/с не проходил сетью; SHA — из
     # codex-package_SHA256SUMS релиза.
     assert [asset["file"] for asset in cli["bundled_assets"]] == [
-        "codex-release-0.153.0.json",
+        "codex-release-0.153.1.json",
         "codex-package_SHA256SUMS",
         "codex-package-x86_64-pc-windows-msvc.tar.gz",
     ]
     package = cli["bundled_assets"][2]
     assert package["url"] == (
-        "https://releases.openai.com/codex/releases/0.153.0/"
+        "https://releases.openai.com/codex/releases/0.153.1/"
         "codex-package-x86_64-pc-windows-msvc.tar.gz"
     )
     assert package["sha256"] == (
-        "dba6a113d7ab279b30772fcdc5d7f352c3a28556a49a1ea311b4ac8603dec807"
+        "69578c917d3eae8006091e7370d2e3c9347377cd97a70babef3c8a47ad044971"
     )
-    assert package["bytes"] == 135999589
+    assert package["bytes"] == 136042196
     for asset in cli["bundled_assets"]:
         assert asset["url"].startswith("https://releases.openai.com/codex/")
+
+
+def test_codex_cli_source_matches_official_release_metadata_and_checksums():
+    lock = json.loads(
+        (REPOSITORY_ROOT / "client-sources.lock.json").read_text(encoding="utf-8")
+    )
+    cli = next(entry for entry in lock["clients"] if entry["id"] == "codex-cli")
+    fixtures = REPOSITORY_ROOT / "tests" / "fixtures" / "codex-cli" / cli["version"]
+    release_path = fixtures / "release.json"
+    checksum_path = fixtures / "codex-package_SHA256SUMS"
+    release_asset, checksum_asset, package = cli["bundled_assets"]
+    for path, asset in ((release_path, release_asset), (checksum_path, checksum_asset)):
+        assert _sha256(path) == asset["sha256"]
+        assert path.stat().st_size == asset["bytes"]
+
+    release = json.loads(release_path.read_text(encoding="utf-8"))
+    assert release["tag_name"] == f"rust-v{cli['version']}"
+    by_name = {asset["name"]: asset for asset in release["assets"]}
+    assert len(by_name) == len(release["assets"])
+    for asset in (checksum_asset, package):
+        published = by_name[asset["file"]]
+        assert published["digest"] == f"sha256:{asset['sha256']}"
+        assert published["browser_download_url"] == asset["url"]
+    assert by_name["install.ps1"]["digest"] == f"sha256:{cli['sha256']}"
+
+    entries = [line.split() for line in checksum_path.read_text(encoding="utf-8").splitlines()]
+    checksums = {name: digest for digest, name in entries}
+    assert len(checksums) == len(entries)
+    assert checksums[package["file"]] == package["sha256"]
 
 
 def test_store_record_validation_accepts_only_locked_codex_identity(
@@ -2493,7 +2522,7 @@ if ((Get-Command Invoke-WebRequest).CommandType -cne 'Function' -or
     throw 'safe curl wrappers are not active'
 }
 $metadata = Invoke-RestMethod -Uri ($env:LLM_FIXTURE_BASE + '/metadata')
-# Official install.ps1 (rust-v0.153.0) passes -TimeoutSec and -OutFile;
+# Official install.ps1 (rust-v0.153.1) passes -TimeoutSec and -OutFile;
 # the wrapper must accept them or the script treats the source as down.
 $response = Invoke-WebRequest -UseBasicParsing -Uri (
     $env:LLM_FIXTURE_BASE + '/payload'
