@@ -15,9 +15,9 @@
       "role": "cli",
       "required_for_base": true,
       "required_for_employee": true,
-      "version": "0.153.0",
+      "version": "0.153.1",
       "source_kind": "download",
-      "url": "https://github.com/openai/codex/releases/download/rust-v0.153.0/install.ps1",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.153.1/install.ps1",
       "sha256": "391f247de2c70c7e99041979ec02dae7e76be27ac9cfc1dfe7c1eb21d48d8b97",
       "artifact_kind": "powershell-installer-script",
       "archive_entry": null,
@@ -35,22 +35,22 @@
       "store_signature_kind": null,
       "bundled_assets": [
         {
-          "file": "codex-release-0.153.0.json",
-          "url": "https://releases.openai.com/codex/releases/0.153.0/release.json",
-          "sha256": "566eaf0da0d580a5f450685f6c6bb02c9a3561b8962a539452779669b3ed72ff",
+          "file": "codex-release-0.153.1.json",
+          "url": "https://releases.openai.com/codex/releases/0.153.1/release.json",
+          "sha256": "29d73379305bf5c64f159b4e4342b49435d1aebe1627187c52e82e338602d326",
           "bytes": 47504
         },
         {
           "file": "codex-package_SHA256SUMS",
-          "url": "https://releases.openai.com/codex/releases/0.153.0/codex-package_SHA256SUMS",
-          "sha256": "21db5fb87191c300721481f6406f0e9d763d935402f640f295ed44bac234c394",
+          "url": "https://releases.openai.com/codex/releases/0.153.1/codex-package_SHA256SUMS",
+          "sha256": "7701a6a68e4197529cb051229834bc6e76cabcad3ae1353f52487780af349704",
           "bytes": 1392
         },
         {
           "file": "codex-package-x86_64-pc-windows-msvc.tar.gz",
-          "url": "https://releases.openai.com/codex/releases/0.153.0/codex-package-x86_64-pc-windows-msvc.tar.gz",
-          "sha256": "dba6a113d7ab279b30772fcdc5d7f352c3a28556a49a1ea311b4ac8603dec807",
-          "bytes": 135999589
+          "url": "https://releases.openai.com/codex/releases/0.153.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
+          "sha256": "69578c917d3eae8006091e7370d2e3c9347377cd97a70babef3c8a47ad044971",
+          "bytes": 136042196
         }
       ]
     },

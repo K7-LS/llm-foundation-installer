@@ -3,7 +3,8 @@
 This change supports the unpublished `professional-core-v1` acceptance protocol
 and the exact `k7-professional-core-v1` contract. It is not an engine release,
 installer build, signature, or consumer installation. The local engine candidate
-is 0.5.11; APP_VERSION and the CLI download lock remain unchanged.
+is 0.5.11; APP_VERSION remains unchanged. The separately verified bootstrap
+lock now selects official Codex CLI 0.153.1 for a new installation.
 
 Foundation validates the known contract reference, the exact embedded bytes,
 and the matching release reference. A core package requires its release
@@ -70,6 +71,16 @@ acceptance. Existing consumers require a trusted transition delivering the new
 sync script and policy together. A policy-only bridge is not supported.
 The external, separately observed Codex CLI 0.153.1 may be retained: Foundation's
 external-client check preserves its historical ID/version-syntax policy. The
-official-download lock still points to 0.153.0, so downloading/upgrading a bundled
-CLI requires separate source verification and acceptance. This source change
-does not certify an automatic migration of that download path.
+official-download lock now points to 0.153.1, with release metadata, checksum
+list and Windows x64 package hashes bound to that version. The official
+`install.ps1` bytes are unchanged from 0.153.0. The old 0.153.0 metadata fixtures
+remain as historical files; current offline bundle tests use new 0.153.1 fixtures.
+Official sources are the [tagged release](https://github.com/openai/codex/releases/tag/rust-v0.153.1)
+and its [release metadata](https://releases.openai.com/codex/releases/0.153.1/release.json).
+
+This bootstrap lock update does not change the nine engine payload files or
+relabel acceptance evidence produced from installer commit
+`f3e5757fed87b8d1154d82d0de87ffbfc25fc6e5`. Existing exact-package evidence stays
+bound to its original bytes. Offline metadata and bundle checks do not certify
+the full GUI installer, a real-profile installation, or an automatic migration
+of the download path; those require their own observed acceptance.

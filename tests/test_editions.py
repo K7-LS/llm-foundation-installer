@@ -703,14 +703,17 @@ def test_edition_bundle_carries_hash_bound_runtime_sidecar(
 
 
 def _codex_asset_root(tmp_path: Path) -> Path:
-    # Маленькие реальные файлы релиза rust-v0.153.0 из tests/fixtures;
+    # Маленькие реальные файлы релиза rust-v0.153.1 из tests/fixtures;
     # пакет 129 МБ в репозиторий не кладётся — в Preview он необязателен.
     root = tmp_path / "client-assets"
-    target = root / "codex-cli" / "0.153.0"
+    target = root / "codex-cli" / "0.153.1"
     target.mkdir(parents=True)
-    fixtures = REPOSITORY / "tests" / "fixtures" / "codex-cli" / "0.153.0"
-    for name in ("codex-release-0.153.0.json", "codex-package_SHA256SUMS"):
-        shutil.copyfile(fixtures / name, target / name)
+    fixtures = REPOSITORY / "tests" / "fixtures" / "codex-cli" / "0.153.1"
+    for source_name, bundled_name in (
+        ("release.json", "codex-release-0.153.1.json"),
+        ("codex-package_SHA256SUMS", "codex-package_SHA256SUMS"),
+    ):
+        shutil.copyfile(fixtures / source_name, target / bundled_name)
     return root
 
 
@@ -786,7 +789,7 @@ def test_edition_bundle_rejects_bundled_asset_that_differs_from_lock(
     tmp_path: Path,
 ) -> None:
     root = _codex_asset_root(tmp_path)
-    (root / "codex-cli" / "0.153.0" / "codex-package_SHA256SUMS").write_bytes(
+    (root / "codex-cli" / "0.153.1" / "codex-package_SHA256SUMS").write_bytes(
         b"tampered\n"
     )
     result = subprocess.run(
