@@ -24,6 +24,17 @@ function Get-Sha256 {
 
 function Find-RoslynCompiler {
     param([Parameter(Mandatory = $true)][string]$Purpose)
+    $Pinned = [Environment]::GetEnvironmentVariable('K7_ROSLYN_COMPILER_PATH', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($Pinned)) {
+        $FullPath = [IO.Path]::GetFullPath($Pinned)
+        if ([IO.Path]::GetFileName($FullPath) -ine 'csc.exe' -or
+            -not (Test-Path -LiteralPath $FullPath -PathType Leaf) -or
+            ((Get-Item -LiteralPath $FullPath -Force).Attributes -band
+                [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Pinned Roslyn compiler is missing or unsafe.'
+        }
+        return $FullPath
+    }
     $Candidates = New-Object System.Collections.Generic.List[string]
     $VsWhere = Join-Path ${env:ProgramFiles(x86)} (
         'Microsoft Visual Studio\Installer\vswhere.exe'

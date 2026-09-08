@@ -1818,7 +1818,8 @@ def test_engine_build_uses_a_local_officecli_cache_without_network(tmp_path):
     # проверка хеша остаётся обязательной на любом пути.
     executable = POWERSHELLS[0]
     cache_root = tmp_path / "cache"
-    pinned = REPOSITORY_ROOT.parent / ".officecli-cache" / "officecli.exe"
+    pinned = Path(os.environ.get("K7_OFFICECLI_BINARY_PATH") or
+                  REPOSITORY_ROOT.parent / ".officecli-cache" / "officecli.exe")
     if not pinned.is_file():
         pytest.skip("нет локальной копии officecli для наполнения кеша")
     environment = {

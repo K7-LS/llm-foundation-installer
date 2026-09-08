@@ -1194,7 +1194,9 @@ def test_doctor_accepts_session_updater_state_schema_two(
     """The session updater rewrites the state as schema 2 with a complete
     flag; doctor and a later upgrade install must accept it."""
     stem = f"schema2-{mutation}-{Path(executable).stem}"
-    home = tmp_path / stem
+    # tmp_path is already unique per parameter. Keep the home short enough for
+    # PS5.1 snapshot temp files; this test checks state schemas, not MAX_PATH.
+    home = tmp_path / "h"
     home.mkdir()
     first = _modern_package(tmp_path / f"{stem}-first.zip", version="1.1.0")
     installed = _run(executable, engine_root, "install", home, package=first)

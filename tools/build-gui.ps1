@@ -355,6 +355,21 @@ function Assert-ReleaseBinding {
     if ($null -ne $Evidence.release_binding.PSObject.Properties['client']) {
         $Fields += 'client'
     }
+    if ($null -ne $Release.PSObject.Properties['core_behavior_contract']) {
+        $Fields += 'core_behavior_contract'
+        if ($null -ne $Release.PSObject.Properties['session_tools_asset']) {
+            $Fields += 'session_tools_asset'
+        }
+        $ActualFields = @($Evidence.release_binding.PSObject.Properties.Name)
+        if ($ActualFields.Count -ne $Fields.Count) {
+            throw 'Current acceptance release binding properties differ'
+        }
+        foreach ($Field in $Fields) {
+            if ($ActualFields -cnotcontains $Field) {
+                throw 'Current acceptance release binding properties differ'
+            }
+        }
+    }
     foreach ($Field in $Fields) {
         $EvidenceValue = $Evidence.release_binding.$Field |
             ConvertTo-Json -Depth 30 -Compress
@@ -362,6 +377,427 @@ function Assert-ReleaseBinding {
             ConvertTo-Json -Depth 30 -Compress
         if ($EvidenceValue -cne $ReleaseValue) {
             throw "Acceptance release binding differs: $Field"
+        }
+    }
+}
+
+function Assert-AcceptedCoreReference {
+    param($Contract)
+    $Expected = @{
+        id = 'k7-professional-core-v1'
+        sha256 = '028ba6363bff000b4aa8551ca27a66a69631cb29dacdc5319a4ce0b696b3a184'
+        suite_sha256 = '62b45686075d01277f9c924ca245f105dc5c54ba385f74084b7bdd379218d49c'
+    }
+    if ($Contract -isnot [Management.Automation.PSCustomObject] -or
+        @($Contract.PSObject.Properties).Count -ne $Expected.Count) {
+        throw 'Accepted core behavior contract structure differs'
+    }
+    foreach ($Name in $Expected.Keys) {
+        if (@($Contract.PSObject.Properties.Name) -cnotcontains $Name -or
+            $Contract.$Name -isnot [string] -or
+            [string]$Contract.$Name -cne $Expected[$Name]) {
+            throw 'Accepted core behavior contract is unknown or changed'
+        }
+    }
+}
+
+function Read-AcceptedCoreZipEntry {
+    param($Archive, [string]$Name)
+    $Matches = @($Archive.Entries | Where-Object { $_.FullName -ceq $Name })
+    if ($Matches.Count -ne 1 -or $Matches[0].Length -le 0 -or
+        $Matches[0].Length -gt 8388608) {
+        throw "Accepted package entry is missing, duplicated or outside limits: $Name"
+    }
+    $Stream = $Matches[0].Open()
+    $Memory = New-Object IO.MemoryStream
+    try {
+        $Stream.CopyTo($Memory)
+        return ,$Memory.ToArray()
+    } finally {
+        $Memory.Dispose()
+        $Stream.Dispose()
+    }
+}
+
+function Get-AcceptedCoreBytesSha256 {
+    param([byte[]]$Bytes)
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+    } finally { $Hasher.Dispose() }
+}
+
+function Assert-AcceptedCodexCore {
+    param($Evidence, $Release, [string]$AssetPath)
+    # This consumes a trusted producer verdict; it does not reproduce the
+    # Python behavioral audit or establish authenticity of execution events.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    $Archive = [IO.Compression.ZipFile]::OpenRead($AssetPath)
+    try {
+        $Names = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        foreach ($Entry in $Archive.Entries) {
+            if (-not $Names.Add([string]$Entry.FullName)) {
+                throw 'Accepted package contains duplicate ZIP paths'
+            }
+        }
+        $PackageBytes = Read-AcceptedCoreZipEntry $Archive 'package-manifest.json'
+        if ((Get-AcceptedCoreBytesSha256 $PackageBytes) -cne [string]$Release.package_manifest_sha256) {
+            throw 'Accepted package manifest SHA-256 differs'
+        }
+        $Package = (New-Object Text.UTF8Encoding($false, $true)).GetString($PackageBytes) |
+            ConvertFrom-Json -ErrorAction Stop
+        $CorePath = '.codex/base/core-eval-contract.json'
+        $Current = $Names.Contains($CorePath) -or
+            $null -ne $Package.PSObject.Properties['core_behavior_contract'] -or
+            $null -ne $Release.PSObject.Properties['core_behavior_contract']
+        foreach ($Marker in @('acceptance_protocol', 'CORE_BEHAVIOR', 'core_behavior_evidence', 'matched_ab_not_required_reason')) {
+            $Current = $Current -or $null -ne $Evidence.PSObject.Properties[$Marker]
+        }
+        if (-not $Current) { return } # Historical accepted-package semantics.
+        Assert-AcceptedCoreReference $Package.core_behavior_contract
+        Assert-AcceptedCoreReference $Release.core_behavior_contract
+        Assert-AcceptedCoreReference $Evidence.release_binding.core_behavior_contract
+        if ([string]$Package.target -cne 'codex' -or
+            [string]$Package.version -cne [string]$Release.version -or
+            [string]$Package.client.id -cne [string]$Release.client.id -or
+            [string]$Package.client.supported_version -cne [string]$Release.client.supported_version) {
+            throw 'Accepted core package target, version or client differs'
+        }
+        $CoreBytes = Read-AcceptedCoreZipEntry $Archive $CorePath
+        if ((Get-AcceptedCoreBytesSha256 $CoreBytes) -cne [string]$Release.core_behavior_contract.sha256) {
+            throw 'Accepted embedded core behavior contract bytes differ'
+        }
+        if ($Evidence.acceptance_protocol -isnot [string] -or
+            [string]$Evidence.acceptance_protocol -cne 'professional-core-v1' -or
+            $Evidence.CORE_BEHAVIOR -isnot [string] -or [string]$Evidence.CORE_BEHAVIOR -cne 'PASS' -or
+            $Evidence.MATCHED_AB -isnot [string] -or [string]$Evidence.MATCHED_AB -cne 'NOT_REQUIRED' -or
+            $Evidence.matched_ab_not_required_reason -isnot [string] -or
+            [string]$Evidence.matched_ab_not_required_reason -cne 'Historical startup-token benchmark is separate from professional-core conformance.' -or
+            [string]$Evidence.CODEX_CANARY -cne 'PASS') {
+            throw 'Accepted professional core protocol or verdict differs'
+        }
+        if ($Evidence.core_behavior_evidence -isnot [Management.Automation.PSCustomObject] -or
+            $Evidence.core_behavior_evidence.evaluation_mode -isnot [string] -or
+            [string]$Evidence.core_behavior_evidence.evaluation_mode -cne 'RELEASE_PACKAGE' -or
+            ($Evidence.core_behavior_evidence.schema_version -isnot [int] -and
+                $Evidence.core_behavior_evidence.schema_version -isnot [long]) -or
+            $Evidence.core_behavior_evidence.schema_version -ne 1 -or
+            [string]$Evidence.core_behavior_evidence.kind -cne 'core_behavior_evidence' -or
+            [string]$Evidence.core_behavior_evidence.CORE_BEHAVIOR -cne 'PASS' -or
+            [string]$Evidence.core_behavior_evidence.claim -cne 'SINGLE_RUN_CONFORMANCE_NOT_RELIABILITY') {
+            throw 'Accepted core behavior evidence envelope differs'
+        }
+        Assert-AcceptedCoreReference $Evidence.core_behavior_evidence.protocol
+        Assert-ReleaseBinding $Evidence $Release
+        Assert-ReleaseBinding $Evidence.core_behavior_evidence $Release
+        Assert-AcceptedIsolatedEngine $Evidence $Release $Archive
+    } finally { $Archive.Dispose() }
+}
+
+function Assert-AcceptedIsolatedEngine {
+    param($Evidence, $Release, $Archive)
+    $Foundation = $Evidence.foundation
+    $ExpectedFiles = @(
+        'VERSION', 'engine-manifest.json', 'foundation.ps1', 'shared-tools.lock.json',
+        'shared-tools/officecli/officecli.exe', 'shared-tools/officecli/officecli-shim.exe',
+        'shared-tools/officecli/officecli-command-policy.json',
+        'shared-tools/officecli/k7-officecli-pdf.exe',
+        'shared-tools/officecli/officecli_csv_batch.py'
+    )
+    $Scenarios = @('fresh_install_rollback', 'existing_install_rollback', 'late_failure_rollback',
+        'interrupted_recovery', 'snapshot_tamper_rejected', 'receipt_drift_rejected',
+        'foreign_generation_rejected')
+    $Reason = 'The historical runner includes the full installer/GUI suite; this protocol is explicitly engine-only.'
+    foreach ($Counter in @($Foundation.model_requests, $Foundation.scope.model_requests)) {
+        if (($Counter -isnot [int] -and $Counter -isnot [long]) -or $Counter -ne 0) {
+            throw 'Accepted isolated engine protocol or scope differs'
+        }
+    }
+    if ([string]$Evidence.FOUNDATION_ENGINE_ACCEPTANCE -cne 'PASS' -or
+        [string]$Evidence.FOUNDATION_SYNTHETIC -cne 'NOT_RUN' -or
+        $Foundation -isnot [Management.Automation.PSCustomObject] -or
+        [string]$Foundation.acceptance_protocol -cne 'foundation-engine-isolated-v1' -or
+        ($Foundation.schema_version -isnot [int] -and $Foundation.schema_version -isnot [long]) -or
+        $Foundation.schema_version -ne 1 -or
+        [string]$Foundation.FOUNDATION_ENGINE_ACCEPTANCE -cne 'PASS' -or
+        [string]$Foundation.FOUNDATION_SYNTHETIC -cne 'NOT_RUN' -or
+        [string]$Foundation.INSTALLER_ACCEPTANCE -cne 'NOT_RUN' -or
+        [string]$Foundation.historical_not_run_reason -cne $Reason -or
+        [string]$Foundation.engine_version -cne [string]$Release.foundation_engine_version -or
+        [string]$Foundation.evidence_body_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        [string]$Foundation.deterministic_engine_bundle -cne 'PASS' -or
+        [string]$Foundation.engine_lifecycle.status -cne 'PASS' -or
+        [string]$Foundation.engine_lifecycle.evaluation_mode -cne 'SYNTHETIC_HOME' -or
+        $Foundation.scope.fake_homes_only -isnot [bool] -or -not $Foundation.scope.fake_homes_only -or
+        $Foundation.scope.real_consumer_executed -isnot [bool] -or $Foundation.scope.real_consumer_executed -or
+        $Foundation.scope.gui_executed -isnot [bool] -or $Foundation.scope.gui_executed -or
+        $Foundation.model_requests -cne 0 -or $Foundation.scope.model_requests -cne 0) {
+        throw 'Accepted isolated engine protocol or scope differs'
+    }
+    if ([string]$Foundation.source.repository -cne 'https://github.com/K7-LS/llm-foundation-installer' -or
+        [string]$Foundation.source.commit -cnotmatch '^[a-f0-9]{40}$' -or
+        [string]$Foundation.source.tree -cnotmatch '^[a-f0-9]{40}$' -or
+        @($Foundation.source.hashes.PSObject.Properties).Count -ne 6) {
+        throw 'Accepted isolated engine source differs'
+    }
+    foreach ($Component in @('VERSION', 'APP_VERSION', 'client-sources.lock.json', 'src', 'tests', 'tools')) {
+        if ([string]$Foundation.source.hashes.$Component -cnotmatch '^[a-f0-9]{64}$') {
+            throw 'Accepted isolated engine source differs'
+        }
+    }
+    if (@($Foundation.engine_lifecycle.required_scenarios).Count -ne 7 -or
+        @($Foundation.engine_lifecycle.shells.PSObject.Properties).Count -ne 2 -or
+        @($Foundation.engine_builds.PSObject.Properties).Count -ne 2 -or
+        @($Foundation.powershell_syntax.PSObject.Properties).Count -ne 2) {
+        throw 'Accepted isolated engine matrix differs'
+    }
+    $Prefix = '.codex/base/foundation/' + [string]$Release.foundation_engine_version + '/'
+    $Actual = @{}
+    foreach ($Name in $ExpectedFiles) {
+        $Entries = @($Archive.Entries | Where-Object { $_.FullName -ceq ($Prefix + $Name) })
+        if ($Entries.Count -ne 1 -or $Entries[0].Length -le 0 -or $Entries[0].Length -gt 268435456) {
+            throw 'Accepted isolated engine ZIP inventory differs'
+        }
+        $Stream = $Entries[0].Open(); $Hasher = [Security.Cryptography.SHA256]::Create()
+        try { $Actual[$Name] = ([BitConverter]::ToString($Hasher.ComputeHash($Stream))).Replace('-', '').ToLowerInvariant() }
+        finally { $Hasher.Dispose(); $Stream.Dispose() }
+    }
+    if (@($Archive.Entries | Where-Object { $_.FullName.StartsWith($Prefix, [StringComparison]::Ordinal) }).Count -ne 9 -or
+        $Actual['engine-manifest.json'] -cne [string]$Release.foundation_engine_manifest_sha256) {
+        throw 'Accepted isolated engine ZIP binding differs'
+    }
+    $ManifestBytes = Read-AcceptedCoreZipEntry $Archive ($Prefix + 'engine-manifest.json')
+    $Manifest = (New-Object Text.UTF8Encoding($false, $true)).GetString($ManifestBytes) | ConvertFrom-Json
+    $VersionBytes = Read-AcceptedCoreZipEntry $Archive ($Prefix + 'VERSION')
+    $ActualVersion = (New-Object Text.UTF8Encoding($false, $true)).GetString($VersionBytes).Trim()
+    if ($ActualVersion -cne [string]$Release.foundation_engine_version -or
+        [string]$Manifest.engine_version -cne [string]$Foundation.engine_version -or
+        [string]$Manifest.foundation_ps1_sha256 -cne $Actual['foundation.ps1'] -or
+        [string]$Manifest.network -cne 'offline') { throw 'Accepted isolated engine ZIP binding differs' }
+    foreach ($Shell in @('ps7', 'ps51')) {
+        $Build = $Foundation.engine_builds.$Shell
+        $Syntax = $Foundation.powershell_syntax.$Shell
+        $Lifecycle = $Foundation.engine_lifecycle.shells.$Shell
+        foreach ($Counter in @($Build.returncode, $Syntax.returncode)) {
+            if (($Counter -isnot [int] -and $Counter -isnot [long]) -or $Counter -ne 0) {
+                throw 'Accepted isolated engine matrix differs'
+            }
+        }
+        if ([string]$Build.status -cne 'PASS' -or $Build.returncode -cne 0 -or
+            [string]$Syntax.status -cne 'PASS' -or $Syntax.returncode -cne 0 -or
+            @($Build.files.PSObject.Properties).Count -ne 9 -or
+            [string]$Lifecycle.status -cne 'PASS' -or
+            [string]$Lifecycle.engine_sha256 -cne $Actual['foundation.ps1'] -or
+            [string]$Lifecycle.engine_manifest_sha256 -cne $Actual['engine-manifest.json'] -or
+            @($Lifecycle.scenario_ids).Count -ne 7 -or @($Lifecycle.receipts).Count -ne 7) {
+            throw 'Accepted isolated engine matrix differs'
+        }
+        foreach ($Flag in @('user_environment_unchanged', 'installed_files_verified', 'rollback_byte_identical')) {
+            if ($Lifecycle.$Flag -isnot [bool] -or -not $Lifecycle.$Flag) { throw 'Accepted isolated engine matrix differs' }
+        }
+        for ($Index = 0; $Index -lt 7; $Index++) {
+            if (($Lifecycle.receipts[$Index].bytes -isnot [int] -and
+                $Lifecycle.receipts[$Index].bytes -isnot [long])) { throw 'Accepted isolated engine matrix differs' }
+            if ([string]$Lifecycle.scenario_ids[$Index] -cne $Scenarios[$Index] -or
+                [string]$Foundation.engine_lifecycle.required_scenarios[$Index] -cne $Scenarios[$Index] -or
+                [string]$Lifecycle.receipts[$Index].sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+                [string]::IsNullOrWhiteSpace([string]$Lifecycle.receipts[$Index].path) -or
+                $Lifecycle.receipts[$Index].bytes -le 0) { throw 'Accepted isolated engine matrix differs' }
+        }
+        foreach ($Name in $ExpectedFiles) {
+            if ([string]$Build.files.$Name -cne $Actual[$Name]) { throw 'Accepted isolated engine ZIP binding differs' }
+        }
+    }
+    foreach ($Counter in @($Foundation.pytest.returncode, $Foundation.pytest.counts.tests,
+        $Foundation.pytest.counts.failures, $Foundation.pytest.counts.errors,
+        $Foundation.pytest.counts.skipped, $Foundation.pytest.junit_artifact.bytes)) {
+        if ($Counter -isnot [int] -and $Counter -isnot [long]) { throw 'Accepted isolated engine test evidence differs' }
+    }
+    if ([string]$Foundation.pytest.status -cne 'PASS' -or $Foundation.pytest.returncode -cne 0 -or
+        $Foundation.pytest.counts.tests -le 0 -or $Foundation.pytest.counts.failures -cne 0 -or
+        $Foundation.pytest.counts.errors -cne 0 -or $Foundation.pytest.counts.skipped -ne 0 -or
+        [string]$Foundation.pytest.junit_sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        [string]$Foundation.pytest.junit_artifact.sha256 -cne [string]$Foundation.pytest.junit_sha256 -or
+        [string]::IsNullOrWhiteSpace([string]$Foundation.pytest.junit_artifact.path) -or
+        $Foundation.pytest.junit_artifact.bytes -le 0 -or
+        @($Foundation.pytest.selected_files).Count -eq 0 -or
+        @($Foundation.pytest.collected_case_ids).Count -ne $Foundation.pytest.counts.tests) {
+        throw 'Accepted isolated engine test evidence differs'
+    }
+    Assert-AcceptedFoundationArtifacts $Evidence $Scenarios
+}
+
+function Get-AcceptedFoundationArtifactText {
+    param($Artifacts, $Record)
+    if ($Record.sha256 -isnot [string] -or $Record.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        ($Record.bytes -isnot [int] -and $Record.bytes -isnot [long]) -or
+        $Record.bytes -le 0 -or $Record.bytes -gt 4194304) { throw 'Accepted isolated engine artifact differs' }
+    $Property = $Artifacts.PSObject.Properties[[string]$Record.sha256]
+    if ($null -eq $Property) { throw 'Accepted isolated engine artifact is missing' }
+    $Artifact = $Property.Value
+    if ($Artifact.text -isnot [string] -or [string]$Artifact.sha256 -cne [string]$Record.sha256 -or
+        ($Artifact.bytes -isnot [int] -and $Artifact.bytes -isnot [long]) -or
+        $Artifact.bytes -ne $Record.bytes) { throw 'Accepted isolated engine artifact differs' }
+    $Bytes = (New-Object Text.UTF8Encoding($false, $true)).GetBytes($Artifact.text)
+    if ($Bytes.Length -ne $Record.bytes -or
+        (Get-AcceptedCoreBytesSha256 $Bytes) -cne [string]$Record.sha256) { throw 'Accepted isolated engine artifact bytes differ' }
+    return [string]$Artifact.text
+}
+
+function Assert-AcceptedFoundationEnvironmentHashes {
+    param($Before, $After)
+    if (@($Before.PSObject.Properties).Count -ne 3 -or @($After.PSObject.Properties).Count -ne 3) {
+        throw 'Accepted isolated engine User environment differs'
+    }
+    foreach ($Name in @('PATH', 'OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE')) {
+        if ([string]$Before.$Name -cnotmatch '^[a-f0-9]{64}$' -or
+            [string]$After.$Name -cne [string]$Before.$Name) { throw 'Accepted isolated engine User environment differs' }
+    }
+}
+
+function Assert-AcceptedFoundationArtifacts {
+    param($Evidence, [string[]]$Scenarios)
+    $Foundation = $Evidence.foundation; $Tests = $Foundation.pytest
+    $ExpectedTests = @('tests/test_foundation.py', 'tests/test_foundation_shared_tools.py',
+        'tests/test_foundation_release.py', 'tests/test_acceptance_runner.py',
+        'tests/test_professional_core_compat.py', 'tests/test_engine_isolated_lifecycle.py',
+        'tests/test_engine_acceptance_runner.py')
+    if (@($Tests.selected_files).Count -ne 7 -or @($Tests.selected_files_sha256.PSObject.Properties).Count -ne 7 -or
+        @($Evidence.foundation_artifacts.PSObject.Properties).Count -ne 15) {
+        throw 'Accepted isolated engine artifact coverage differs'
+    }
+    $TotalBytes = 0L
+    foreach ($Property in $Evidence.foundation_artifacts.PSObject.Properties) {
+        if (($Property.Value.bytes -isnot [int] -and $Property.Value.bytes -isnot [long]) -or
+            $Property.Value.bytes -le 0) { throw 'Accepted isolated engine artifact differs' }
+        $TotalBytes += $Property.Value.bytes
+    }
+    if ($TotalBytes -gt 4194304) { throw 'Accepted isolated engine artifact size differs' }
+    for ($Index = 0; $Index -lt 7; $Index++) {
+        if ([string]$Tests.selected_files[$Index] -cne $ExpectedTests[$Index] -or
+            [string]$Tests.selected_files_sha256.($ExpectedTests[$Index]) -cnotmatch '^[a-f0-9]{64}$') {
+            throw 'Accepted isolated engine artifact coverage differs'
+        }
+    }
+    Assert-AcceptedFoundationEnvironmentHashes $Foundation.real_user_environment_before $Foundation.real_user_environment_after
+    $Used = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($Shell in @('ps7', 'ps51')) {
+        $Run = $Foundation.engine_lifecycle.shells.$Shell
+        for ($Index = 0; $Index -lt 7; $Index++) {
+            $Record = $Run.receipts[$Index]
+            if (-not $Used.Add([string]$Record.sha256)) { throw 'Accepted isolated engine artifact coverage differs' }
+            $Text = Get-AcceptedFoundationArtifactText $Evidence.foundation_artifacts $Record
+            $Receipt = $Text | ConvertFrom-Json -ErrorAction Stop
+            if ([string]$Receipt.scenario_id -cne $Scenarios[$Index] -or [string]$Receipt.shell -cne $Shell -or
+                [string]$Receipt.status -cne 'PASS' -or [string]$Receipt.engine_sha256 -cne [string]$Run.engine_sha256 -or
+                [string]$Receipt.engine_manifest_sha256 -cne [string]$Run.engine_manifest_sha256 -or
+                $Receipt.commands -isnot [Array] -or @($Receipt.commands).Count -eq 0) {
+                throw 'Accepted isolated engine receipt differs'
+            }
+            foreach ($Command in $Receipt.commands) {
+                if ($Command.command -isnot [Array] -or @($Command.command).Count -eq 0 -or
+                    ($Command.returncode -isnot [int] -and $Command.returncode -isnot [long]) -or
+                    $Command.stdout -isnot [string] -or $Command.stderr -isnot [string]) { throw 'Accepted isolated engine receipt differs' }
+                foreach ($Argument in $Command.command) {
+                    if ($Argument -isnot [string] -or [string]::IsNullOrWhiteSpace($Argument)) { throw 'Accepted isolated engine receipt differs' }
+                }
+            }
+            Assert-AcceptedFoundationEnvironmentHashes $Receipt.real_user_environment_before $Receipt.real_user_environment_after
+            Assert-AcceptedFoundationEnvironmentHashes $Foundation.real_user_environment_before $Receipt.real_user_environment_before
+            if ($Receipt.before -isnot [Management.Automation.PSCustomObject] -or
+                $Receipt.after -isnot [Management.Automation.PSCustomObject] -or
+                @($Receipt.before.PSObject.Properties).Count -ne 2 -or @($Receipt.after.PSObject.Properties).Count -ne 2) {
+                throw 'Accepted isolated engine rollback bytes differ'
+            }
+            foreach ($Group in @('files', 'fake_environment')) {
+                $Before = $Receipt.before.$Group; $After = $Receipt.after.$Group
+                if ($Before -isnot [Management.Automation.PSCustomObject] -or
+                    $After -isnot [Management.Automation.PSCustomObject] -or
+                    @($Before.PSObject.Properties).Count -ne @($After.PSObject.Properties).Count) {
+                    throw 'Accepted isolated engine rollback bytes differ'
+                }
+                foreach ($Property in $Before.PSObject.Properties) {
+                    if ($Property.Value -isnot [string] -or $Property.Value -cnotmatch '^[a-f0-9]{64}$' -or
+                        [string]$After.($Property.Name) -cne $Property.Value) { throw 'Accepted isolated engine rollback bytes differ' }
+                }
+            }
+        }
+    }
+    if (-not $Used.Add([string]$Tests.junit_artifact.sha256) -or $Used.Count -ne 15) { throw 'Accepted isolated engine artifact coverage differs' }
+    $XmlText = Get-AcceptedFoundationArtifactText $Evidence.foundation_artifacts $Tests.junit_artifact
+    $Settings = New-Object Xml.XmlReaderSettings
+    $Settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $Settings.XmlResolver = $null
+    $Reader = [Xml.XmlReader]::Create((New-Object IO.StringReader($XmlText)), $Settings)
+    $Document = New-Object Xml.XmlDocument; $Document.XmlResolver = $null
+    try { $Document.Load($Reader) } finally { $Reader.Dispose() }
+    $Cases = @($Document.SelectNodes('//testcase'))
+    $Totals = @{ tests = 0; failures = 0; errors = 0; skipped = 0 }
+    foreach ($Suite in @($Document.SelectNodes('//testsuite'))) {
+        foreach ($Name in @('failures', 'errors')) {
+            if ([string]$Suite.GetAttribute($Name) -cnotmatch '^0$') { throw 'Accepted isolated engine JUnit differs' }
+        }
+    }
+    foreach ($Suite in @($Document.SelectNodes('//testsuite[not(testsuite)]'))) {
+        foreach ($Name in @('tests', 'failures', 'errors', 'skipped')) {
+            if ([string]$Suite.GetAttribute($Name) -cnotmatch '^[0-9]+$') { throw 'Accepted isolated engine JUnit differs' }
+            $Totals[$Name] += [int]$Suite.GetAttribute($Name)
+        }
+    }
+    foreach ($Name in @('tests', 'failures', 'errors', 'skipped')) {
+        if ($Totals[$Name] -ne $Tests.counts.$Name) { throw 'Accepted isolated engine JUnit differs' }
+    }
+    if ($Cases.Count -ne $Totals.tests -or @($Document.SelectNodes('//testcase/failure|//testcase/error')).Count -ne 0 -or
+        @($Document.SelectNodes('//testcase/skipped')).Count -ne $Totals.skipped) { throw 'Accepted isolated engine JUnit differs' }
+    $Observed = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $Collected = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $ObservedFiles = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($Id in $Tests.collected_case_ids) {
+        if ($Id -isnot [string] -or -not $Collected.Add($Id)) { throw 'Accepted isolated engine JUnit identity differs' }
+    }
+    if ([string]$Tests.collection.status -cne 'PASS' -or
+        ($Tests.collection.returncode -isnot [int] -and $Tests.collection.returncode -isnot [long]) -or
+        $Tests.collection.returncode -ne 0 -or $Tests.collection.stdout -isnot [string] -or
+        $Tests.collection.stderr -isnot [string] -or $Tests.collection.command -isnot [Array] -or
+        @($Tests.collection.command) -cnotcontains '--collect-only') { throw 'Accepted isolated engine JUnit identity differs' }
+    $RawCollected = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($Line in $Tests.collection.stdout.Split("`n")) {
+        $CleanLine = $Line.TrimEnd("`r")
+        if ($CleanLine.StartsWith('tests/', [StringComparison]::Ordinal) -and $CleanLine.Contains('::')) {
+            if (-not $RawCollected.Add($CleanLine)) { throw 'Accepted isolated engine JUnit identity differs' }
+        }
+    }
+    if (-not $RawCollected.SetEquals($Collected)) { throw 'Accepted isolated engine JUnit identity differs' }
+    foreach ($Case in $Cases) {
+        $Module = [string]$Case.GetAttribute('classname'); $NodeId = $null
+        foreach ($File in $ExpectedTests) {
+            $Dotted = $File.Substring(0, $File.Length - 3).Replace('/', '.')
+            if ($Module -ceq $Dotted) {
+                $null = $ObservedFiles.Add($File)
+                $NodeId = $File + '::' + $Case.GetAttribute('name'); break
+            }
+            if ($Module.StartsWith($Dotted + '.', [StringComparison]::Ordinal)) {
+                $null = $ObservedFiles.Add($File)
+                $NodeId = $File + '::' + $Module.Substring($Dotted.Length + 1).Replace('.', '::') + '::' + $Case.GetAttribute('name'); break
+            }
+        }
+        if ($null -eq $NodeId -or -not $Observed.Add($NodeId) -or -not $Collected.Contains($NodeId)) {
+            throw 'Accepted isolated engine JUnit identity differs'
+        }
+    }
+    if (-not $Observed.SetEquals($Collected)) { throw 'Accepted isolated engine JUnit identity differs' }
+    if (-not $ObservedFiles.SetEquals([string[]]$ExpectedTests)) { throw 'Accepted isolated engine JUnit module coverage differs' }
+    foreach ($Shell in @('ps7', 'ps51')) {
+        foreach ($Scenario in $Scenarios) {
+            $Matches = @($Cases | Where-Object {
+                $_.GetAttribute('classname') -ceq 'tests.test_engine_isolated_lifecycle' -and
+                $_.GetAttribute('name').StartsWith('test_actual_built_engine_lifecycle[' + $Scenario + '-', [StringComparison]::Ordinal) -and
+                $(if ($Shell -ceq 'ps7') { $_.GetAttribute('name') -imatch 'pwsh\.exe\]$' }
+                  else { $_.GetAttribute('name') -imatch 'powershell\.exe\]$' })
+            })
+            if ($Matches.Count -ne 1 -or @($Matches[0].SelectNodes('skipped|failure|error')).Count -ne 0) {
+                throw 'Accepted isolated engine JUnit lifecycle coverage differs'
+            }
         }
     }
 }
@@ -676,8 +1112,8 @@ function Read-AcceptedPackages {
         try {
             $Release = Get-Content -LiteralPath $ReleasePath -Raw |
                 ConvertFrom-Json
-            $Evidence = Get-Content -LiteralPath $EvidencePath -Raw |
-                ConvertFrom-Json
+            $Evidence = Get-Content -LiteralPath $EvidencePath -Raw -Encoding UTF8 |
+                ConvertFrom-Json -ErrorAction Stop
             $Verification = Get-Content -LiteralPath $VerificationPath -Raw |
                 ConvertFrom-Json
         } catch {
@@ -736,6 +1172,7 @@ function Read-AcceptedPackages {
         }
         Assert-ReleaseBinding $Evidence $Release
         if ($Target -ceq 'codex') {
+            Assert-AcceptedCodexCore $Evidence $Release $AssetPath
             $VerdictProperty = $Evidence.PSObject.Properties[
                 [string]$Definition.verdict
             ]

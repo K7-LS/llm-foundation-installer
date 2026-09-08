@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('plan', 'apply', 'install', 'doctor', 'inventory', 'rollback')]
@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.10'
+$script:EngineVersion = '0.5.11'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -554,6 +554,7 @@ function Assert-ManifestProperties {
         'files'
     )
     $Optional = @(
+        'core_behavior_contract',
         'desired_state',
         'retired_managed_paths',
         'session_tools_baseline',
@@ -572,6 +573,28 @@ function Assert-ManifestProperties {
     foreach ($Name in $Required) {
         if (-not (Test-ObjectProperty $Manifest $Name)) {
             Throw-Foundation 'INVALID_PACKAGE' 'package manifest properties differ'
+        }
+    }
+}
+
+function Assert-CoreBehaviorContract {
+    param([AllowNull()]$Contract)
+    if ($Contract -isnot [Management.Automation.PSCustomObject]) {
+        Throw-Foundation 'INVALID_PACKAGE' 'core behavior contract properties differ'
+    }
+    Assert-ExactProperties $Contract @('id', 'sha256', 'suite_sha256') (
+        'core behavior contract'
+    )
+    $Expected = @{
+        id = 'k7-professional-core-v1'
+        sha256 = '028ba6363bff000b4aa8551ca27a66a69631cb29dacdc5319a4ce0b696b3a184'
+        suite_sha256 = '62b45686075d01277f9c924ca245f105dc5c54ba385f74084b7bdd379218d49c'
+    }
+    foreach ($Name in $Expected.Keys) {
+        if (@($Contract.PSObject.Properties.Name) -cnotcontains $Name -or
+            $Contract.$Name -isnot [string] -or
+            [string]$Contract.$Name -cne $Expected[$Name]) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Core behavior contract is unknown or changed'
         }
     }
 }
@@ -1099,6 +1122,21 @@ function Assert-Manifest {
         [Parameter(Mandatory = $true)]$EntriesByName
     )
     Assert-ManifestProperties $Manifest
+    $HasCore = Test-ObjectProperty $Manifest 'core_behavior_contract'
+    $CorePath = '.codex/base/core-eval-contract.json'
+    if ($HasCore -ne $EntriesByName.ContainsKey($CorePath)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Core contract reference and payload must occur together'
+    }
+    if ($HasCore) {
+        if ([string]$Manifest.target -cne 'codex') {
+            Throw-Foundation 'INVALID_PACKAGE' 'Core behavior contract target differs'
+        }
+        Assert-CoreBehaviorContract $Manifest.core_behavior_contract
+        if ((Get-BytesSha256 (Read-ZipEntryBytes $EntriesByName[$CorePath])) -cne
+            [string]$Manifest.core_behavior_contract.sha256) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Embedded core behavior contract bytes differ'
+        }
+    }
     if ($Manifest.schema_version -ne 1 -or
         $Manifest.target -cnotmatch '^[a-z][a-z0-9-]{1,31}$' -or
         $Manifest.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
@@ -1421,7 +1459,7 @@ function Assert-Manifest {
         session_tools_baseline = $BaselineContract
         supplemental_rows = $SupplementalRows
         requires_release_manifest = [bool](
-            $null -ne $BaselineContract -or
+            $HasCore -or $null -ne $BaselineContract -or
             (Test-ObjectProperty $Manifest 'shared_tools')
         )
     }
@@ -1481,6 +1519,16 @@ function Assert-ReleaseManifestBinding {
     }
     if (Test-ObjectProperty $Release 'promoted_from_candidate_manifest_sha256') {
         $Properties += 'promoted_from_candidate_manifest_sha256'
+    }
+    $ReleaseHasCore = Test-ObjectProperty $Release 'core_behavior_contract'
+    $PackageHasCore = Test-ObjectProperty $PackageManifest 'core_behavior_contract'
+    if ($ReleaseHasCore -ne $PackageHasCore) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Release core behavior contract binding differs'
+    }
+    if ($ReleaseHasCore) {
+        $Properties += 'core_behavior_contract'
+        Assert-CoreBehaviorContract $Release.core_behavior_contract
+        Assert-CoreBehaviorContract $PackageManifest.core_behavior_contract
     }
     Assert-ExactProperties $Release $Properties 'release manifest'
     Assert-ExactProperties $Release.client @(
@@ -3488,6 +3536,22 @@ function New-FoundationPlan {
         [switch]$RemoveUnknownConfirmed
     )
     $Manifest = $Validated.manifest
+    $BundledTool = Get-BundledOfficeCliContract
+    if ($null -ne $BundledTool -and (Test-ObjectProperty $Manifest 'shared_tools')) {
+        foreach ($DeclaredTool in @($Manifest.shared_tools)) {
+            if ([string]$DeclaredTool.id -cne 'officecli' -or
+                [string]$DeclaredTool.version -cne [string]$BundledTool.version -or
+                [string]$DeclaredTool.compatibility_epoch -cne [string]$BundledTool.compatibility_epoch -or
+                [string]$DeclaredTool.sha256 -cne [string]$BundledTool.private_exe.sha256 -or
+                [long]$DeclaredTool.bytes -ne [long]$BundledTool.private_exe.bytes -or
+                [string]$DeclaredTool.shim.sha256 -cne [string]$BundledTool.shim.sha256 -or
+                [long]$DeclaredTool.shim.bytes -ne [long]$BundledTool.shim.bytes -or
+                [string]$DeclaredTool.shim.policy_sha256 -cne [string]$BundledTool.policy.sha256 -or
+                [long]$DeclaredTool.shim.policy_bytes -ne [long]$BundledTool.policy.bytes) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Package shared tools differ from the engine bundle'
+            }
+        }
+    }
     Assert-ClientContract $Manifest.client $ActualClientId `
         $ActualClientVersion
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Manifest.target)
@@ -3556,6 +3620,22 @@ function New-FoundationPlan {
             path = [string]$Row.path
             action = $Action
             bytes = [int64]$Row.bytes
+        }
+    }
+    if ($null -ne $BundledTool) {
+        $BundledMap = Get-BundledOfficeCliFileMap $BundledTool
+        foreach ($Relative in $BundledMap.Keys) {
+            $Destination = Resolve-HomePath $Relative $HomeRoot -AllowSharedToolPath
+            Assert-SafeAncestors $Destination $HomeRoot
+            if (Test-Path -LiteralPath $Destination -PathType Container) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI destination is a directory'
+            }
+            $Action = if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) { 'CREATE' }
+                elseif ((Get-FileSha256 $Destination) -ceq [string]$BundledMap[$Relative].sha256) { 'UNCHANGED' }
+                else { 'UPDATE' }
+            $Rows += [pscustomobject][ordered]@{
+                path = $Relative; action = $Action; bytes = [long]$BundledMap[$Relative].bytes
+            }
         }
     }
     $UnknownEntries = @(Sort-OrdinalStrings @(
@@ -4050,8 +4130,10 @@ function New-Snapshot {
             }
         }
     )
+    $BundledBefore = New-BundledOfficeCliSnapshot $HomeRoot $SnapshotRoot `
+        $SnapshotId ([string]$Validated.manifest.target)
     $Snapshot = [pscustomobject][ordered]@{
-        schema_version = 4
+        schema_version = $(if ($null -ne $BundledBefore) { 5 } else { 4 })
         snapshot_id = $SnapshotId
         target = [string]$Validated.manifest.target
         release_version = [string]$Validated.manifest.version
@@ -4063,6 +4145,9 @@ function New-Snapshot {
         backup_files = $SortedBackupFiles
         prior_active = $PriorActive
         quarantined_unknown = @($Plan.quarantined_unknown)
+    }
+    if ($null -ne $BundledBefore) {
+        $Snapshot | Add-Member -NotePropertyName 'bundled_officecli' -NotePropertyValue $BundledBefore
     }
     $SnapshotPath = Join-Path $SnapshotRoot 'snapshot.json'
     Write-JsonFile $Snapshot $SnapshotPath
@@ -4109,11 +4194,12 @@ function Get-ValidatedSnapshot {
         'prior_active',
         'quarantined_unknown'
     )
-    if ($Snapshot.schema_version -eq 4) {
+    if ($Snapshot.schema_version -in @(4, 5)) {
         $SnapshotProperties += 'base_managed_surface'
     }
+    if ($Snapshot.schema_version -eq 5) { $SnapshotProperties += 'bundled_officecli' }
     Assert-ExactProperties $Snapshot $SnapshotProperties 'snapshot'
-    $AllowSessionState = $Snapshot.schema_version -eq 4
+    $AllowSessionState = $Snapshot.schema_version -in @(4, 5)
     $ExpectedSurfaceDigest = Get-ManagedSurfaceDigest `
         $Expected.managed_surface `
         -AllowSessionState:$AllowSessionState
@@ -4123,13 +4209,13 @@ function Get-ValidatedSnapshot {
             -AllowSessionState:$AllowSessionState) -ceq
             $ExpectedSurfaceDigest
     )
-    if ($Snapshot.schema_version -eq 4) {
+    if ($Snapshot.schema_version -in @(4, 5)) {
         $SnapshotSurfaceMatches = $SnapshotSurfaceMatches -or (
             (Get-ManagedSurfaceDigest $Snapshot.base_managed_surface) -ceq
                 $ExpectedSurfaceDigest
         )
     }
-    if ($Snapshot.schema_version -notin @(3, 4) -or
+    if ($Snapshot.schema_version -notin @(3, 4, 5) -or
         $Snapshot.snapshot_id -notmatch
             '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{32}$' -or
         [string]$Snapshot.target -cne [string]$Paths.target -or
@@ -4324,6 +4410,13 @@ function Get-ValidatedSnapshot {
     [IO.Directory]::CreateDirectory($StagingRoot) | Out-Null
     $StagingManaged = Join-Path $StagingRoot 'managed'
     Copy-TreeSafe $ManagedRoot $StagingManaged
+    if ($Snapshot.schema_version -eq 5) {
+        Assert-BundledOfficeCliSnapshot $Snapshot $SnapshotRoot $HomeRoot
+        Copy-TreeSafe (Join-Path $SnapshotRoot 'bundled-officecli') (
+            Join-Path $StagingRoot 'bundled-officecli'
+        )
+        Assert-BundledOfficeCliSnapshot $Snapshot $StagingRoot $HomeRoot
+    }
     return [pscustomobject]@{
         snapshot = $Snapshot
         snapshot_path = $SnapshotPath
@@ -4410,6 +4503,9 @@ function Restore-Snapshot {
                 [string]$Row.name
             ) $Row.value ([bool]$Row.existed) $HomeRoot
             Invoke-RollbackCheckpoint
+        }
+        if ($Snapshot.schema_version -eq 5) {
+            Restore-BundledOfficeCliSnapshot $Snapshot $Prepared.staging_root $HomeRoot
         }
         if ($null -ne $Snapshot.prior_active) {
             Write-JsonFile $Snapshot.prior_active $Paths.active
@@ -4593,7 +4689,191 @@ function Get-BundledOfficeCliContract {
             Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI bundle bytes differ'
         }
     }
+    Assert-ExactProperties $Tools[0].environment @('OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE') 'OfficeCLI environment'
+    foreach ($Name in @('OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE')) {
+        if ($Tools[0].environment.$Name -isnot [string] -or
+            $Tools[0].environment.$Name -cne '1') {
+            Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI environment differs'
+        }
+    }
     return $Tools[0]
+}
+
+function Get-BundledOfficeCliFileMap {
+    param([Parameter(Mandatory = $true)]$Tool)
+    $Map = [ordered]@{
+        '.llm-foundation/libexec/officecli/officecli.exe' = $Tool.private_exe
+        '.llm-foundation/bin/officecli.exe' = $Tool.shim
+        '.llm-foundation/libexec/officecli/officecli-command-policy.json' = $Tool.policy
+    }
+    if (Test-ObjectProperty $Tool 'pdf_exporter') {
+        $Map['.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe'] = $Tool.pdf_exporter
+    }
+    if (Test-ObjectProperty $Tool 'csv_batch_adapter') {
+        $Map['.llm-foundation/libexec/officecli/officecli_csv_batch.py'] = $Tool.csv_batch_adapter
+    }
+    return $Map
+}
+
+function Get-BundledOfficeCliSnapshotPaths {
+    return @(
+        '.llm-foundation/bin/officecli.exe',
+        '.llm-foundation/libexec/officecli/officecli-command-policy.json',
+        '.llm-foundation/libexec/officecli/officecli.exe',
+        '.llm-foundation/libexec/officecli/officecli_csv_batch.py',
+        '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe',
+        '.llm-foundation/state/shared-tools/officecli/current.json'
+    )
+}
+
+function New-BundledOfficeCliSnapshot {
+    param([string]$HomeRoot, [string]$SnapshotRoot, [string]$Generation, [string]$TargetName)
+    if ($null -eq (Get-BundledOfficeCliContract)) { return $null }
+    $BackupRoot = Join-Path $SnapshotRoot 'bundled-officecli'
+    New-SafeDirectory $BackupRoot $HomeRoot
+    $Files = @(); $Index = 0
+    foreach ($Relative in @(Get-BundledOfficeCliSnapshotPaths)) {
+        $Source = Resolve-HomePath $Relative $HomeRoot -AllowSharedToolPath
+        Assert-SafeAncestors $Source $HomeRoot
+        if (Test-Path -LiteralPath $Source -PathType Container) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI destination is a directory'
+        }
+        $Exists = Test-Path -LiteralPath $Source -PathType Leaf
+        $BackupName = 'bundled-officecli/' + $Index.ToString('00') + '.bin'
+        $BackupPath = Join-Path $SnapshotRoot $BackupName
+        if ($Exists) { Copy-FileSafe $Source $BackupPath }
+        $Files += [pscustomobject][ordered]@{
+            path = $Relative
+            existed = [bool]$Exists
+            backup_path = $(if ($Exists) { $BackupName } else { $null })
+            sha256 = $(if ($Exists) { Get-FileSha256 $BackupPath } else { $null })
+            bytes = $(if ($Exists) { [int64](Get-Item -LiteralPath $BackupPath).Length } else { 0 })
+        }
+        $Index++
+    }
+    $EnvironmentBefore = @(
+        foreach ($Name in @('OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE', 'PATH')) {
+            $Current = Get-CurrentUserEnvironmentValue $Name $HomeRoot
+            [pscustomobject][ordered]@{ name = $Name; existed = [bool]$Current.exists; value = $Current.value }
+        }
+    )
+    return [pscustomobject][ordered]@{
+        generation = $Generation; target = $TargetName
+        files = $Files; environment_before = $EnvironmentBefore
+    }
+}
+
+function Assert-BundledOfficeCliSnapshot {
+    param($Snapshot, [string]$SnapshotRoot, [string]$HomeRoot)
+    $Before = $Snapshot.bundled_officecli
+    Assert-ExactProperties $Before @('generation', 'target', 'files', 'environment_before') 'bundled OfficeCLI snapshot'
+    if ([string]$Before.generation -cne [string]$Snapshot.snapshot_id -or
+        [string]$Before.target -cne [string]$Snapshot.target -or
+        $Before.files -isnot [Array] -or @($Before.files).Count -ne 6 -or
+        $Before.environment_before -isnot [Array] -or @($Before.environment_before).Count -ne 3) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI snapshot identity or coverage differs'
+    }
+    $ExpectedPaths = @(Get-BundledOfficeCliSnapshotPaths)
+    $ExpectedNames = @('OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE', 'PATH')
+    $BackupRoot = Join-Path $SnapshotRoot 'bundled-officecli'
+    Assert-SafeAncestors $BackupRoot $SnapshotRoot
+    if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI backup is missing'
+    }
+    $BackupCount = 0
+    for ($Index = 0; $Index -lt 6; $Index++) {
+        $Row = $Before.files[$Index]
+        Assert-ExactProperties $Row @('path', 'existed', 'backup_path', 'sha256', 'bytes') 'bundled OfficeCLI snapshot row'
+        if ($Row.path -isnot [string] -or [string]$Row.path -cne $ExpectedPaths[$Index] -or
+            $Row.existed -isnot [bool] -or ($Row.bytes -isnot [int] -and $Row.bytes -isnot [long]) -or
+            [int64]$Row.bytes -lt 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI snapshot row differs'
+        }
+        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot -AllowSharedToolPath
+        Assert-SafeAncestors $Destination $HomeRoot
+        if (Test-Path -LiteralPath $Destination -PathType Container) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI rollback destination is a directory'
+        }
+        if ($Row.existed) {
+            $ExpectedBackup = 'bundled-officecli/' + $Index.ToString('00') + '.bin'
+            if ($Row.backup_path -isnot [string] -or [string]$Row.backup_path -cne $ExpectedBackup -or
+                $Row.sha256 -isnot [string] -or [string]$Row.sha256 -cnotmatch '^[a-f0-9]{64}$') {
+                Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI backup record differs'
+            }
+            $Backup = Join-Path $SnapshotRoot $ExpectedBackup
+            Assert-SafeAncestors $Backup $SnapshotRoot
+            if (-not (Test-Path -LiteralPath $Backup -PathType Leaf) -or
+                (Get-Item -LiteralPath $Backup).Length -ne [int64]$Row.bytes -or
+                (Get-FileSha256 $Backup) -cne [string]$Row.sha256) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI backup bytes differ'
+            }
+            $BackupCount++
+        } elseif ($null -ne $Row.backup_path -or $null -ne $Row.sha256 -or [int64]$Row.bytes -ne 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Absent bundled OfficeCLI backup record differs'
+        }
+    }
+    if (@(Get-SafeTreeFiles $BackupRoot).Count -ne $BackupCount) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI backup inventory differs'
+    }
+    for ($Index = 0; $Index -lt 3; $Index++) {
+        $Row = $Before.environment_before[$Index]
+        Assert-ExactProperties $Row @('name', 'existed', 'value') 'bundled OfficeCLI environment row'
+        if ($Row.name -isnot [string] -or [string]$Row.name -cne $ExpectedNames[$Index] -or
+            $Row.existed -isnot [bool] -or ($Row.existed -and $Row.value -isnot [string]) -or
+            (-not $Row.existed -and $null -ne $Row.value)) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI environment snapshot differs'
+        }
+    }
+    # Refuse to undo a later installation by another target. The pre-install
+    # receipt is also accepted so interrupted/automatic restoration is repeatable.
+    $ReceiptBefore = $Before.files[5]
+    $ReceiptPath = Resolve-HomePath ([string]$ReceiptBefore.path) $HomeRoot -AllowSharedToolPath
+    if (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) {
+        if ($ReceiptBefore.existed -and (Get-FileSha256 $ReceiptPath) -ceq [string]$ReceiptBefore.sha256) { return }
+        $Current = Read-JsonFile $ReceiptPath
+        if ([string]$Current.generation -ceq [string]$Before.generation -and
+            [string]$Current.owner_target -ceq [string]$Before.target -and $Current.schema_version -eq 2) { return }
+    } elseif (-not $ReceiptBefore.existed) { return }
+    Throw-Foundation 'RECOVERY_REQUIRED' 'Bundled OfficeCLI generation changed; rollback refused'
+}
+
+function Restore-BundledOfficeCliSnapshot {
+    param($Snapshot, [string]$SnapshotRoot, [string]$HomeRoot)
+    Assert-BundledOfficeCliSnapshot $Snapshot $SnapshotRoot $HomeRoot
+    foreach ($Row in @($Snapshot.bundled_officecli.files)) {
+        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot -AllowSharedToolPath
+        if ($Row.existed) {
+            Copy-Atomic (Join-Path $SnapshotRoot ([string]$Row.backup_path)) $Destination $HomeRoot
+        } elseif (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            Remove-Item -LiteralPath $Destination -Force
+        }
+        Invoke-RollbackCheckpoint
+    }
+    foreach ($Row in @($Snapshot.bundled_officecli.environment_before)) {
+        Set-CurrentUserEnvironmentValue ([string]$Row.name) $Row.value ([bool]$Row.existed) $HomeRoot
+        Invoke-RollbackCheckpoint
+    }
+}
+
+function Enter-BundledOfficeCliLock {
+    param([string]$HomeRoot, [string]$TargetName)
+    $Paths = Get-FoundationPaths $HomeRoot 'shared-tools'
+    $Paths.lock = Join-Path $Paths.locks_root '_bundled-officecli.lock'
+    $Lock = Enter-TargetLock $Paths $HomeRoot
+    try {
+        $StateRoot = Split-Path -Parent $Paths.state_root
+        if (Test-Path -LiteralPath $StateRoot -PathType Container) {
+            foreach ($Directory in @(Get-ChildItem -LiteralPath $StateRoot -Directory -Force)) {
+                if ($Directory.Name -ceq $TargetName) { continue }
+                foreach ($Name in @('pending.json', 'rollback.json')) {
+                    if (Test-Path -LiteralPath (Join-Path $Directory.FullName $Name)) {
+                        Throw-Foundation 'RECOVERY_REQUIRED' 'Another target has an unfinished shared-tool transaction'
+                    }
+                }
+            }
+        }
+        return $Lock
+    } catch { $Lock.Dispose(); throw }
 }
 
 function Add-FoundationUserPath {
@@ -4602,9 +4882,7 @@ function Add-FoundationUserPath {
         [Parameter(Mandatory = $true)][string]$HomeRoot
     )
     Assert-SafeAncestors $Directory $HomeRoot
-    $UserPath = [Environment]::GetEnvironmentVariable(
-        'Path', [EnvironmentVariableTarget]::User
-    )
+    $UserPath = (Get-CurrentUserEnvironmentValue 'PATH' $HomeRoot).value
     $Parts = @(
         ([string]$UserPath).Split(';') |
             Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -4616,9 +4894,7 @@ function Add-FoundationUserPath {
         )
     })) {
         $NewPath = (@($Parts) + $Directory) -join ';'
-        [Environment]::SetEnvironmentVariable(
-            'Path', $NewPath, [EnvironmentVariableTarget]::User
-        )
+        Set-CurrentUserEnvironmentValue 'PATH' $NewPath $true $HomeRoot
     }
     $ProcessParts = @(
         ([string]$env:Path).Split(';') |
@@ -4635,98 +4911,63 @@ function Add-FoundationUserPath {
 }
 
 function Install-BundledOfficeCli {
-    param([Parameter(Mandatory = $true)][string]$HomeRoot)
+    param([string]$HomeRoot, [string]$Generation, [string]$TargetName)
     $Tool = Get-BundledOfficeCliContract
     if ($null -eq $Tool) { return }
-    $PrivateDestination = Resolve-HomePath (
-        '.llm-foundation/libexec/officecli/officecli.exe'
-    ) $HomeRoot -AllowSharedToolPath
-    $ShimDestination = Resolve-HomePath (
-        '.llm-foundation/bin/officecli.exe'
-    ) $HomeRoot -AllowSharedToolPath
-    $PolicyDestination = Resolve-HomePath (
-        '.llm-foundation/libexec/officecli/officecli-command-policy.json'
-    ) $HomeRoot -AllowSharedToolPath
-    $ExporterDestination = Resolve-HomePath (
-        '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe'
-    ) $HomeRoot -AllowSharedToolPath
-    $CsvAdapterDestination = Resolve-HomePath (
-        '.llm-foundation/libexec/officecli/officecli_csv_batch.py'
-    ) $HomeRoot -AllowSharedToolPath
-    $Pairs = @(
-        @($Tool.private_exe, $PrivateDestination),
-        @($Tool.shim, $ShimDestination),
-        @($Tool.policy, $PolicyDestination)
-    )
-    if (Test-ObjectProperty $Tool 'pdf_exporter') {
-        $Pairs += ,@($Tool.pdf_exporter, $ExporterDestination)
+    if ([string]::IsNullOrWhiteSpace($Generation) -or [string]::IsNullOrWhiteSpace($TargetName)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'OfficeCLI transaction identity is missing'
     }
-    if (Test-ObjectProperty $Tool 'csv_batch_adapter') {
-        $Pairs += ,@($Tool.csv_batch_adapter, $CsvAdapterDestination)
-    }
-    foreach ($Pair in $Pairs) {
-        $Source = Join-Path $PSScriptRoot (
-            ([string]$Pair[0].path).Replace('/', '\')
-        )
-        Copy-Atomic $Source ([string]$Pair[1]) $HomeRoot
-    }
-    foreach ($Property in @($Tool.environment.psobject.Properties)) {
-        [Environment]::SetEnvironmentVariable(
-            [string]$Property.Name,
-            [string]$Property.Value,
-            [EnvironmentVariableTarget]::User
-        )
-        [Environment]::SetEnvironmentVariable(
-            [string]$Property.Name,
-            [string]$Property.Value,
-            [EnvironmentVariableTarget]::Process
-        )
-    }
-    Add-FoundationUserPath (
-        Resolve-HomePath '.llm-foundation/bin' $HomeRoot -AllowSharedToolPath
-    ) $HomeRoot
+    $Map = Get-BundledOfficeCliFileMap $Tool
     $ReceiptPath = Resolve-HomePath (
         '.llm-foundation/state/shared-tools/officecli/current.json'
     ) $HomeRoot -AllowSharedToolPath
     New-SafeDirectory (Split-Path -Parent $ReceiptPath) $HomeRoot
     $Receipt = [pscustomobject][ordered]@{
-        schema_version = 1
+        schema_version = 2
         id = 'officecli'
         version = [string]$Tool.version
         compatibility_epoch = [string]$Tool.compatibility_epoch
+        generation = $Generation
+        owner_target = $TargetName
         files = @(
-            [pscustomobject][ordered]@{
-                path = '.llm-foundation/libexec/officecli/officecli.exe'
-                sha256 = [string]$Tool.private_exe.sha256
-                bytes = [int64]$Tool.private_exe.bytes
-            },
-            [pscustomobject][ordered]@{
-                path = '.llm-foundation/bin/officecli.exe'
-                sha256 = [string]$Tool.shim.sha256
-                bytes = [int64]$Tool.shim.bytes
-            },
-            [pscustomobject][ordered]@{
-                path = '.llm-foundation/libexec/officecli/officecli-command-policy.json'
-                sha256 = [string]$Tool.policy.sha256
-                bytes = [int64]$Tool.policy.bytes
-            }
-            if (Test-ObjectProperty $Tool 'pdf_exporter') {
+            foreach ($Relative in $Map.Keys) {
                 [pscustomobject][ordered]@{
-                    path = '.llm-foundation/libexec/officecli/plugins/exporter/pdf/plugin.exe'
-                    sha256 = [string]$Tool.pdf_exporter.sha256
-                    bytes = [int64]$Tool.pdf_exporter.bytes
-                }
-            }
-            if (Test-ObjectProperty $Tool 'csv_batch_adapter') {
-                [pscustomobject][ordered]@{
-                    path = '.llm-foundation/libexec/officecli/officecli_csv_batch.py'
-                    sha256 = [string]$Tool.csv_batch_adapter.sha256
-                    bytes = [int64]$Tool.csv_batch_adapter.bytes
+                    path = $Relative
+                    sha256 = [string]$Map[$Relative].sha256
+                    bytes = [int64]$Map[$Relative].bytes
                 }
             }
         )
     }
+    # Bind ownership before the first shared payload mutation. Pending state and
+    # the complete before-snapshot already exist at this point.
     Write-JsonFile $Receipt $ReceiptPath
+    Invoke-MutationCheckpoint
+    foreach ($Relative in $Map.Keys) {
+        $Source = Join-Path $PSScriptRoot ([string]$Map[$Relative].path)
+        $Destination = Resolve-HomePath $Relative $HomeRoot -AllowSharedToolPath
+        Copy-Atomic $Source $Destination $HomeRoot
+        Invoke-MutationCheckpoint
+    }
+    foreach ($Property in @($Tool.environment.psobject.Properties)) {
+        Set-CurrentUserEnvironmentValue ([string]$Property.Name) `
+            ([string]$Property.Value) $true $HomeRoot
+        [Environment]::SetEnvironmentVariable(
+            [string]$Property.Name, [string]$Property.Value,
+            [EnvironmentVariableTarget]::Process
+        )
+        Invoke-MutationCheckpoint
+    }
+    Add-FoundationUserPath (
+        Resolve-HomePath '.llm-foundation/bin' $HomeRoot -AllowSharedToolPath
+    ) $HomeRoot
+    Invoke-MutationCheckpoint
+    if ($env:FOUNDATION_ACCEPTANCE_MODE -ceq '1') {
+        if ($env:FOUNDATION_OFFICECLI_CRASH_STAGE -ceq 'after_mutations') { [Environment]::Exit(99) }
+        if ($env:FOUNDATION_OFFICECLI_FAIL_STAGE -ceq 'after_mutations') {
+            Throw-Foundation 'INSTALL_FAILED' 'Injected OfficeCLI acceptance failure'
+        }
+    }
 }
 
 function Test-BundledOfficeCliState {
@@ -4736,18 +4977,35 @@ function Test-BundledOfficeCliState {
     $ReceiptPath = Resolve-HomePath (
         '.llm-foundation/state/shared-tools/officecli/current.json'
     ) $HomeRoot -AllowSharedToolPath
+    Assert-SafeAncestors $ReceiptPath $HomeRoot
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
         Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt is missing'
     }
     $Receipt = Read-JsonFile $ReceiptPath
-    if ([int]$Receipt.schema_version -ne 1 -or
+    $Map = Get-BundledOfficeCliFileMap $Tool
+    if (($Receipt.schema_version -isnot [int] -and $Receipt.schema_version -isnot [long]) -or
+        $Receipt.schema_version -notin @(1, 2) -or
         [string]$Receipt.id -cne 'officecli' -or
-        [string]$Receipt.version -cne [string]$Tool.version) {
+        [string]$Receipt.version -cne [string]$Tool.version -or
+        [string]$Receipt.compatibility_epoch -cne [string]$Tool.compatibility_epoch -or
+        $Receipt.files -isnot [Array] -or @($Receipt.files).Count -ne $Map.Count) {
         Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt differs'
     }
+    if ($Receipt.schema_version -eq 2 -and (
+        $Receipt.generation -isnot [string] -or [string]::IsNullOrWhiteSpace($Receipt.generation) -or
+        $Receipt.owner_target -isnot [string] -or [string]::IsNullOrWhiteSpace($Receipt.owner_target)
+    )) { Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt ownership differs' }
+    $Seen = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     foreach ($Row in @($Receipt.files)) {
-        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot `
-            -AllowSharedToolPath
+        if ($Row.path -isnot [string] -or -not $Map.Contains([string]$Row.path) -or
+            -not $Seen.Add([string]$Row.path) -or
+            $Row.sha256 -isnot [string] -or [string]$Row.sha256 -cne [string]$Map[[string]$Row.path].sha256 -or
+            ($Row.bytes -isnot [int] -and $Row.bytes -isnot [long]) -or
+            [int64]$Row.bytes -ne [int64]$Map[[string]$Row.path].bytes) {
+            Throw-Foundation 'ACTIVE_DRIFT' 'OfficeCLI receipt file inventory differs'
+        }
+        $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot -AllowSharedToolPath
+        Assert-SafeAncestors $Destination $HomeRoot
         if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or
             (Get-FileSha256 $Destination) -cne [string]$Row.sha256 -or
             (Get-Item -LiteralPath $Destination).Length -ne [int64]$Row.bytes) {
@@ -4869,7 +5127,8 @@ function Invoke-Install {
                 $HomeRoot
         }
         Apply-EnvironmentContract $Validated.manifest.environment $HomeRoot
-        Install-BundledOfficeCli $HomeRoot
+        Install-BundledOfficeCli $HomeRoot ([string]$Snapshot.metadata.snapshot_id) `
+            ([string]$Validated.manifest.target)
         $Installed = @(
             foreach ($Row in @($Validated.base_file_rows)) {
                 $InstalledPath = Resolve-HomePath ([string]$Row.path) $HomeRoot
@@ -5128,6 +5387,7 @@ function Invoke-Rollback {
 
 $Validated = $null
 $OperationLock = $null
+$OperationSharedLock = $null
 try {
     $TargetHome = [IO.Path]::GetFullPath($TargetHome)
     Assert-SafeDirectory $TargetHome
@@ -5209,6 +5469,9 @@ try {
         )
     }
     if ($Command -in @('apply', 'install', 'rollback')) {
+        if ($Command -ceq 'rollback' -or $null -ne (Get-BundledOfficeCliContract)) {
+            $OperationSharedLock = Enter-BundledOfficeCliLock $TargetHome $Target
+        }
         $OperationPaths = Get-FoundationPaths $TargetHome $Target
         $OperationLock = Enter-TargetLock $OperationPaths $TargetHome
     }
@@ -5289,6 +5552,9 @@ try {
 } finally {
     if ($null -ne $OperationLock) {
         $OperationLock.Dispose()
+    }
+    if ($null -ne $OperationSharedLock) {
+        $OperationSharedLock.Dispose()
     }
     if ($null -ne $Validated) {
         Close-ValidatedPackage $Validated
