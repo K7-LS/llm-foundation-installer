@@ -101,12 +101,16 @@ def _selfhash(value):
     }))
 
 
-def _isolated_engine_fixture():
-    version = (ROOT / 'VERSION').read_text().strip()
+def _isolated_engine_fixture(version=None):
+    version = version or (ROOT / 'VERSION').read_text().strip()
     names = ('VERSION', 'foundation.ps1', 'shared-tools.lock.json',
              'shared-tools/officecli/officecli.exe', 'shared-tools/officecli/officecli-shim.exe',
              'shared-tools/officecli/officecli-command-policy.json',
              'shared-tools/officecli/k7-officecli-pdf.exe', 'shared-tools/officecli/officecli_csv_batch.py')
+    assert version in ('0.5.11', '0.5.12')
+    if version == '0.5.12':
+        names += ('foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                  'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json')
     payloads = {name: (f'fixture {name}\n').encode() for name in names}
     payloads['VERSION'] = (version + '\n').encode()
     payloads['engine-manifest.json'] = _bytes({'schema_version': 1, 'protocol_version': 1,
@@ -142,6 +146,8 @@ def _isolated_engine_fixture():
                 'tests/test_foundation_release.py', 'tests/test_acceptance_runner.py',
                 'tests/test_professional_core_compat.py', 'tests/test_engine_isolated_lifecycle.py',
                 'tests/test_engine_acceptance_runner.py']
+    if version == '0.5.12':
+        selected += ['tests/test_doctor_state.py', 'tests/test_doctor_toml.py']
     environment = {name: 'a' * 64 for name in ('PATH', 'OFFICECLI_NO_AUTO_INSTALL', 'OFFICECLI_SKIP_UPDATE')}
     evidence['real_user_environment_before'] = copy.deepcopy(environment)
     evidence['real_user_environment_after'] = copy.deepcopy(environment)
@@ -161,7 +167,8 @@ def _isolated_engine_fixture():
                 'before': {'files': {}, 'fake_environment': {}}, 'after': {'files': {}, 'fake_environment': {}}}
             rows.append(artifact(f'receipts/{shell}-{scenario}.json', _bytes(receipt).decode()))
         evidence['engine_lifecycle']['shells'][shell]['receipts'] = rows
-    suite = ET.Element('testsuite', tests='20', failures='0', errors='0', skipped='0')
+    count = 2 * len(SCENARIOS) + len(selected) - 1
+    suite = ET.Element('testsuite', tests=str(count), failures='0', errors='0', skipped='0')
     ids = []
     for shell in ('pwsh.exe', 'powershell.exe'):
         for scenario in SCENARIOS:
@@ -173,7 +180,7 @@ def _isolated_engine_fixture():
         ET.SubElement(suite, 'testcase', classname=path[:-3].replace('/', '.'), name='test_fixture_regression')
         ids.append(path + '::test_fixture_regression')
     junit = artifact('pytest.xml', ET.tostring(suite, encoding='unicode'))
-    evidence['pytest'].update(counts={'tests': 20, 'failures': 0, 'errors': 0, 'skipped': 0},
+    evidence['pytest'].update(counts={'tests': count, 'failures': 0, 'errors': 0, 'skipped': 0},
         junit_sha256=junit['sha256'], junit_artifact=junit, collected_case_ids=ids,
         selected_files=selected, selected_files_sha256={p: 'c' * 64 for p in selected})
     evidence['pytest']['collection'] = {'status': 'PASS', 'returncode': 0,
@@ -242,15 +249,19 @@ def _rebind(directory, *, evidence_edit=None):
     _write(directory / "package-acceptance.json", acceptance)
 
 
-def _bundle(root, *, current=True):
+def _bundle(root, *, current=True, engine_version=None):
     directory = _accepted_package(root)
     package = _package(directory / "codex-base-1.0.0.zip")
     if current:
-        engine_payloads, engine_evidence, engine_artifacts = _isolated_engine_fixture()
+        engine_payloads, engine_evidence, engine_artifacts = _isolated_engine_fixture(engine_version)
         def add(manifest, entries):
             manifest["core_behavior_contract"] = copy.deepcopy(REFERENCE)
             entries[CORE_PATH] = CORE_BYTES
             manifest["managed_surface"]["replace_files"].append(CORE_PATH)
+            manifest["foundation_engine_version"] = engine_evidence['engine_version']
+            for name in list(entries):
+                if name.startswith('.codex/base/foundation/'):
+                    entries.pop(name)
             prefix = f'.codex/base/foundation/{manifest["foundation_engine_version"]}/'
             entries.update({prefix + name: data for name, data in engine_payloads.items()})
         _edit_zip(package, add)
@@ -290,6 +301,65 @@ def _run(tmp_path, executable, mode, fixture, error=None):
         assert result.returncode == 17, result.stdout + result.stderr
         assert result.stdout.strip() == error
     assert not (tmp_path / "home").exists()
+
+
+@pytest.mark.parametrize('executable', POWERSHELLS)
+@pytest.mark.parametrize('version', ['0.5.11', '0.5.12'])
+def test_current_builder_accepts_exact_historical_and_doctor_engine_contracts(tmp_path, executable, version):
+    directory = _bundle(tmp_path / 'packages', engine_version=version)
+    evidence = _read(directory / 'acceptance-evidence.json')['foundation']
+    assert len(evidence['engine_builds']['ps7']['files']) == (9 if version == '0.5.11' else 13)
+    assert len(evidence['pytest']['selected_files']) == (7 if version == '0.5.11' else 9)
+    _run(tmp_path, executable, 'builder', directory.parent)
+
+
+@pytest.mark.parametrize('executable', POWERSHELLS)
+@pytest.mark.parametrize('name', ['foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                                 'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json'])
+@pytest.mark.parametrize('mutation', ['missing', 'tampered'])
+def test_current_builder_rejects_changed_doctor_payload_with_rebound_outer_hashes(tmp_path, executable, name, mutation):
+    directory = _bundle(tmp_path / 'packages', engine_version='0.5.12')
+    def edit(manifest, entries):
+        path = '.codex/base/foundation/0.5.12/' + name
+        if mutation == 'missing': entries.pop(path)
+        else: entries[path] = b'Changed doctor payload'
+    _edit_zip(directory / 'codex-base-1.0.0.zip', edit)
+    _rebind(directory)
+    expected = 'ZIP inventory' if mutation == 'missing' else 'ZIP binding'
+    _run(tmp_path, executable, 'builder', directory.parent,
+         'Accepted isolated engine ' + expected + ' differs')
+
+
+@pytest.mark.parametrize('executable', POWERSHELLS)
+@pytest.mark.parametrize('version', ['0.5.11', '0.5.12'])
+@pytest.mark.parametrize('test_file', ['tests/test_doctor_state.py', 'tests/test_doctor_toml.py'])
+def test_current_builder_rejects_selected_tests_from_another_engine_contract(tmp_path, executable, version, test_file):
+    directory = _bundle(tmp_path / 'packages', engine_version=version)
+    def edit(evidence):
+        tests = evidence['foundation']['pytest']
+        if version == '0.5.12':
+            tests['selected_files'].remove(test_file)
+            tests['selected_files_sha256'].pop(test_file)
+        else:
+            tests['selected_files'].append(test_file)
+            tests['selected_files_sha256'][test_file] = 'f' * 64
+    _rebind(directory, evidence_edit=edit)
+    _run(tmp_path, executable, 'builder', directory.parent,
+         'Accepted isolated engine artifact coverage differs')
+
+
+@pytest.mark.parametrize('executable', POWERSHELLS)
+def test_current_builder_rejects_rebound_extra_file_in_historical_engine(tmp_path, executable):
+    directory = _bundle(tmp_path / 'packages', engine_version='0.5.11')
+    payload = b'Unexpected historical helper'
+    _edit_zip(directory / 'codex-base-1.0.0.zip', lambda manifest, entries: entries.update({
+        '.codex/base/foundation/0.5.11/foundation-toml.ps1': payload}))
+    def edit(evidence):
+        for row in evidence['foundation']['engine_builds'].values():
+            row['files']['foundation-toml.ps1'] = _sha(payload)
+    _rebind(directory, evidence_edit=edit)
+    _run(tmp_path, executable, 'builder', directory.parent,
+         'Accepted isolated engine ZIP binding differs')
 
 
 @pytest.mark.parametrize('executable', POWERSHELLS)

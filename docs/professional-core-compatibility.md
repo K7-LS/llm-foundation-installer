@@ -3,7 +3,7 @@
 This change supports the unpublished `professional-core-v1` acceptance protocol
 and the exact `k7-professional-core-v1` contract. It is not an engine release,
 installer build, signature, or consumer installation. The local engine candidate
-is 0.5.11; APP_VERSION remains unchanged. The separately verified bootstrap
+is 0.5.12; APP_VERSION remains unchanged. The separately verified bootstrap
 lock now selects official Codex CLI 0.153.1 for a new installation.
 
 Foundation validates the known contract reference, the exact embedded bytes,
@@ -31,8 +31,9 @@ Current core packages also require `FOUNDATION_ENGINE_ACCEPTANCE=PASS` under
 `foundation-engine-isolated-v1`. `FOUNDATION_SYNTHETIC` and
 `INSTALLER_ACCEPTANCE` remain `NOT_RUN`: the historical full installer/GUI suite
 was not run by this protocol. The builder checks the protocol envelope, two
-PowerShell build inventories and lifecycle matrices against all nine actual
-files under `.codex/base/foundation/<engine-version>/` in the ZIP. The producer
+PowerShell build inventories and lifecycle matrices against a version-specific
+inventory under `.codex/base/foundation/<engine-version>/` in the ZIP: nine files
+for 0.5.11 and thirteen for 0.5.12. Unknown versions are rejected. The producer
 rechecks the JUnit and per-scenario receipt text; the builder remains a consumer
 of that trusted verdict, not a second behavioral evaluator.
 
@@ -47,8 +48,10 @@ certified.
 
 `tools/run-engine-acceptance.py` requires a clean committed source, explicit local
 OfficeCLI/compiler dependencies, and a new child of an authorized workspace. It
-builds in PowerShell 7 and 5.1, compares all nine files, then runs an explicit
-engine-only test list. The seven actual built-engine scenarios run in each shell:
+builds in PowerShell 7 and 5.1, compares every file in that version's inventory,
+then runs an explicit engine-only test list: seven modules for 0.5.11, nine for
+0.5.12, including the typed TOML and legacy doctor regressions. The seven actual
+built-engine scenarios run in each shell:
 fresh/existing install and rollback, late failure, interrupted recovery, snapshot
 tampering, receipt drift, and foreign-generation refusal. JUnit and UTF-8 receipts
 are hashed and retained. A source-level test subset is not labelled full
@@ -78,9 +81,20 @@ remain as historical files; current offline bundle tests use new 0.153.1 fixture
 Official sources are the [tagged release](https://github.com/openai/codex/releases/tag/rust-v0.153.1)
 and its [release metadata](https://releases.openai.com/codex/releases/0.153.1/release.json).
 
-This bootstrap lock update does not change the nine engine payload files or
+The earlier bootstrap lock update did not change the nine engine payload files or
 relabel acceptance evidence produced from installer commit
 `f3e5757fed87b8d1154d82d0de87ffbfc25fc6e5`. Existing exact-package evidence stays
 bound to its original bytes. Offline metadata and bundle checks do not certify
 the full GUI installer, a real-profile installation, or an automatic migration
 of the download path; those require their own observed acceptance.
+
+The 0.5.12 doctor correction changes engine bytes and adds four files:
+`foundation-toml.ps1` and the pinned parser DLL, licence, and provenance under
+`vendor/tomlyn/`. It does not reuse 0.5.11 acceptance as proof of the new bundle.
+The separate accepted Foundation release path records three core files in
+`release.engine_files` for 0.5.11 and seven for 0.5.12; its full ZIP inventories
+are nine and thirteen respectively. Both Read and Export check the exact count
+and ordinal names, so a combined filename cannot stand in for two dependencies.
+The existing stable Foundation `FOUNDATION_SYNTHETIC=PASS` requirement remains;
+engine-only `NOT_RUN` evidence does not satisfy it.
+See [the typed TOML state contract](doctor-toml.md) for behavior and limitations.

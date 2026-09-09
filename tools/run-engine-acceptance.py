@@ -34,8 +34,25 @@ ENGINE_FILES = (
     "shared-tools/officecli/k7-officecli-pdf.exe",
     "shared-tools/officecli/officecli_csv_batch.py",
 )
+ENGINE_FILES_BY_VERSION = {
+    "0.5.11": ENGINE_FILES,
+    "0.5.12": ENGINE_FILES + (
+        "foundation-toml.ps1", "vendor/tomlyn/Tomlyn.dll",
+        "vendor/tomlyn/LICENSE.txt", "vendor/tomlyn/provenance.json",
+    ),
+}
+SELECTED_FILES_BY_VERSION = {
+    "0.5.11": SELECTED_FILES,
+    "0.5.12": SELECTED_FILES + ("tests/test_doctor_state.py", "tests/test_doctor_toml.py"),
+}
 PROTOCOL = "foundation-engine-isolated-v1"
 HISTORICAL_REASON = "The historical runner includes the full installer/GUI suite; this protocol is explicitly engine-only."
+
+
+def _engine_contract(version):
+    if not isinstance(version, str) or version not in ENGINE_FILES_BY_VERSION:
+        raise ValueError("unsupported isolated engine version")
+    return ENGINE_FILES_BY_VERSION[version], SELECTED_FILES_BY_VERSION[version]
 
 
 def _artifact(path, work):
@@ -144,6 +161,8 @@ def main(argv=None):
         raise ValueError("dependencies must be local files inside the authorized workspace")
     source = legacy._git_identity(ROOT)
     source["hashes"] = legacy._source_hashes(ROOT)
+    version = (ROOT / "VERSION").read_text().strip()
+    engine_files, selected_files = _engine_contract(version)
     work.mkdir()
     environment = _environment(work, *dependencies)
     source_root = _export_commit(work)
@@ -151,7 +170,7 @@ def main(argv=None):
     evidence = {
         "schema_version": 1, "acceptance_protocol": PROTOCOL,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "engine_version": (ROOT / "VERSION").read_text().strip(),
+        "engine_version": version,
         "installer_version": (ROOT / "APP_VERSION").read_text().strip(),
         "source": source, "model_requests": 0, "FOUNDATION_ENGINE_ACCEPTANCE": "FAIL",
         "build_dependencies": {name: {'sha256': legacy._sha256(path), 'bytes': path.stat().st_size}
@@ -175,7 +194,7 @@ def main(argv=None):
             out = work / f"engine-{shell}"
             builds[shell] = _run(prefix + [str(source_root / "tools/build-engine.ps1"), "-OutputRoot", str(out)], environment, source_root)
             builds[shell]["files"] = legacy._tree(out)
-            assert set(builds[shell]["files"]) == set(ENGINE_FILES)
+            assert set(builds[shell]["files"]) == set(engine_files)
             assert syntax[shell]["status"] == builds[shell]["status"] == "PASS"
             environment[f"K7_ENGINE_{shell.upper()}_ROOT"] = str(out)
         evidence.update(powershell_syntax=syntax, engine_builds=builds)
@@ -183,17 +202,17 @@ def main(argv=None):
         evidence["deterministic_engine_bundle"] = "PASS"
         junit = work / "pytest.xml"
         collection = _run([sys.executable, '-X', 'utf8', '-m', 'pytest', '--collect-only', '-q',
-                           *SELECTED_FILES], environment, source_root)
+                           *selected_files], environment, source_root)
         assert collection['status'] == 'PASS'
         case_ids = [line.strip() for line in collection['stdout'].splitlines()
                     if line.startswith('tests/') and '::' in line]
         assert case_ids and len(case_ids) == len(set(case_ids))
-        assert all(case.split('::', 1)[0] in SELECTED_FILES for case in case_ids)
+        assert all(case.split('::', 1)[0] in selected_files for case in case_ids)
         tests = _run([sys.executable, "-X", "utf8", "-m", "pytest", "-q", "--tb=short",
-                      *SELECTED_FILES, f"--junitxml={junit}", f"--basetemp={work / 't'}"], environment, source_root)
+                      *selected_files, f"--junitxml={junit}", f"--basetemp={work / 't'}"], environment, source_root)
         evidence["pytest"] = {
-            **tests, "selected_files": list(SELECTED_FILES),
-            "selected_files_sha256": {p: legacy._sha256(source_root / p) for p in SELECTED_FILES},
+            **tests, "selected_files": list(selected_files),
+            "selected_files_sha256": {p: legacy._sha256(source_root / p) for p in selected_files},
             "collection": collection, "collected_case_ids": case_ids,
             "junit_sha256": legacy._sha256(junit), "junit_artifact": _artifact(junit, work),
             "counts": legacy._junit_counts(junit),

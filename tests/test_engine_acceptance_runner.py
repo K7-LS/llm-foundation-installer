@@ -62,3 +62,27 @@ def test_optimized_python_cannot_issue_acceptance(tmp_path):
         capture_output=True, text=True, encoding='utf-8', timeout=30)
     assert result.returncode != 0
     assert 'engine acceptance requires unoptimized Python' in result.stderr
+
+
+@pytest.mark.parametrize('version,files,tests', [('0.5.11', 9, 7), ('0.5.12', 13, 9)])
+def test_engine_runner_uses_exact_versioned_payload_and_test_contract(version, files, tests):
+    engine_files, selected = runner._engine_contract(version)
+    assert len(engine_files) == len(set(engine_files)) == files
+    assert len(selected) == len(set(selected)) == tests
+    additions = {'foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                 'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json'}
+    doctor_tests = {'tests/test_doctor_state.py', 'tests/test_doctor_toml.py'}
+    if version == '0.5.12':
+        previous_files, previous_tests = runner._engine_contract('0.5.11')
+        assert set(engine_files) - set(previous_files) == additions
+        assert set(selected) - set(previous_tests) == doctor_tests
+        assert selected[:7] == previous_tests
+    else:
+        assert not additions.intersection(engine_files)
+        assert not doctor_tests.intersection(selected)
+
+
+@pytest.mark.parametrize('version', ['0.5.10', '0.5.13', '0.5.12-test', '', None, True])
+def test_engine_runner_rejects_unknown_version_contract(version):
+    with pytest.raises(ValueError, match='unsupported isolated engine version'):
+        runner._engine_contract(version)

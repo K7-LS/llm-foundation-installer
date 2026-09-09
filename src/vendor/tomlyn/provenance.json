@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "Tomlyn",
+  "version": "0.19.0",
+  "framework": "netstandard2.0",
+  "license": "BSD-2-Clause",
+  "package_url": "https://api.nuget.org/v3-flatcontainer/tomlyn/0.19.0/tomlyn.0.19.0.nupkg",
+  "package_sha256": "4cfc3a2b5273375154c864a900d1eee650d6da614dd6c8346a930d28c3815fef",
+  "repository": "https://github.com/xoofx/Tomlyn",
+  "commit": "ee3e3ca5b1f016b0db21ceb74d6c85d28a08ca16",
+  "archive_member": "lib/netstandard2.0/Tomlyn.dll",
+  "files": [
+    {
+      "path": "Tomlyn.dll",
+      "sha256": "a7d2ea40533a5a912bc6a64ab8f1347e60fe92ea0ab456d423b64db2214c904b",
+      "bytes": 150528
+    },
+    {
+      "path": "LICENSE.txt",
+      "sha256": "d5044cd5e1438c78e9ba08ddc78d2d15d97e27456c0ed1aa653713705e302897",
+      "bytes": 1308
+    }
+  ],
+  "runtime_dependencies": [],
+  "runtime_network": "none",
+  "rationale": "TOML 1.0 typed parsing on both supported PowerShell runtimes; standalone netstandard2.0 build without transitive packages. NuGet download pinned by bytes; package signature was not independently verified."
+}

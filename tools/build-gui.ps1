@@ -494,16 +494,35 @@ function Assert-AcceptedCodexCore {
     } finally { $Archive.Dispose() }
 }
 
-function Assert-AcceptedIsolatedEngine {
-    param($Evidence, $Release, $Archive)
-    $Foundation = $Evidence.foundation
-    $ExpectedFiles = @(
+function Get-AcceptedIsolatedEngineContract {
+    param([string]$Version)
+    $Files = @(
         'VERSION', 'engine-manifest.json', 'foundation.ps1', 'shared-tools.lock.json',
         'shared-tools/officecli/officecli.exe', 'shared-tools/officecli/officecli-shim.exe',
         'shared-tools/officecli/officecli-command-policy.json',
         'shared-tools/officecli/k7-officecli-pdf.exe',
         'shared-tools/officecli/officecli_csv_batch.py'
     )
+    $Tests = @('tests/test_foundation.py', 'tests/test_foundation_shared_tools.py',
+        'tests/test_foundation_release.py', 'tests/test_acceptance_runner.py',
+        'tests/test_professional_core_compat.py', 'tests/test_engine_isolated_lifecycle.py',
+        'tests/test_engine_acceptance_runner.py')
+    switch -CaseSensitive ($Version) {
+        '0.5.11' { break }
+        '0.5.12' {
+            $Files += @('foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json')
+            $Tests += @('tests/test_doctor_state.py', 'tests/test_doctor_toml.py')
+            break
+        }
+        default { throw 'Accepted isolated engine version is unsupported' }
+    }
+    return [pscustomobject]@{ files = $Files; tests = $Tests }
+}
+
+function Assert-AcceptedIsolatedEngine {
+    param($Evidence, $Release, $Archive)
+    $Foundation = $Evidence.foundation
     $Scenarios = @('fresh_install_rollback', 'existing_install_rollback', 'late_failure_rollback',
         'interrupted_recovery', 'snapshot_tamper_rejected', 'receipt_drift_rejected',
         'foreign_generation_rejected')
@@ -534,6 +553,8 @@ function Assert-AcceptedIsolatedEngine {
         $Foundation.model_requests -cne 0 -or $Foundation.scope.model_requests -cne 0) {
         throw 'Accepted isolated engine protocol or scope differs'
     }
+    $Contract = Get-AcceptedIsolatedEngineContract ([string]$Foundation.engine_version)
+    $ExpectedFiles = $Contract.files
     if ([string]$Foundation.source.repository -cne 'https://github.com/K7-LS/llm-foundation-installer' -or
         [string]$Foundation.source.commit -cnotmatch '^[a-f0-9]{40}$' -or
         [string]$Foundation.source.tree -cnotmatch '^[a-f0-9]{40}$' -or
@@ -562,7 +583,7 @@ function Assert-AcceptedIsolatedEngine {
         try { $Actual[$Name] = ([BitConverter]::ToString($Hasher.ComputeHash($Stream))).Replace('-', '').ToLowerInvariant() }
         finally { $Hasher.Dispose(); $Stream.Dispose() }
     }
-    if (@($Archive.Entries | Where-Object { $_.FullName.StartsWith($Prefix, [StringComparison]::Ordinal) }).Count -ne 9 -or
+    if (@($Archive.Entries | Where-Object { $_.FullName.StartsWith($Prefix, [StringComparison]::Ordinal) }).Count -ne $ExpectedFiles.Count -or
         $Actual['engine-manifest.json'] -cne [string]$Release.foundation_engine_manifest_sha256) {
         throw 'Accepted isolated engine ZIP binding differs'
     }
@@ -585,7 +606,7 @@ function Assert-AcceptedIsolatedEngine {
         }
         if ([string]$Build.status -cne 'PASS' -or $Build.returncode -cne 0 -or
             [string]$Syntax.status -cne 'PASS' -or $Syntax.returncode -cne 0 -or
-            @($Build.files.PSObject.Properties).Count -ne 9 -or
+            @($Build.files.PSObject.Properties).Count -ne $ExpectedFiles.Count -or
             [string]$Lifecycle.status -cne 'PASS' -or
             [string]$Lifecycle.engine_sha256 -cne $Actual['foundation.ps1'] -or
             [string]$Lifecycle.engine_manifest_sha256 -cne $Actual['engine-manifest.json'] -or
@@ -658,11 +679,8 @@ function Assert-AcceptedFoundationEnvironmentHashes {
 function Assert-AcceptedFoundationArtifacts {
     param($Evidence, [string[]]$Scenarios)
     $Foundation = $Evidence.foundation; $Tests = $Foundation.pytest
-    $ExpectedTests = @('tests/test_foundation.py', 'tests/test_foundation_shared_tools.py',
-        'tests/test_foundation_release.py', 'tests/test_acceptance_runner.py',
-        'tests/test_professional_core_compat.py', 'tests/test_engine_isolated_lifecycle.py',
-        'tests/test_engine_acceptance_runner.py')
-    if (@($Tests.selected_files).Count -ne 7 -or @($Tests.selected_files_sha256.PSObject.Properties).Count -ne 7 -or
+    $ExpectedTests = (Get-AcceptedIsolatedEngineContract ([string]$Foundation.engine_version)).tests
+    if (@($Tests.selected_files).Count -ne $ExpectedTests.Count -or @($Tests.selected_files_sha256.PSObject.Properties).Count -ne $ExpectedTests.Count -or
         @($Evidence.foundation_artifacts.PSObject.Properties).Count -ne 15) {
         throw 'Accepted isolated engine artifact coverage differs'
     }
@@ -673,7 +691,7 @@ function Assert-AcceptedFoundationArtifacts {
         $TotalBytes += $Property.Value.bytes
     }
     if ($TotalBytes -gt 4194304) { throw 'Accepted isolated engine artifact size differs' }
-    for ($Index = 0; $Index -lt 7; $Index++) {
+    for ($Index = 0; $Index -lt $ExpectedTests.Count; $Index++) {
         if ([string]$Tests.selected_files[$Index] -cne $ExpectedTests[$Index] -or
             [string]$Tests.selected_files_sha256.($ExpectedTests[$Index]) -cnotmatch '^[a-f0-9]{64}$') {
             throw 'Accepted isolated engine artifact coverage differs'
@@ -802,6 +820,41 @@ function Assert-AcceptedFoundationArtifacts {
     }
 }
 
+function Get-AcceptedFoundationCoreFiles {
+    param([string]$Version)
+    $Names = @('VERSION', 'engine-manifest.json', 'foundation.ps1')
+    switch -CaseSensitive ($Version) {
+        '0.5.11' { break }
+        '0.5.12' {
+            $Names += @('foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json')
+            break
+        }
+        default { throw 'Foundation engine delivery version is unsupported' }
+    }
+    return @($Names | Sort-Object)
+}
+
+function Test-AcceptedFoundationFileNames {
+    param([string[]]$Names, [string[]]$Expected)
+    if ($Names.Count -ne $Expected.Count) { return $false }
+    $ExpectedSet = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal
+    )
+    $Seen = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal
+    )
+    foreach ($Name in $Expected) {
+        if (-not $ExpectedSet.Add($Name)) { return $false }
+    }
+    foreach ($Name in $Names) {
+        if (-not $ExpectedSet.Contains($Name) -or -not $Seen.Add($Name)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Read-AcceptedFoundation {
     param([string]$Root)
     if ([string]::IsNullOrWhiteSpace($Root)) {
@@ -863,6 +916,7 @@ function Read-AcceptedFoundation {
     $AcceptanceFiles = @(
         $Acceptance.engine_files.PSObject.Properties.Name | Sort-Object
     )
+    $ExpectedCoreFiles = @(Get-AcceptedFoundationCoreFiles $FoundationEngineVersion)
     if ([int]$Release.schema_version -ne 1 -or
         [string]$Release.target -cne 'foundation' -or
         [string]$Release.version -cne $FoundationEngineVersion -or
@@ -884,10 +938,8 @@ function Read-AcceptedFoundation {
         ) -or
         [bool]$Release.requires.immutable_release -ne $true -or
         [bool]$Release.requires.release_attestation -ne $true -or
-        ($ReleaseFiles -join ',') -cne (
-            'engine-manifest.json,foundation.ps1,VERSION'
-        ) -or
-        ($AcceptanceFiles -join ',') -cne ($ReleaseFiles -join ',') -or
+        -not (Test-AcceptedFoundationFileNames $ReleaseFiles $ExpectedCoreFiles) -or
+        -not (Test-AcceptedFoundationFileNames $AcceptanceFiles $ExpectedCoreFiles) -or
         ($Release.engine_files | ConvertTo-Json -Depth 10 -Compress) -cne (
             $Acceptance.engine_files |
                 ConvertTo-Json -Depth 10 -Compress
@@ -1308,6 +1360,10 @@ function Export-AcceptedFoundationEngine {
         $CoreNames = @(
             $Foundation.engine_files.PSObject.Properties.Name | Sort-Object
         )
+        $ExpectedCoreFiles = @(Get-AcceptedFoundationCoreFiles $FoundationEngineVersion)
+        if (-not (Test-AcceptedFoundationFileNames $CoreNames $ExpectedCoreFiles)) {
+            throw 'Foundation engine archive core inventory differs'
+        }
         $LockEntry = $Archive.GetEntry('shared-tools.lock.json')
         if ($null -eq $LockEntry -or $LockEntry.Length -gt 1048576) {
             throw 'Foundation engine archive inventory differs'

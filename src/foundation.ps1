@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8NoBom
 $OutputEncoding = $Utf8NoBom
-$script:EngineVersion = '0.5.11'
+$script:EngineVersion = '0.5.12'
 $script:ProtocolVersion = 1
 $script:BlockedUserEnvironment = @(
     'ALL_PROXY',
@@ -54,6 +54,7 @@ $script:ExitCode = @{
     INVALID_PACKAGE = 30
     INSTALL_FAILED = 30
     ACTIVE_DRIFT = 30
+    LEGACY_TOML_BASELINE_REQUIRED = 30
     UNSAFE_PATH = 40
 }
 $script:MutationCount = 0
@@ -1119,7 +1120,8 @@ function Assert-SharedTools {
 function Assert-Manifest {
     param(
         [Parameter(Mandatory = $true)]$Manifest,
-        [Parameter(Mandatory = $true)]$EntriesByName
+        [Parameter(Mandatory = $true)]$EntriesByName,
+        [string]$ExpectedEngineVersion = $script:EngineVersion
     )
     Assert-ManifestProperties $Manifest
     $HasCore = Test-ObjectProperty $Manifest 'core_behavior_contract'
@@ -1145,7 +1147,7 @@ function Assert-Manifest {
         Throw-Foundation 'INVALID_PACKAGE' 'Package manifest constants differ'
     }
     if ([string]$Manifest.foundation_engine_version -cne
-        $script:EngineVersion) {
+        $ExpectedEngineVersion) {
         Throw-Foundation 'INVALID_PACKAGE' (
             "Package requires Foundation engine " +
             "$($Manifest.foundation_engine_version); running engine is " +
@@ -1693,7 +1695,8 @@ function Open-ValidatedPackage {
     param(
         [Parameter(Mandatory = $true)][string]$PackagePath,
         [string]$ReleaseManifestPath,
-        [string]$ExpectedReleaseManifestSha256
+        [string]$ExpectedReleaseManifestSha256,
+        [string]$DoctorHomeRoot = ''
     )
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
         Throw-Foundation 'INVALID_PACKAGE' 'Package ZIP is missing'
@@ -1769,7 +1772,20 @@ function Open-ValidatedPackage {
         } catch {
             Throw-Foundation 'INVALID_PACKAGE' 'Package manifest JSON is invalid'
         }
-        $Contract = Assert-Manifest $Manifest $Entries
+        $ExpectedEngine = $script:EngineVersion
+        if (-not [string]::IsNullOrWhiteSpace($DoctorHomeRoot)) {
+            # Only doctor may inspect an original package built by an older
+            # engine. The installed receipt, not an untrusted ZIP, selects it.
+            Assert-TargetName ([string]$Manifest.target)
+            $DoctorState = Read-ActiveState (
+                Get-FoundationPaths $DoctorHomeRoot ([string]$Manifest.target)
+            )
+            if ([string]$DoctorState.package_sha256 -cne $PackageSha256) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Doctor package hash differs from installed receipt'
+            }
+            $ExpectedEngine = [string]$DoctorState.foundation_engine_version
+        }
+        $Contract = Assert-Manifest $Manifest $Entries $ExpectedEngine
         $ReleaseStream = $null
         $ReleaseBytes = $null
         $ReleaseSha256 = $null
@@ -2185,7 +2201,7 @@ function Assert-ActiveState {
         [Parameter(Mandatory = $true)]$State,
         [Parameter(Mandatory = $true)][string]$ExpectedTarget
     )
-    Assert-ExactProperties $State @(
+    $Properties = @(
         'schema_version',
         'target',
         'release_version',
@@ -2200,7 +2216,11 @@ function Assert-ActiveState {
         'desired_state',
         'snapshot_path',
         'snapshot_sha256'
-    ) 'active state'
+    )
+    if (Test-ObjectProperty $State 'toml_contracts') {
+        $Properties += 'toml_contracts'
+    }
+    Assert-ExactProperties $State $Properties 'active state'
     if ($State.schema_version -ne 1 -or
         [string]$State.target -cne $ExpectedTarget -or
         $State.release_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
@@ -2219,6 +2239,214 @@ function Assert-ActiveState {
     }
     if ($State.desired_state -is [Management.Automation.PSCustomObject]) {
         Assert-DesiredStateContract $State.desired_state
+    }
+    if (Test-ObjectProperty $State 'toml_contracts') {
+        Assert-StateTomlContracts $State
+    }
+}
+
+function Assert-StateTomlContracts {
+    param([Parameter(Mandatory = $true)]$State)
+    $MergePaths = @(Get-MergeTomlFiles $State.managed_surface)
+    if ($State.toml_contracts -isnot [Array] -or
+        $MergePaths.Count -eq 0 -or
+        @($State.toml_contracts).Count -ne $MergePaths.Count) {
+        Throw-Foundation 'INVALID_PACKAGE' 'TOML contract coverage differs'
+    }
+    $Seen = New-Object 'Collections.Generic.HashSet[string]' (
+        [StringComparer]::Ordinal
+    )
+    foreach ($Contract in @($State.toml_contracts)) {
+        Assert-ExactProperties $Contract @(
+            'schema_version', 'path', 'source_sha256', 'requirements'
+        ) 'TOML contract'
+        if (($Contract.schema_version -isnot [int] -and $Contract.schema_version -isnot [long]) -or
+            $Contract.schema_version -ne 1 -or
+            $Contract.path -isnot [string] -or
+            $MergePaths -cnotcontains [string]$Contract.path -or
+            -not $Seen.Add([string]$Contract.path) -or
+            $Contract.source_sha256 -isnot [string] -or
+            $Contract.source_sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+            $Contract.requirements -isnot [Array] -or
+            @($Contract.requirements).Count -eq 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'TOML contract is invalid'
+        }
+        $null = Assert-FoundationTomlRequirements -Requirements $Contract.requirements
+        if (@($State.installed_files | Where-Object {
+            [string]$_.path -ceq [string]$Contract.path
+        }).Count -ne 1) {
+            Throw-Foundation 'INVALID_PACKAGE' 'TOML installed-file coverage differs'
+        }
+    }
+}
+
+function ConvertFrom-Utf8TomlBytes {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    try {
+        $Text = (New-Object Text.UTF8Encoding($false, $true)).GetString($Bytes)
+    } catch {
+        Throw-Foundation 'INVALID_PACKAGE' 'Canonical TOML is not valid UTF-8'
+    }
+    # Match the UTF-8 BOM handling of the historical ReadAllText merge path;
+    # source_sha256 continues to identify the original ZIP bytes, including BOM.
+    if ($Text.Length -gt 0 -and $Text[0] -eq [char]0xfeff) {
+        return $Text.Substring(1)
+    }
+    return $Text
+}
+
+function Get-PackageTomlContracts {
+    param([Parameter(Mandatory = $true)]$Validated)
+    foreach ($Relative in @(Get-MergeTomlFiles $Validated.manifest.managed_surface)) {
+        $Bytes = Read-ZipEntryBytes $Validated.entries[[string]$Relative]
+        $Text = ConvertFrom-Utf8TomlBytes $Bytes
+        $Protected = @()
+        if (Test-ObjectProperty $Validated.manifest 'desired_state') {
+            $Rule = @($Validated.manifest.desired_state.toml_reconcile | Where-Object {
+                [string]$_.path -ceq [string]$Relative
+            }) | Select-Object -First 1
+            if ($null -ne $Rule) { $Protected = @($Rule.protected_tables) }
+        }
+        $Requirements = @(Get-FoundationTomlRequirements -Text $Text -ProtectedSections $Protected)
+        if ($Requirements.Count -eq 0) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Canonical TOML contains no managed requirements'
+        }
+        [pscustomobject][ordered]@{
+            schema_version = 1
+            path = [string]$Relative
+            source_sha256 = Get-BytesSha256 $Bytes
+            requirements = $Requirements
+        }
+    }
+}
+
+function Get-DesiredStateDigest {
+    param([Parameter(Mandatory = $true)]$Value)
+    if ($Value -is [bool]) { return [string]$Value }
+    Assert-DesiredStateContract $Value
+    $Normalized = [ordered]@{
+        schema_version = $Value.schema_version
+        unknown_policy = $Value.unknown_policy
+        local_exceptions = $Value.local_exceptions
+        strict_doctor = $Value.strict_doctor
+        inventory_roots = @($Value.inventory_roots)
+        platform_owned = @($Value.platform_owned)
+        toml_reconcile = @(
+            foreach ($Rule in @($Value.toml_reconcile)) {
+                [ordered]@{
+                    path = $Rule.path
+                    exact_tables = @($Rule.exact_tables)
+                    protected_tables = @($Rule.protected_tables)
+                    allowed_entries = @($Rule.allowed_entries)
+                }
+            }
+        )
+    }
+    return Get-BytesSha256 ($Utf8NoBom.GetBytes((ConvertTo-Json $Normalized -Depth 12 -Compress)))
+}
+
+function Get-TomlContractDigest {
+    param([Parameter(Mandatory = $true)]$Contract)
+    $Normalized = [ordered]@{
+        schema_version = $Contract.schema_version
+        path = $Contract.path
+        source_sha256 = $Contract.source_sha256
+        requirements = @(
+            foreach ($Requirement in @($Contract.requirements)) {
+                [ordered]@{
+                    path_segments = @($Requirement.path_segments)
+                    kind = $Requirement.kind
+                    value_sha256 = $Requirement.value_sha256
+                }
+            }
+        )
+    }
+    return Get-BytesSha256 ($Utf8NoBom.GetBytes((ConvertTo-Json $Normalized -Depth 12 -Compress)))
+}
+
+function Assert-DoctorPackageBinding {
+    param([Parameter(Mandatory = $true)]$State, [Parameter(Mandatory = $true)]$Validated)
+    $Manifest = $Validated.manifest
+    $Desired = if (Test-ObjectProperty $Manifest 'desired_state') { $Manifest.desired_state } else { $false }
+    if ([string]$State.package_sha256 -cne [string]$Validated.package_sha256 -or
+        [string]$State.target -cne [string]$Manifest.target -or
+        [string]$State.release_version -cne [string]$Manifest.version -or
+        [string]$State.foundation_engine_version -cne [string]$Manifest.foundation_engine_version -or
+        [string]$State.client.id -cne [string]$Manifest.client.id -or
+        [string]$State.client.supported_version -cne [string]$Manifest.client.supported_version -or
+        (Get-ManagedSurfaceDigest $State.managed_surface) -cne
+            (Get-ManagedSurfaceDigest $Manifest.managed_surface) -or
+        (Get-EnvironmentContractDigest $State.environment) -cne
+            (Get-EnvironmentContractDigest $Manifest.environment) -or
+        (Get-DesiredStateDigest $State.desired_state) -cne (Get-DesiredStateDigest $Desired)) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Doctor package identity or managed contract differs from installed receipt'
+    }
+    if (Test-ObjectProperty $State 'toml_contracts') {
+        foreach ($Contract in @(Get-PackageTomlContracts $Validated)) {
+            $Stored = @($State.toml_contracts | Where-Object {
+                [string]$_.path -ceq [string]$Contract.path
+            })[0]
+            if ((Get-TomlContractDigest $Stored) -cne (Get-TomlContractDigest $Contract)) {
+                Throw-Foundation 'INVALID_PACKAGE' 'Stored TOML contract differs from original package'
+            }
+        }
+    }
+}
+
+function Get-LegacyDoctorTomlContracts {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)]$Validated,
+        [Parameter(Mandatory = $true)][string]$HomeRoot,
+        [Parameter(Mandatory = $true)]$Paths
+    )
+    $Contracts = @(Get-PackageTomlContracts $Validated)
+    if ($Contracts.Count -eq 0) { return }
+    $Prepared = Get-ValidatedSnapshot $State $HomeRoot $Paths -ReadOnly
+    if ([string]$Prepared.snapshot.release_version -cne [string]$State.release_version) {
+        Throw-Foundation 'INVALID_PACKAGE' 'Legacy snapshot release differs'
+    }
+    foreach ($Contract in $Contracts) {
+        $Relative = [string]$Contract.path
+        $Installed = @($State.installed_files | Where-Object {
+            [string]$_.path -ceq $Relative
+        })
+        if ($Installed.Count -ne 1) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Legacy TOML installed-file coverage differs'
+        }
+        $Before = ''
+        if (@($Prepared.snapshot.existed) -ccontains $Relative) {
+            $Before = Read-Utf8TextFile (Join-Path $Prepared.managed_root $Relative.Replace('/', '\'))
+        }
+        $RequiredBytes = Read-ZipEntryBytes $Validated.entries[$Relative]
+        $Required = ConvertFrom-Utf8TomlBytes $RequiredBytes
+        $Rule = $null
+        if ($State.desired_state -is [Management.Automation.PSCustomObject]) {
+            $Rule = @($State.desired_state.toml_reconcile | Where-Object {
+                [string]$_.path -ceq $Relative
+            }) | Select-Object -First 1
+        }
+        $PreviousExceptions = $script:ActiveLocalTomlExceptions
+        $script:ActiveLocalTomlExceptions = @($State.local_exceptions | Where-Object {
+            ([string]$_).StartsWith('toml:', [StringComparison]::Ordinal)
+        })
+        try {
+            # Reproduce the historical installer, including newline handling.
+            # The pre-install backup itself is never treated as the baseline.
+            $After = if ($null -ne $Rule) {
+                Reconcile-TomlText $Before $Required @($Rule.exact_tables) @($Rule.protected_tables)
+            } else {
+                Merge-TomlText $Before $Required
+            }
+        } finally {
+            $script:ActiveLocalTomlExceptions = $PreviousExceptions
+        }
+        $AfterBytes = $Utf8NoBom.GetBytes($After)
+        if ((Get-BytesSha256 $AfterBytes) -cne [string]$Installed[0].sha256 -or
+            $AfterBytes.LongLength -ne [int64]$Installed[0].bytes) {
+            Throw-Foundation 'INVALID_PACKAGE' 'Legacy TOML reconstruction differs from installed receipt'
+        }
+        $Contract
     }
 }
 
@@ -3605,8 +3833,7 @@ function New-FoundationPlan {
                 $RequiredBytes = Read-ZipEntryBytes (
                     $Validated.entries[[string]$Row.path]
                 )
-                $RequiredText = (New-Object Text.UTF8Encoding($false, $true)).
-                    GetString($RequiredBytes)
+                $RequiredText = ConvertFrom-Utf8TomlBytes $RequiredBytes
                 $ExistingText = Read-Utf8TextFile $Destination
                 $Action = if ((Merge-TomlText $ExistingText $RequiredText) -ceq
                     $ExistingText) { 'UNCHANGED' } else { 'MERGE' }
@@ -4163,7 +4390,8 @@ function Get-ValidatedSnapshot {
     param(
         [Parameter(Mandatory = $true)]$Expected,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
-        [Parameter(Mandatory = $true)]$Paths
+        [Parameter(Mandatory = $true)]$Paths,
+        [switch]$ReadOnly
     )
     if ([string]$Expected.target -cne [string]$Paths.target -or
         $Expected.snapshot_sha256 -notmatch '^[0-9a-f]{64}$') {
@@ -4404,6 +4632,18 @@ function Get-ValidatedSnapshot {
             }
         }
     }
+    if ($ReadOnly) {
+        if ($Snapshot.schema_version -eq 5) {
+            Assert-BundledOfficeCliSnapshot $Snapshot $SnapshotRoot $HomeRoot -HistoricalReadOnly
+        }
+        return [pscustomobject]@{
+            snapshot = $Snapshot
+            snapshot_path = $SnapshotPath
+            snapshot_sha256 = [string]$Expected.snapshot_sha256
+            staging_root = $null
+            managed_root = $ManagedRoot
+        }
+    }
     $StagingRoot = Join-Path ([IO.Path]::GetTempPath()) (
         'foundation-restore-' + [Guid]::NewGuid().ToString('N')
     )
@@ -4558,11 +4798,24 @@ function Test-InstalledState {
         [Parameter(Mandatory = $true)]$State,
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)][string]$ActualClientId,
-        [Parameter(Mandatory = $true)][string]$ActualClientVersion
+        [Parameter(Mandatory = $true)][string]$ActualClientVersion,
+        [AllowEmptyCollection()][object[]]$RecoveredTomlContracts = @()
     )
     Assert-ClientContract $State.client $ActualClientId `
         $ActualClientVersion
     Test-EnvironmentContract $State.environment $HomeRoot
+    $TomlByPath = @{}
+    if (Test-ObjectProperty $State 'toml_contracts') {
+        Assert-StateTomlContracts $State
+        foreach ($Contract in @($State.toml_contracts)) {
+            $TomlByPath[[string]$Contract.path] = $Contract
+        }
+    } else {
+        foreach ($Contract in @($RecoveredTomlContracts)) {
+            $TomlByPath[[string]$Contract.path] = $Contract
+        }
+    }
+    $MergePaths = @(Get-MergeTomlFiles $State.managed_surface)
     $ExpectedByRoot = @{}
     foreach ($Root in @($State.managed_surface.exact_directories)) {
         $ExpectedByRoot[[string]$Root] = New-Object (
@@ -4572,9 +4825,21 @@ function Test-InstalledState {
     foreach ($Row in @($State.installed_files)) {
         $Destination = Resolve-HomePath ([string]$Row.path) $HomeRoot
         Assert-SafeAncestors $Destination $HomeRoot
-        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf) -or
-            (Get-FileSha256 $Destination) -cne [string]$Row.sha256 -or
+        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+            Throw-Foundation 'ACTIVE_DRIFT' (
+                "Installed file differs: $($Row.path)"
+            )
+        }
+        if ($TomlByPath.ContainsKey([string]$Row.path)) {
+            $null = Test-FoundationTomlRequirements -Text (Read-Utf8TextFile $Destination) `
+                -Requirements $TomlByPath[[string]$Row.path].requirements
+        } elseif ((Get-FileSha256 $Destination) -cne [string]$Row.sha256 -or
             (Get-Item -LiteralPath $Destination).Length -ne [int64]$Row.bytes) {
+            if ($MergePaths -ccontains [string]$Row.path) {
+                Throw-Foundation 'LEGACY_TOML_BASELINE_REQUIRED' (
+                    "Original package is required to verify legacy TOML: $($Row.path)"
+                )
+            }
             Throw-Foundation 'ACTIVE_DRIFT' (
                 "Installed file differs: $($Row.path)"
             )
@@ -4764,7 +5029,7 @@ function New-BundledOfficeCliSnapshot {
 }
 
 function Assert-BundledOfficeCliSnapshot {
-    param($Snapshot, [string]$SnapshotRoot, [string]$HomeRoot)
+    param($Snapshot, [string]$SnapshotRoot, [string]$HomeRoot, [switch]$HistoricalReadOnly)
     $Before = $Snapshot.bundled_officecli
     Assert-ExactProperties $Before @('generation', 'target', 'files', 'environment_before') 'bundled OfficeCLI snapshot'
     if ([string]$Before.generation -cne [string]$Snapshot.snapshot_id -or
@@ -4824,6 +5089,7 @@ function Assert-BundledOfficeCliSnapshot {
             Throw-Foundation 'INVALID_PACKAGE' 'Bundled OfficeCLI environment snapshot differs'
         }
     }
+    if ($HistoricalReadOnly) { return }
     # Refuse to undo a later installation by another target. The pre-install
     # receipt is also accepted so interrupted/automatic restoration is repeatable.
     $ReceiptBefore = $Before.files[5]
@@ -5031,6 +5297,7 @@ function Invoke-Install {
             'Unknown managed entries require an explicit decision'
         )
     }
+    $TomlContracts = @(Get-PackageTomlContracts $Validated)
     $BaselinePlan = Get-SessionToolsBaselinePlan $Validated $HomeRoot
     $Paths = Get-FoundationPaths $HomeRoot ([string]$Validated.manifest.target)
     $ActiveBeforeInstall = Read-ActiveState $Paths -AllowMissing
@@ -5175,6 +5442,9 @@ function Invoke-Install {
             snapshot_path = [string]$Snapshot.metadata_path
             snapshot_sha256 = [string]$Snapshot.metadata_sha256
         }
+        if ($TomlContracts.Count -gt 0) {
+            $State | Add-Member -NotePropertyName 'toml_contracts' -NotePropertyValue $TomlContracts
+        }
         $null = Test-InstalledState $State $HomeRoot $ActualClientId `
             $ActualClientVersion
         Write-JsonFile $State $Paths.active
@@ -5223,7 +5493,8 @@ function Invoke-Doctor {
         [Parameter(Mandatory = $true)][string]$HomeRoot,
         [Parameter(Mandatory = $true)][string]$TargetName,
         [Parameter(Mandatory = $true)][string]$ActualClientId,
-        [Parameter(Mandatory = $true)][string]$ActualClientVersion
+        [Parameter(Mandatory = $true)][string]$ActualClientVersion,
+        $OriginalPackage = $null
     )
     $Paths = Get-FoundationPaths $HomeRoot $TargetName
     if ((Test-Path -LiteralPath $Paths.pending -PathType Leaf) -or
@@ -5233,8 +5504,15 @@ function Invoke-Doctor {
         )
     }
     $State = Read-ActiveState $Paths
+    $Recovered = @()
+    if ($null -ne $OriginalPackage) {
+        Assert-DoctorPackageBinding $State $OriginalPackage
+        if (-not (Test-ObjectProperty $State 'toml_contracts')) {
+            $Recovered = @(Get-LegacyDoctorTomlContracts $State $OriginalPackage $HomeRoot $Paths)
+        }
+    }
     $Health = Test-InstalledState $State $HomeRoot $ActualClientId `
-        $ActualClientVersion
+        $ActualClientVersion -RecoveredTomlContracts $Recovered
     $SessionManagedPaths = @(
         @($State.managed_surface.exact_directories) +
         @($State.managed_surface.replace_files) +
@@ -5389,6 +5667,7 @@ $Validated = $null
 $OperationLock = $null
 $OperationSharedLock = $null
 try {
+    . (Join-Path $PSScriptRoot 'foundation-toml.ps1')
     $TargetHome = [IO.Path]::GetFullPath($TargetHome)
     Assert-SafeDirectory $TargetHome
     if ($Command -ceq 'apply') {
@@ -5444,7 +5723,8 @@ try {
         $Validated = Open-ValidatedPackage `
             $Package `
             $ReleaseManifest `
-            $ReleaseManifestSha256
+            $ReleaseManifestSha256 `
+            -DoctorHomeRoot $(if ($Command -ceq 'doctor') { $TargetHome } else { '' })
         if (-not [string]::IsNullOrWhiteSpace($Target) -and
             $Target -cne [string]$Validated.manifest.target) {
             Throw-Foundation 'INVALID_ARGUMENT' 'Target differs from package'
@@ -5515,7 +5795,7 @@ try {
             break
         }
         'doctor' {
-            Invoke-Doctor $TargetHome $Target $ClientId $ClientVersion
+            Invoke-Doctor $TargetHome $Target $ClientId $ClientVersion -OriginalPackage $Validated
             break
         }
         'inventory' {
