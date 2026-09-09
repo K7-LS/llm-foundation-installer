@@ -20,6 +20,8 @@ $OutputEncoding = $Utf8NoBom
 $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $VersionPath = Join-Path $RepositoryRoot 'VERSION'
 $SourcePath = Join-Path $RepositoryRoot 'src\foundation.ps1'
+$TomlSourcePath = Join-Path $RepositoryRoot 'src\foundation-toml.ps1'
+$TomlVendorRoot = Join-Path $RepositoryRoot 'src\vendor\tomlyn'
 $SourceLockPath = Join-Path $RepositoryRoot 'client-sources.lock.json'
 $ShimBuildPath = Join-Path $RepositoryRoot 'tools\build-officecli-shim.ps1'
 $ExporterBuildPath = Join-Path $RepositoryRoot 'tools\build-officecli-pdf-exporter.ps1'
@@ -31,6 +33,7 @@ if (Test-Path -LiteralPath $OutputRoot) {
 }
 if (-not (Test-Path -LiteralPath $VersionPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $SourcePath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $TomlSourcePath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $SourceLockPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $ShimBuildPath -PathType Leaf) -or
     -not (Test-Path -LiteralPath $ExporterBuildPath -PathType Leaf) -or
@@ -46,9 +49,32 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
 
 . (Join-Path $PSScriptRoot '_common.ps1')
 
+# Keep the parser offline and bind the shipped binary and licence to the
+# reviewed NuGet payload. A changed dependency needs an explicit pin update.
+$TomlPins = [ordered]@{
+    'Tomlyn.dll' = 'a7d2ea40533a5a912bc6a64ab8f1347e60fe92ea0ab456d423b64db2214c904b'
+    'LICENSE.txt' = 'd5044cd5e1438c78e9ba08ddc78d2d15d97e27456c0ed1aa653713705e302897'
+}
+foreach ($Name in $TomlPins.Keys) {
+    $Path = Join-Path $TomlVendorRoot $Name
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        (Get-Sha256 $Path) -cne $TomlPins[$Name]) {
+        throw ('Pinned TOML dependency differs: ' + $Name)
+    }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $TomlVendorRoot 'provenance.json') -PathType Leaf)) {
+    throw 'TOML dependency provenance is missing'
+}
+
 [IO.Directory]::CreateDirectory($OutputRoot) | Out-Null
 $BundledScript = Join-Path $OutputRoot 'foundation.ps1'
 [IO.File]::Copy($SourcePath, $BundledScript, $false)
+[IO.File]::Copy($TomlSourcePath, (Join-Path $OutputRoot 'foundation-toml.ps1'), $false)
+$BundledTomlVendorRoot = Join-Path $OutputRoot 'vendor\tomlyn'
+[IO.Directory]::CreateDirectory($BundledTomlVendorRoot) | Out-Null
+foreach ($Name in @('Tomlyn.dll', 'LICENSE.txt', 'provenance.json')) {
+    [IO.File]::Copy((Join-Path $TomlVendorRoot $Name), (Join-Path $BundledTomlVendorRoot $Name), $false)
+}
 $Encoding = New-Object Text.UTF8Encoding($false)
 [IO.File]::WriteAllText(
     (Join-Path $OutputRoot 'VERSION'),

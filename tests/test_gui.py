@@ -489,6 +489,10 @@ def _accepted_foundation(root: Path) -> Path:
             REPOSITORY_ROOT / "VERSION"
         ).read_bytes(),
     }
+    if FOUNDATION_VERSION == '0.5.12':
+        for name in ('foundation-toml.ps1', 'vendor/tomlyn/Tomlyn.dll',
+                     'vendor/tomlyn/LICENSE.txt', 'vendor/tomlyn/provenance.json'):
+            engine_files[name] = (REPOSITORY_ROOT / 'src' / name).read_bytes()
     script_hash = hashlib.sha256(
         engine_files["foundation.ps1"]
     ).hexdigest()

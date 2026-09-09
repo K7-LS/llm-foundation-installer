@@ -25,6 +25,26 @@ CORE_ENGINE_FILES = (
     "engine-manifest.json",
     "foundation.ps1",
 )
+CORE_ENGINE_FILES_BY_VERSION = {
+    "0.5.11": CORE_ENGINE_FILES,
+    "0.5.12": CORE_ENGINE_FILES + (
+        "foundation-toml.ps1", "vendor/tomlyn/Tomlyn.dll",
+        "vendor/tomlyn/LICENSE.txt", "vendor/tomlyn/provenance.json",
+    ),
+}
+SHARED_ENGINE_FILES = (
+    "shared-tools.lock.json", "shared-tools/officecli/officecli.exe",
+    "shared-tools/officecli/officecli-shim.exe",
+    "shared-tools/officecli/officecli-command-policy.json",
+    "shared-tools/officecli/k7-officecli-pdf.exe",
+    "shared-tools/officecli/officecli_csv_batch.py",
+)
+
+
+def _core_engine_files(version: str) -> tuple[str, ...]:
+    if version not in CORE_ENGINE_FILES_BY_VERSION:
+        raise ValueError("Unsupported Foundation engine delivery version")
+    return CORE_ENGINE_FILES_BY_VERSION[version]
 
 
 @dataclass(frozen=True)
@@ -76,9 +96,10 @@ def _engine_tree(engine_root: Path) -> dict[str, str]:
         raise ValueError("Foundation engine root is unsafe")
     paths = sorted(engine_root.rglob("*"), key=lambda item: item.as_posix())
     files = [path for path in paths if path.is_file()]
-    if any(path.is_symlink() for path in paths) or not all(
-        (engine_root / name).is_file() for name in CORE_ENGINE_FILES
-    ):
+    expected = set(_core_engine_files(VERSION) + SHARED_ENGINE_FILES)
+    if any(path.is_symlink() for path in paths) or {
+        path.relative_to(engine_root).as_posix() for path in files
+    } != expected:
         raise ValueError("Foundation engine inventory differs")
     return {
         path.relative_to(engine_root).as_posix(): _sha256(path.read_bytes())
@@ -222,7 +243,7 @@ def prepare_foundation_release(
     evidence_path.write_bytes(evidence_source.read_bytes())
     engine_records = {
         name: _record(engine_root / name)
-        for name in CORE_ENGINE_FILES
+        for name in _core_engine_files(VERSION)
     }
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -364,6 +385,7 @@ def create_package_acceptance(
         != {"immutable_release": True, "release_attestation": True}
         or not isinstance(asset, dict)
         or not isinstance(engine_files, dict)
+        or set(engine_files) != set(_core_engine_files(VERSION))
     ):
         raise ValueError("stable Foundation release manifest is invalid")
     asset_path = manifest_path.parent / str(asset.get("name") or "")
@@ -393,6 +415,7 @@ def create_package_acceptance(
     }
     if (
         not isinstance(accepted_tree, dict)
+        or set(manifest_core) != set(_core_engine_files(VERSION))
         or any(
             accepted_tree.get(name) != digest
             for name, digest in manifest_core.items()
