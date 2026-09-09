@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import io
 import json
@@ -115,6 +116,57 @@ def _export_commit(work):
     return destination
 
 
+def _syntax_source_binding(source_root, repository_root, commit):
+    """Bind the Git-aware linter's inputs to the committed archive, byte for byte."""
+    def git(*arguments):
+        return subprocess.run(
+            ["git", *arguments], cwd=repository_root, check=True, capture_output=True
+        ).stdout
+
+    committed = [name.decode("utf-8") for name in
+                 git("ls-tree", "-r", "--name-only", "-z", commit).split(b"\0")
+                 if name and name.decode("utf-8").casefold().endswith(".ps1")]
+    visible = [name.decode("utf-8") for name in
+               git("ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                   "--", ":(icase)*.ps1").split(b"\0") if name]
+    exported = [path.relative_to(source_root).as_posix()
+                for path in source_root.rglob("*")
+                if path.is_file() and path.suffix.casefold() == ".ps1"]
+    if (not committed or len(visible) != len(set(visible)) or
+            set(committed) != set(visible) or set(committed) != set(exported)):
+        raise ValueError("PowerShell syntax source inventory differs from commit")
+    files = {}
+    for relative in sorted(committed):
+        expected = hashlib.sha256(git("show", f"{commit}:{relative}")).hexdigest()
+        for root in (repository_root, source_root):
+            path = root / relative
+            if (not path.is_file() or not path.resolve().is_relative_to(root.resolve()) or
+                    legacy._sha256(path) != expected):
+                raise ValueError(f"PowerShell syntax source bytes differ from commit: {relative}")
+        files[relative] = expected
+    return {"commit": commit, "files": files, "status": "PASS"}
+
+
+def _run_syntax(prefix, environment, source_root, repository_root, commit):
+    binding = _syntax_source_binding(source_root, repository_root, commit)
+    # git archive intentionally has no .git. The unchanged linter enumerates
+    # the byte-identical original checkout; builds still use archive bytes.
+    result = _run(prefix + [str(source_root / "tools/check-ps-syntax.ps1"),
+                           "-Root", str(repository_root)], environment, source_root)
+    result["source_binding"] = binding
+    expected_summary = f"PowerShell syntax PASS: {len(binding['files'])}"
+    if result["status"] == "PASS" and expected_summary not in result["stdout"].splitlines():
+        result["status"] = "FAIL"
+        result["source_binding_failure"] = "PowerShell syntax checked file count differs from commit"
+    try:
+        if _syntax_source_binding(source_root, repository_root, commit) != binding:
+            raise ValueError("PowerShell syntax source binding changed during lint")
+    except Exception as error:
+        result["status"] = "FAIL"
+        result["source_binding_failure"] = f"{type(error).__name__}: {error}"
+    return result
+
+
 def _receipt_rows(work, builds):
     shells = {}
     for shell in ("ps7", "ps51"):
@@ -185,19 +237,20 @@ def main(argv=None):
     }
     try:
         builds, syntax = {}, {}
+        # Keep subprocess diagnostics even if an assertion fails mid-loop.
+        evidence.update(powershell_syntax=syntax, engine_builds=builds)
         for shell, name in (("ps7", "pwsh"), ("ps51", "powershell.exe")):
             executable = shutil.which(name)
             if not executable:
                 raise RuntimeError(f"required shell is missing: {shell}")
             prefix = [executable, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]
-            syntax[shell] = _run(prefix + [str(source_root / "tools/check-ps-syntax.ps1"), "-Root", str(source_root)], environment, source_root)
+            syntax[shell] = _run_syntax(prefix, environment, source_root, ROOT, source["commit"])
             out = work / f"engine-{shell}"
             builds[shell] = _run(prefix + [str(source_root / "tools/build-engine.ps1"), "-OutputRoot", str(out)], environment, source_root)
             builds[shell]["files"] = legacy._tree(out)
             assert set(builds[shell]["files"]) == set(engine_files)
             assert syntax[shell]["status"] == builds[shell]["status"] == "PASS"
             environment[f"K7_ENGINE_{shell.upper()}_ROOT"] = str(out)
-        evidence.update(powershell_syntax=syntax, engine_builds=builds)
         assert builds["ps7"]["files"] == builds["ps51"]["files"]
         evidence["deterministic_engine_bundle"] = "PASS"
         junit = work / "pytest.xml"
