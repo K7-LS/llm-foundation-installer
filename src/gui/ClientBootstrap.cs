@@ -1003,6 +1003,9 @@ namespace LlmFoundationInstaller
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            // A PS7 host can put its incompatible Utility module first. The
+            // official PS5 installer needs its native Get-FileHash for checksums.
+            AddWindowsPowerShellModulePath(start);
             Dictionary<string, string> bundledAssets = ResolveBundledAssets(
                 bundleRoot,
                 source
