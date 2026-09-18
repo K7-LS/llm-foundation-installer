@@ -287,7 +287,9 @@ namespace LlmFoundationInstaller
                 "if($items.Count -ne 1){exit 44};" +
                 "$p=$items[0];" +
                 "$m=Get-AppxPackageManifest -Package $p;" +
-                "$apps=@($m.Package.Applications.Application);" +
+                "$apps=@($m.Package.Applications.Application|" +
+                "Where-Object {$_.Id -ceq " +
+                "$env:LLM_STORE_APPLICATION_ID});" +
                 "if($apps.Count -ne 1){exit 45};" +
                 "$a=$apps[0];" +
                 "[pscustomobject]@{present=$true;" +
@@ -318,6 +320,8 @@ namespace LlmFoundationInstaller
             };
             start.EnvironmentVariables["LLM_STORE_IDENTITY"] =
                 source.store_identity;
+            start.EnvironmentVariables["LLM_STORE_APPLICATION_ID"] =
+                source.store_application_id;
             AddWindowsPowerShellModulePath(start);
             string output;
             BoundedProcessResult probeRun = BoundedProcess.Run(
