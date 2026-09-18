@@ -64,10 +64,11 @@ def test_status_catalog_smoke_covers_bound_texts(status_catalog: dict):
         "Напрямую: прокси не используется."
     )
     assert by_key["proxy_guidance"]["text"].startswith(
-        "Заполните сервер, порт, логин и пароль"
+        "Проверьте параметры и нажмите"
     )
+    assert "Сохранённый пароль не отображается" in by_key["proxy_guidance"]["text"]
     assert by_key["singbox_route_pass"]["text"] == (
-        "Маршрут SingBox проверен сквозным запросом."
+        "Проверочный адрес ответил успешно через SingBox (HTTP 2xx)."
     )
     for entry in entries:
         assert entry["tone"] in {"info", "ok", "warn"}, entry["key"]

@@ -335,6 +335,7 @@ namespace LlmFoundationInstaller
             Process client = null;
             bool registered = false;
             bool systemProxyAcquired = false;
+            bool prerequisiteCleanupVerified = true;
             try
             {
                 if (String.Equals(
@@ -342,8 +343,10 @@ namespace LlmFoundationInstaller
                         "appx",
                         StringComparison.Ordinal))
                 {
+                    prerequisiteCleanupVerified = false;
                     SingBoxSessionResult recovered =
                         SingBoxSession.RecoverOrphanedSessions(home);
+                    prerequisiteCleanupVerified = recovered.cleanup_verified;
                     if (!recovered.cleanup_verified)
                     {
                         throw new InvalidOperationException(
@@ -362,6 +365,7 @@ namespace LlmFoundationInstaller
                         "appx",
                         StringComparison.Ordinal))
                 {
+                    prerequisiteCleanupVerified = false;
                     ProxyRecoveryResult lease =
                         testRegistrySubkey == null
                         ? SystemProxyLease.Acquire(
@@ -373,6 +377,7 @@ namespace LlmFoundationInstaller
                             session.listen_port,
                             testRegistrySubkey
                         );
+                    prerequisiteCleanupVerified = lease.cleanup_verified;
                     if (lease.status != "ACQUIRED")
                     {
                         throw new InvalidOperationException(
@@ -529,10 +534,15 @@ namespace LlmFoundationInstaller
             }
             catch (Exception exception)
             {
-                bool cleanup = true;
-                List<string> lifecycle = session == null
-                    ? new List<string>()
-                    : session.lifecycle;
+                SingBoxStartException startFailure =
+                    exception as SingBoxStartException;
+                bool cleanup = prerequisiteCleanupVerified &&
+                    (startFailure == null ||
+                        startFailure.Result.cleanup_verified);
+                List<string> lifecycle = session != null
+                    ? session.lifecycle
+                    : (startFailure != null
+                        ? startFailure.Result.lifecycle : new List<string>());
                 if (session != null)
                 {
                     SingBoxSessionResult stopped;
@@ -555,7 +565,7 @@ namespace LlmFoundationInstaller
                             stopped.reason = proxy.reason;
                         }
                     }
-                    cleanup = stopped.cleanup_verified;
+                    cleanup = cleanup && stopped.cleanup_verified;
                     lifecycle = stopped.lifecycle;
                     if (!cleanup &&
                         !String.IsNullOrWhiteSpace(stopped.reason))
@@ -580,7 +590,9 @@ namespace LlmFoundationInstaller
                     executable_path = target.executable_path,
                     executable_sha256 = target.sha256,
                     lifecycle = lifecycle,
-                    reason = StableSingBoxReason(exception)
+                    reason = startFailure != null
+                        ? startFailure.Result.reason
+                        : StableSingBoxReason(exception)
                 };
             }
             finally

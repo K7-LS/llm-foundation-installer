@@ -379,7 +379,7 @@ namespace LlmFoundationInstaller
                     "accepted",
                     StringComparison.Ordinal))
             {
-                return ValidateFile(
+                return ValidateTargetEngine(package) && ValidateFile(
                         bundleRoot,
                         package.acceptance_evidence
                     ) &&
@@ -397,9 +397,23 @@ namespace LlmFoundationInstaller
                     "internal_unsigned",
                     StringComparison.Ordinal))
             {
-                return ValidateFile(bundleRoot, package.internal_acceptance);
+                return ValidateTargetEngine(package) &&
+                    ValidateFile(bundleRoot, package.internal_acceptance);
             }
             return false;
+        }
+
+        private static bool ValidateTargetEngine(TrustedPackage package)
+        {
+            try
+            {
+                TargetFoundationEngine.Validate(package);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static bool ValidateFile(string bundleRoot, TrustedFile record)

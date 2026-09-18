@@ -21,6 +21,12 @@ namespace LlmFoundationInstaller
 {
     internal static class ConnectionUi
     {
+        private static readonly DependencyProperty ProfileLoadErrorProperty =
+            DependencyProperty.RegisterAttached(
+                "ProfileLoadError", typeof(string), typeof(ConnectionUi),
+                new PropertyMetadata(null)
+            );
+
         public static bool TrySaveCurrent(
             UserControl view,
             out string error
@@ -36,14 +42,26 @@ namespace LlmFoundationInstaller
         )
         {
             ConnectionUiContract contract = ConnectionUiContract.Resolve(view);
+            contract.View.ClearValue(ProfileLoadErrorProperty);
 
             Action updateMode = delegate
             {
+                string profileLoadError = contract.View.GetValue(
+                    ProfileLoadErrorProperty
+                ) as string;
                 bool isProxy = contract.IsProxy;
                 contract.ProxySettings.IsEnabled = isProxy;
                 contract.ProxySettings.Visibility = isProxy
                     ? Visibility.Visible
                     : Visibility.Collapsed;
+                if (profileLoadError != null)
+                {
+                    ApplyStatus(contract,
+                        ConnectionStatusModel.SavedProfileNeedsAttention(
+                            profileLoadError
+                        ));
+                    return;
+                }
                 if (isProxy)
                 {
                     ApplyStatus(
@@ -92,6 +110,9 @@ namespace LlmFoundationInstaller
                 }
                 catch (Exception exception)
                 {
+                    contract.View.SetValue(
+                        ProfileLoadErrorProperty, exception.Message
+                    );
                     ApplyStatus(
                         contract,
                         ConnectionStatusModel.SavedProfileNeedsAttention(
@@ -442,6 +463,7 @@ namespace LlmFoundationInstaller
                         secure.Length > 0 ? secure : null
                     );
                     contract.ProxyPassword.Clear();
+                    contract.View.ClearValue(ProfileLoadErrorProperty);
                     ApplyStatus(
                         contract,
                         ConnectionStatusModel.Saved(result.profile.mode)

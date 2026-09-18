@@ -315,6 +315,7 @@ try {
         )
         distribution_mode = $DistributionMode
         targets = @($InstallerManifest.targets)
+        target_engines = @($InstallerManifest.target_engines)
         verdicts = $InstallerManifest.verdicts
         runtime = $RuntimeRecord
         client_assets = $ClientAssetRecords

@@ -24,8 +24,9 @@ namespace LlmFoundationInstaller
         public static ConnectionStatus ProxyGuidance()
         {
             return Make(
-                "Заполните сервер, порт, логин и пароль, затем нажмите " +
-                "«Сохранить и проверить».",
+                "Проверьте параметры и нажмите «Сохранить и проверить». " +
+                "Сохранённый пароль не отображается. Для прежнего " +
+                "профиля его можно оставить пустым.",
                 ToneInfo
             );
         }
@@ -58,7 +59,7 @@ namespace LlmFoundationInstaller
         public static ConnectionStatus SingBoxRoutePass()
         {
             return Make(
-                "Маршрут SingBox проверен сквозным запросом.",
+                "Проверочный адрес ответил успешно через SingBox (HTTP 2xx).",
                 ToneOk
             );
         }
@@ -87,10 +88,13 @@ namespace LlmFoundationInstaller
         {
             return Make(
                 DescribeTestFailure(reason) +
-                (wasSingBoxSession && singBoxCleanupVerified
-                    ? " Временная сессия SingBox уже очищена; " +
-                        "следующая проверка начнётся с чистого состояния."
-                    : " Нажмите «Сбросить маршрут» перед повтором."),
+                (wasSingBoxSession
+                    ? (singBoxCleanupVerified
+                        ? " Временная сессия SingBox очищена."
+                        : " Очистка временной сессии SingBox не подтверждена. " +
+                            "Сохраните текст ошибки и проверьте оставшуюся " +
+                            "сессию перед повтором.")
+                    : " Повторите проверку после устранения причины."),
                 ToneWarn
             );
         }
@@ -181,7 +185,46 @@ namespace LlmFoundationInstaller
                 ? "CONNECTION_TEST_FAILED"
                 : reason;
             string action;
-            if (stableReason == "RUNTIME_BUNDLE_ARCHIVE_MISSING")
+            int httpStatus;
+            const string httpPrefix = "ROUTE_HTTP_STATUS_";
+            if (stableReason.StartsWith(httpPrefix, StringComparison.Ordinal) &&
+                Int32.TryParse(stableReason.Substring(httpPrefix.Length),
+                    NumberStyles.None, CultureInfo.InvariantCulture,
+                    out httpStatus) && httpStatus >= 100 && httpStatus <= 599)
+            {
+                action = "Проверочный адрес вернул HTTP " +
+                    httpStatus.ToString(CultureInfo.InvariantCulture) + ". ";
+                if (httpStatus >= 300 && httpStatus < 400)
+                {
+                    action += "Получено перенаправление; успешный ответ " +
+                        "проверочного адреса не подтверждён.";
+                }
+                else if (httpStatus == 407)
+                {
+                    action += "Ответ указывает на отказ авторизации прокси. " +
+                        "Проверьте настройки учётной записи прокси.";
+                }
+                else if (httpStatus == 401 || httpStatus == 403)
+                {
+                    action += "Запрос отклонён. Доступ к сервису не подтверждён.";
+                }
+                else if (httpStatus == 429)
+                {
+                    action += "Сервис ограничил частоту запросов. " +
+                        "Повторите проверку позже.";
+                }
+                else if (httpStatus >= 500)
+                {
+                    action += "Сервис или промежуточный сервер вернул ошибку. " +
+                        "Повторите проверку позже.";
+                }
+                else
+                {
+                    action += "Успешный доступ к проверочному адресу " +
+                        "не подтверждён.";
+                }
+            }
+            else if (stableReason == "RUNTIME_BUNDLE_ARCHIVE_MISSING")
             {
                 action = "Распакуйте весь ZIP: архив runtime должен лежать рядом " +
                     "с запускником.";
@@ -282,6 +325,11 @@ namespace LlmFoundationInstaller
             "CONFIG_CHECK_FAILED",
             "LOCAL_PROXY_NOT_READY",
             "ROUTE_PROBE_FAILED",
+            "ROUTE_HTTP_STATUS_302",
+            "ROUTE_HTTP_STATUS_403",
+            "ROUTE_HTTP_STATUS_407",
+            "ROUTE_HTTP_STATUS_429",
+            "ROUTE_HTTP_STATUS_500",
             "PROXY_AUTH_FAILED",
             "PROXY_ACCESS_DENIED",
             "PROXY_TLS_FAILED",
