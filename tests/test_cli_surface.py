@@ -150,8 +150,16 @@ def test_release_build_rejects_test_only_command_that_test_host_serves(
 
 def test_release_build_still_serves_tool_commands(release_bundle: Path) -> None:
     result = _run(release_bundle, "--self-test-json")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout)["app_id"] == "llm-foundation-installer"
+    # Без встроенных пакетов целей комплекту нечем устанавливать базы:
+    # команда отвечает, но не подтверждает ни одного движка цели (код 30).
+    assert result.returncode == 30, result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value["app_id"] == "llm-foundation-installer"
+    assert [row["engine_validated"] for row in value["target_engines"]] == [
+        False,
+        False,
+        False,
+    ]
 
 
 def _readme_command_table() -> dict[str, tuple[int, int]]:

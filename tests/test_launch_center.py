@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -485,8 +486,9 @@ def test_connection_ui_uses_known_working_chatgpt_trace_probe() -> None:
     )
     assert '"https://chatgpt.com/cdn-cgi/trace"' not in app_source
     assert "connection_probe_url" in app_source
-    assert 'targetId == "connection-test"\n                ? "codex-desktop"' in (
-        session_source
+    assert re.search(
+        r'targetId == "connection-test"\s*\?\s*"codex-desktop"',
+        session_source,
     )
 
 
@@ -553,9 +555,8 @@ def test_ui_launch_selection_json_shows_vscode_correlation(
     assert value["selection_visual"] == "VISIBLE"
     assert value["button_content"] == "Запустить VS Code →"
     assert value["client_display"] == "VS CODE — CODEX"
-    assert value["evidence_status"] == (
-        "Локальный ID OpenAI.chatgpt будет обнаружен при запуске"
-    )
+    # До запуска карточка проверки нейтральна для любой цели.
+    assert value["evidence_status"] == "Проверка при запуске"
 
 
 def test_vscode_trusted_record_resolves_only_from_test_only_bundle(

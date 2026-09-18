@@ -717,6 +717,14 @@ def _accepted_package(
         hot_path: b"# accepted candidate\n",
         f"{install_root}/base/runtime/check.txt": b"runtime\n",
     }
+    # Движок цели входит в сам пакет: TargetFoundationEngine берёт
+    # исполняемый код только из встроенного доверенного пакета цели.
+    engine_root = f"{install_root}/base/foundation/{FOUNDATION_VERSION}/"
+    with zipfile.ZipFile(
+        foundation / f"foundation-engine-{FOUNDATION_VERSION}.zip"
+    ) as engine_archive:
+        for name in engine_archive.namelist():
+            entries[engine_root + name] = engine_archive.read(name)
     package_manifest = {
         "schema_version": 1,
         "target": target,
@@ -729,7 +737,10 @@ def _accepted_package(
             REPOSITORY_ROOT / "VERSION"
         ).read_text(encoding="utf-8").strip(),
         "managed_surface": {
-            "exact_directories": [f"{install_root}/base/runtime"],
+            "exact_directories": [
+                f"{install_root}/base/foundation",
+                f"{install_root}/base/runtime",
+            ],
             "replace_files": [hot_path],
             "preserved_paths": [f"{install_root}/auth.json"],
         },
@@ -1103,12 +1114,32 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
         check=False,
         timeout=30,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    # Самопроверка подтверждает движок каждой цели по её встроенному
+    # пакету. Здесь встроен только Codex, поэтому комплект в целом не
+    # готов к установке остальных целей и самопроверка возвращает 30.
+    assert result.returncode == 30, result.stdout + result.stderr
     payload = json.loads(result.stdout)
+    missing_engine = {
+        "engine_validated": False,
+        "engine_version": None,
+        "engine_manifest_sha256": None,
+    }
     assert payload == {
         "app_id": "llm-foundation-installer",
-        "engine_validated": True,
+        "engine_validated": False,
         "foundation_protocol": 1,
+        "target_engines": [
+            {
+                "target": "codex",
+                "engine_validated": True,
+                "engine_version": FOUNDATION_VERSION,
+                "engine_manifest_sha256": _sha256(
+                    gui_bundle / "engine" / "engine-manifest.json"
+                ),
+            },
+            {"target": "claude", **missing_engine},
+            {"target": "opencode", **missing_engine},
+        ],
         "network": "user-initiated-only",
         "automatic_network": False,
         "reverse_flow": False,
@@ -3888,7 +3919,7 @@ def test_singbox_connection_ui_reveals_settings_only_for_proxy_mode():
         "if (isProxy)"
     )
     assert "ConnectionStatusModel.ProxyGuidance()" in update_mode
-    assert "Заполните сервер, порт, логин и пароль" in source
+    assert "Проверьте параметры и нажмите «Сохранить и проверить»" in source
 
 
 def test_launch_center_ui_opens_launch_center_view_in_single_installer_exe(
@@ -3993,7 +4024,7 @@ def test_four_view_connection_contract(
     assert value["stop_enabled"] is False
     assert value["reset_enabled"] is True
     assert value["status_text"].startswith(
-        "Заполните сервер, порт, логин и пароль"
+        "Проверьте параметры и нажмите «Сохранить и проверить»"
     )
     if edition == "Owner" and product_role == "LaunchCenter":
         assert value["route_detail"] == (
@@ -5715,8 +5746,13 @@ def test_gui_executable_is_a_standalone_installer_payload(
         check=False,
         timeout=30,
     )
-    assert self_test.returncode == 0, self_test.stdout + self_test.stderr
-    assert json.loads(self_test.stdout)["engine_validated"] is True
+    # Встроен только Codex: вынесенный отдельно EXE сам подтверждает
+    # движок Codex из своих ресурсов, остальные цели в нём не встроены.
+    assert self_test.returncode == 30, self_test.stdout + self_test.stderr
+    assert {
+        row["target"]: row["engine_validated"]
+        for row in json.loads(self_test.stdout)["target_engines"]
+    } == {"codex": True, "claude": False, "opencode": False}
 
     catalog = subprocess.run(
         [str(executable), "--catalog-json"],

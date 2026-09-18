@@ -631,8 +631,14 @@ def test_deterministic_edition_bundle_ships_single_installer_exe(
         encoding="utf-8",
         timeout=30,
     )
-    assert self_test.returncode == 0, self_test.stdout + self_test.stderr
-    assert json.loads(self_test.stdout)["version"] == APP_VERSION
+    # Комплект собран без встроенных пакетов целей: самопроверка отвечает,
+    # но возвращает код 30 и не подтверждает ни одного движка цели.
+    assert self_test.returncode == 30, self_test.stdout + self_test.stderr
+    self_test_value = json.loads(self_test.stdout)
+    assert self_test_value["version"] == APP_VERSION
+    assert [
+        row["engine_validated"] for row in self_test_value["target_engines"]
+    ] == [False, False, False]
     assert (first / "bundle-manifest.json").read_bytes() == (
         second / "bundle-manifest.json"
     ).read_bytes()

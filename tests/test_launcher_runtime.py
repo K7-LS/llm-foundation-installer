@@ -1132,9 +1132,11 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         assert cleanup_failed_value["status"] == "FAILED"
         assert cleanup_failed_value["uses_proxy"] is True
         assert cleanup_failed_value["cleanup_verified"] is False
+        # Первая причина отказа (сломанный upstream) не подменяется ошибкой
+        # очистки; сбой очистки сообщается через cleanup_verified.
         assert (
             cleanup_failed_value["reason"]
-            == "SESSION_CLEANUP_FAILED"
+            == "PROXY_UPSTREAM_FAILED"
         )
         sessions = (
             home
