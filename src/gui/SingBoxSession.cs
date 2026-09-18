@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.AccessControl;
@@ -21,6 +22,30 @@ namespace LlmFoundationInstaller
         public bool secret_redacted { get; set; }
         public List<string> lifecycle { get; set; }
         public string reason { get; set; }
+        public int? http_status { get; set; }
+    }
+
+    internal sealed class SingBoxStartException : InvalidOperationException
+    {
+        public SingBoxSessionResult Result { get; private set; }
+
+        public SingBoxStartException(SingBoxSessionResult result)
+            : base(result.reason)
+        {
+            Result = result;
+        }
+    }
+
+    internal sealed class SingBoxHttpException : InvalidOperationException
+    {
+        public int StatusCode { get; private set; }
+
+        public SingBoxHttpException(int statusCode)
+            : base("ROUTE_HTTP_STATUS_" + statusCode.ToString(
+                CultureInfo.InvariantCulture))
+        {
+            StatusCode = statusCode;
+        }
     }
 
     internal sealed class RunningSingBoxSession
@@ -33,6 +58,8 @@ namespace LlmFoundationInstaller
         internal SingBoxSessionResult stop_result { get; set; }
         internal object diagnostic_gate { get; set; }
         internal string runtime_reason { get; set; }
+        internal bool runtime_stderr_started { get; set; }
+        internal volatile bool runtime_stderr_completed;
     }
 
     internal static class SingBoxSession
@@ -66,6 +93,12 @@ namespace LlmFoundationInstaller
             }
             catch (Exception exception)
             {
+                SingBoxStartException startFailure =
+                    exception as SingBoxStartException;
+                if (startFailure != null)
+                {
+                    return startFailure.Result;
+                }
                 bool cleanup = CleanupFailedStart(running);
                 return Failed(
                     running == null ? 0 : running.listen_port,
@@ -87,6 +120,7 @@ namespace LlmFoundationInstaller
         {
             RunningSingBoxSession running = null;
             string failure = null;
+            int? httpStatus = null;
             try
             {
                 running = Start(
@@ -95,26 +129,32 @@ namespace LlmFoundationInstaller
                     "connection-test",
                     route
                 );
-                RunCurlProbe(running.listen_port, endpoint);
+                httpStatus = RunCurlProbe(running.listen_port, endpoint);
                 running.lifecycle.Add("ROUTE_PROBE_PASS");
             }
             catch (Exception exception)
             {
                 if (running == null)
                 {
-                    return Failed(
-                        0,
-                        new List<string>(),
-                        true,
-                        StableReason(exception),
-                        true
-                    );
+                    SingBoxStartException startFailure =
+                        exception as SingBoxStartException;
+                    return startFailure != null
+                        ? startFailure.Result
+                        : Failed(0, new List<string>(), false,
+                            StableReason(exception), true);
+                }
+                SingBoxHttpException httpFailure =
+                    exception as SingBoxHttpException;
+                if (httpFailure != null)
+                {
+                    httpStatus = httpFailure.StatusCode;
                 }
                 failure = ProbeFailureReason(exception);
             }
 
             SingBoxSessionResult result = StopVerified(running);
             result.uses_proxy = true;
+            result.http_status = httpStatus;
             if (result.cleanup_verified)
             {
                 result.lifecycle.Remove("RUNTIME_STOPPED");
@@ -124,13 +164,9 @@ namespace LlmFoundationInstaller
             if (failure != null)
             {
                 result.status = "FAILED";
-                if (result.cleanup_verified)
-                {
-                    result.reason = RuntimeFailureReason(
-                        running,
-                        failure
-                    );
-                }
+                // Preserve the probe cause as well as the independent cleanup
+                // flag; the UI must show both when both operations fail.
+                result.reason = RuntimeFailureReason(running, failure);
             }
             return result;
         }
@@ -142,55 +178,55 @@ namespace LlmFoundationInstaller
             string route
         )
         {
-            RuntimeBootstrapResult runtime = RuntimeBootstrap.EnsureInstalled(
-                bundleRoot,
-                home
-            );
-            if (runtime.status != "VERIFIED")
-            {
-                throw new InvalidOperationException(
-                    RuntimeBootstrap.FailureReason(runtime)
-                );
-            }
-            int port = FindFreePort();
-            if (port == 0)
-            {
-                throw new InvalidOperationException(
-                    "LOCAL_PORT_UNAVAILABLE"
-                );
-            }
-            string root = Path.Combine(
-                Path.GetFullPath(home),
-                ".llm-foundation",
-                "launcher-state",
-                "sessions",
-                Guid.NewGuid().ToString("N")
-            );
-            Directory.CreateDirectory(root);
-            ApplyCurrentUserAcl(root);
-            string nonce = Guid.NewGuid().ToString("N");
-            string configPath = Path.Combine(root, "config.json");
-            string statePath = Path.Combine(root, "owned-state.json");
-            string routingTargetId = targetId == "connection-test"
-                ? "codex-desktop"
-                : targetId;
-            List<string> lifecycle = new List<string>
-            {
-                "PROFILE_VALIDATED",
-                "RUNTIME_VERIFIED"
-            };
-            RunningSingBoxSession running = new RunningSingBoxSession
-            {
-                process = null,
-                session_root = root,
-                listen_port = port,
-                nonce = nonce,
-                lifecycle = lifecycle,
-                diagnostic_gate = new object(),
-                runtime_reason = null
-            };
+            RunningSingBoxSession running = null;
             try
             {
+                RuntimeBootstrapResult runtime = RuntimeBootstrap.EnsureInstalled(
+                    bundleRoot,
+                    home
+                );
+                if (runtime.status != "VERIFIED")
+                {
+                    throw new InvalidOperationException(
+                        RuntimeBootstrap.FailureReason(runtime)
+                    );
+                }
+                int port = FindFreePort();
+                if (port == 0)
+                {
+                    throw new InvalidOperationException(
+                        "LOCAL_PORT_UNAVAILABLE"
+                    );
+                }
+                string root = Path.Combine(
+                    Path.GetFullPath(home),
+                    ".llm-foundation",
+                    "launcher-state",
+                    "sessions",
+                    Guid.NewGuid().ToString("N")
+                );
+                string nonce = Guid.NewGuid().ToString("N");
+                string configPath = Path.Combine(root, "config.json");
+                string statePath = Path.Combine(root, "owned-state.json");
+                string routingTargetId = targetId == "connection-test"
+                    ? "codex-desktop"
+                    : targetId;
+                List<string> lifecycle = new List<string>
+                {
+                    "RUNTIME_VERIFIED"
+                };
+                running = new RunningSingBoxSession
+                {
+                    process = null,
+                    session_root = root,
+                    listen_port = port,
+                    nonce = nonce,
+                    lifecycle = lifecycle,
+                    diagnostic_gate = new object(),
+                    runtime_reason = null
+                };
+                Directory.CreateDirectory(root);
+                ApplyCurrentUserAcl(root);
                 Dictionary<string, object> document = null;
                 ConnectionStore.WithProxyCredential(
                     home,
@@ -209,6 +245,9 @@ namespace LlmFoundationInstaller
                         return true;
                     }
                 );
+                // Keep the established success-stage ordering, but publish
+                // validation only after the credential/profile callback passes.
+                lifecycle.Insert(0, "PROFILE_VALIDATED");
                 File.WriteAllText(
                     configPath,
                     new JavaScriptSerializer().Serialize(document) +
@@ -217,7 +256,7 @@ namespace LlmFoundationInstaller
                 );
                 if (RunCheck(
                         runtime.executable_path,
-                        configPath) != 0)
+                        configPath, running) != 0)
                 {
                     throw new InvalidOperationException(
                         "CONFIG_CHECK_FAILED"
@@ -244,8 +283,16 @@ namespace LlmFoundationInstaller
                     DataReceivedEventArgs eventArgs
                 )
                 {
-                    RecordRuntimeDiagnostic(running, eventArgs.Data);
+                    if (eventArgs.Data == null)
+                    {
+                        running.runtime_stderr_completed = true;
+                    }
+                    else
+                    {
+                        RecordRuntimeDiagnostic(running, eventArgs.Data);
+                    }
                 };
+                running.runtime_stderr_started = true;
                 process.BeginErrorReadLine();
                 File.WriteAllText(
                     statePath,
@@ -285,10 +332,24 @@ namespace LlmFoundationInstaller
                 }
                 return running;
             }
-            catch
+            catch (Exception exception)
             {
-                CleanupFailedStart(running);
-                throw;
+                bool cleanup = CleanupFailedStart(running);
+                List<string> lifecycle = running == null
+                    ? new List<string>() : running.lifecycle;
+                string cleanupState = cleanup
+                    ? "CLEANUP_VERIFIED" : "CLEANUP_UNVERIFIED";
+                if (!lifecycle.Contains(cleanupState))
+                {
+                    lifecycle.Add(cleanupState);
+                }
+                throw new SingBoxStartException(Failed(
+                    running == null ? 0 : running.listen_port,
+                    lifecycle,
+                    cleanup,
+                    StableReason(exception),
+                    true
+                ));
             }
         }
 
@@ -315,16 +376,26 @@ namespace LlmFoundationInstaller
                     running.process.Kill();
                     running.process.WaitForExit(10000);
                 }
-                if (running.process != null &&
-                    running.process.HasExited)
-                {
-                    running.process.WaitForExit();
-                }
                 processStopped = running.process == null ||
                     running.process.HasExited;
                 if (processStopped)
                 {
                     running.lifecycle.Add("RUNTIME_STOPPED");
+                    if (running.runtime_stderr_started)
+                    {
+                        Stopwatch drain = Stopwatch.StartNew();
+                        while (!running.runtime_stderr_completed &&
+                            drain.ElapsedMilliseconds < 1000)
+                        {
+                            Thread.Sleep(10);
+                        }
+                        if (!running.runtime_stderr_completed)
+                        {
+                            running.lifecycle.Add(
+                                "RUNTIME_DIAGNOSTICS_INCOMPLETE"
+                            );
+                        }
+                    }
                 }
             }
             catch
@@ -335,7 +406,14 @@ namespace LlmFoundationInstaller
             {
                 if (running.process != null)
                 {
-                    running.process.Dispose();
+                    try
+                    {
+                        running.process.Dispose();
+                    }
+                    catch
+                    {
+                        processStopped = false;
+                    }
                 }
             }
             try
@@ -345,9 +423,7 @@ namespace LlmFoundationInstaller
                 {
                     Directory.Delete(running.session_root, true);
                 }
-                tempRemoved = !Directory.Exists(
-                    running.session_root
-                );
+                tempRemoved = SessionRootAbsent(running.session_root);
                 if (tempRemoved)
                 {
                     running.lifecycle.Add("TEMP_REMOVED");
@@ -358,6 +434,10 @@ namespace LlmFoundationInstaller
                 tempRemoved = false;
             }
             bool cleanup = processStopped && tempRemoved;
+            if (!cleanup)
+            {
+                running.lifecycle.Add("CLEANUP_UNVERIFIED");
+            }
             return new SingBoxSessionResult
             {
                 status = cleanup ? "PASS" : "FAILED",
@@ -660,6 +740,11 @@ namespace LlmFoundationInstaller
 
         private static string ProbeFailureReason(Exception exception)
         {
+            SingBoxHttpException http = exception as SingBoxHttpException;
+            if (http != null)
+            {
+                return http.Message;
+            }
             WebException web = exception as WebException;
             if (web == null)
             {
@@ -699,7 +784,7 @@ namespace LlmFoundationInstaller
             }
         }
 
-        private static void RunCurlProbe(int listenPort, string endpoint)
+        private static int RunCurlProbe(int listenPort, string endpoint)
         {
             string curl = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.System),
@@ -715,7 +800,7 @@ namespace LlmFoundationInstaller
             {
                 FileName = curl,
                 Arguments =
-                    "--silent --show-error " +
+                    "-q --silent --show-error " +
                     "--proxy " + QuoteArgument(
                         "http://127.0.0.1:" + listenPort.ToString()
                     ) + " " +
@@ -732,6 +817,15 @@ namespace LlmFoundationInstaller
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            // The probe must use this session, never an inherited bypass.
+            foreach (string name in new[]
+            {
+                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                "http_proxy", "https_proxy", "all_proxy", "no_proxy"
+            })
+            {
+                start.EnvironmentVariables.Remove(name);
+            }
             BoundedProcessResult probeRun = BoundedProcess.Run(
                 start,
                 20000
@@ -762,6 +856,11 @@ namespace LlmFoundationInstaller
                     "ROUTE_PROBE_FAILED"
                 );
             }
+            if (status < 200 || status >= 300)
+            {
+                throw new SingBoxHttpException(status);
+            }
+            return status;
         }
 
         private static WebException CurlProbeFailure(int exitCode)
@@ -808,25 +907,23 @@ namespace LlmFoundationInstaller
 
         private static int RunCheck(
             string executable,
-            string configPath
+            string configPath,
+            RunningSingBoxSession running
         )
         {
-            using (Process process = Process.Start(
+            // Retain ownership until exit is confirmed, including timeouts.
+            Process process = Process.Start(
                 RuntimeStartInfo(executable, "check", configPath)
-            ))
+            );
+            running.process = process;
+            if (process == null || !process.WaitForExit(15000))
             {
-                if (process == null)
-                {
-                    return -1;
-                }
-                if (!process.WaitForExit(15000))
-                {
-                    process.Kill();
-                    process.WaitForExit(5000);
-                    return -1;
-                }
-                return process.ExitCode;
+                return -1;
             }
+            int exitCode = process.ExitCode;
+            process.Dispose();
+            running.process = null;
+            return exitCode;
         }
 
         private static ProcessStartInfo RuntimeStartInfo(
@@ -965,24 +1062,32 @@ namespace LlmFoundationInstaller
             }
             try
             {
-                if (running.process != null &&
-                    !running.process.HasExited)
-                {
-                    running.process.Kill();
-                    running.process.WaitForExit(10000);
-                }
-                if (running.process != null)
-                {
-                    running.process.Dispose();
-                }
-                if (Directory.Exists(running.session_root))
-                {
-                    Directory.Delete(running.session_root, true);
-                }
-                return !Directory.Exists(running.session_root);
+                return StopVerified(running).cleanup_verified;
             }
             catch
             {
+                return false;
+            }
+        }
+
+        private static bool SessionRootAbsent(string path)
+        {
+            try
+            {
+                File.GetAttributes(path);
+                return false;
+            }
+            catch (FileNotFoundException)
+            {
+                return true;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return true;
+            }
+            catch
+            {
+                // Inaccessible is not proof of absence.
                 return false;
             }
         }

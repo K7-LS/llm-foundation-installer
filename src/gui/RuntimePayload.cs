@@ -39,17 +39,6 @@ namespace LlmFoundationInstaller
                     "Embedded Foundation engine is invalid"
                 );
             }
-            if (String.IsNullOrWhiteSpace(externalPackagePath) &&
-                !BundleIntegrity.ValidateResource(
-                    package.asset.resource_name,
-                    package.asset.sha256,
-                    package.asset.bytes
-                ))
-            {
-                throw new InvalidOperationException(
-                    "Embedded target package is invalid"
-                );
-            }
             string root = Path.Combine(
                 Path.GetTempPath(),
                 "llm-foundation-runtime-" + Guid.NewGuid().ToString("N")
@@ -60,19 +49,7 @@ namespace LlmFoundationInstaller
                 string engineRoot = Path.Combine(root, "engine");
                 Directory.CreateDirectory(engineRoot);
                 string engine = Path.Combine(engineRoot, "foundation.ps1");
-                BundleIntegrity.WriteResource(
-                    "FoundationEngine.foundation.ps1",
-                    engine
-                );
-                BundleIntegrity.WriteResource(
-                    "FoundationEngine.engine-manifest.json",
-                    Path.Combine(engineRoot, "engine-manifest.json")
-                );
-                BundleIntegrity.WriteResource(
-                    "FoundationEngine.VERSION",
-                    Path.Combine(engineRoot, "VERSION")
-                );
-                BundleIntegrity.WriteFoundationExtras(engineRoot);
+                TargetFoundationEngine.Extract(package, engineRoot);
                 string packagePath;
                 if (String.IsNullOrWhiteSpace(externalPackagePath))
                 {

@@ -40,6 +40,9 @@ namespace LlmFoundationInstaller
             TextBlock evidenceStatus = view.FindName(
                 "EvidenceStatus"
             ) as TextBlock;
+            Brush idleEvidenceForeground = evidenceStatus == null
+                ? null
+                : evidenceStatus.Foreground;
             TextBlock rollbackStatus = view.FindName(
                 "RollbackStatus"
             ) as TextBlock;
@@ -82,6 +85,24 @@ namespace LlmFoundationInstaller
                 Environment.SpecialFolder.UserProfile
             );
             bool applyingSavedRoute = false;
+            bool launching = false;
+            ListBoxItem activeSelection = null;
+            string routePreferenceError = null;
+            TextBlock healthStatus = view.FindName(
+                "LaunchHealthStatus"
+            ) as TextBlock;
+            Action<string, bool> setHealth = delegate(string text, bool warning)
+            {
+                if (healthStatus != null)
+                {
+                    healthStatus.Text = text;
+                    healthStatus.Foreground = new SolidColorBrush(
+                        warning
+                            ? Color.FromRgb(155, 58, 28)
+                            : Color.FromRgb(84, 111, 119)
+                    );
+                }
+            };
             Func<string> selectedTarget = delegate
             {
                 ListBoxItem selected =
@@ -95,7 +116,8 @@ namespace LlmFoundationInstaller
                 string targetId = selected == null
                     ? null
                     : selected.Tag as string;
-                launch.IsEnabled = !String.IsNullOrWhiteSpace(targetId);
+                launch.IsEnabled = !launching &&
+                    !String.IsNullOrWhiteSpace(targetId);
                 launch.Content = SelectionLabel(targetId);
                 if (selectedClientName != null)
                 {
@@ -107,17 +129,11 @@ namespace LlmFoundationInstaller
                     selectedProviderName.Text =
                         TargetProviderName(targetId);
                 }
-                if (evidenceStatus != null)
-                {
-                    evidenceStatus.Text = String.Equals(
-                        targetId,
-                        "vscode-codex",
-                        StringComparison.Ordinal
-                    )
-                        ? "Локальный ID OpenAI.chatgpt будет " +
-                            "обнаружен при запуске"
-                        : "Пакет проверен";
-                }
+            };
+            Action applySavedRoute = delegate
+            {
+                string targetId = selectedTarget();
+                routePreferenceError = null;
                 if (interactive &&
                     !String.IsNullOrWhiteSpace(targetId))
                 {
@@ -132,12 +148,9 @@ namespace LlmFoundationInstaller
                     catch (Exception exception)
                     {
                         ConnectionUi.ApplyRoute(view, "Direct");
-                        if (routeScopeStatus != null)
-                        {
-                            routeScopeStatus.Text =
-                                "Не удалось прочитать правило маршрута: " +
-                                exception.Message;
-                        }
+                        routePreferenceError =
+                            "Не удалось прочитать правило маршрута: " +
+                            exception.Message;
                     }
                     finally
                     {
@@ -176,10 +189,6 @@ namespace LlmFoundationInstaller
                     selectedRouteName.Text =
                         routeLabel.ToUpperInvariant();
                 }
-                if (routeStatus != null)
-                {
-                    routeStatus.Text = routeLabel + " · готово";
-                }
                 if (routeDetail != null)
                 {
                     routeDetail.Text = RouteScopeDescription(
@@ -190,16 +199,44 @@ namespace LlmFoundationInstaller
                 if (routeScopeStatus != null &&
                     !String.IsNullOrWhiteSpace(selectedTarget()))
                 {
-                    routeScopeStatus.Text =
-                        "Сохранено для «" +
+                    routeScopeStatus.Text = routePreferenceError ??
+                        "Маршрут для «" +
                         TargetDisplayName(selectedTarget()) +
                         "»: " + routeLabel + ".";
                 }
             };
-            targetList.SelectionChanged += delegate
+            Action resetOperationStatus = delegate
             {
                 ApplyResolutionFeedback(view, null);
+                if (routeStatus != null)
+                {
+                    routeStatus.Text = RouteLabel(selectedRoute()) +
+                        " · не проверен";
+                }
+                if (evidenceStatus != null)
+                {
+                    evidenceStatus.Text = "Проверка при запуске";
+                    evidenceStatus.ToolTip = null;
+                    evidenceStatus.Foreground = idleEvidenceForeground;
+                }
+                if (rollbackStatus != null)
+                {
+                    rollbackStatus.Text = "Запуск ещё не выполнялся";
+                }
+                setHealth("ОЖИДАНИЕ", false);
+            };
+            targetList.SelectionChanged += delegate
+            {
+                if (launching)
+                {
+                    targetList.SelectedItem = activeSelection;
+                    return;
+                }
+                ApplyResolutionFeedback(view, null);
+                applySavedRoute();
                 refreshLabel();
+                refreshRoute();
+                resetOperationStatus();
             };
             Action persistRoute = delegate
             {
@@ -213,22 +250,25 @@ namespace LlmFoundationInstaller
                             selectedTarget(),
                             selectedRoute()
                         );
+                        routePreferenceError = null;
                     }
                     catch (Exception exception)
                     {
-                        if (routeScopeStatus != null)
-                        {
-                            routeScopeStatus.Text =
-                                "Правило маршрута не сохранено: " +
-                                exception.Message;
-                        }
+                        routePreferenceError =
+                            "Правило маршрута не сохранено: " +
+                            exception.Message;
                     }
                 }
             };
             RoutedEventHandler routeChanged = delegate
             {
+                if (applyingSavedRoute || launching)
+                {
+                    return;
+                }
                 persistRoute();
                 refreshRoute();
+                resetOperationStatus();
             };
             if (direct != null)
             {
@@ -250,12 +290,19 @@ namespace LlmFoundationInstaller
             {
                 proxyType.SelectionChanged += delegate
                 {
+                    if (applyingSavedRoute || launching)
+                    {
+                        return;
+                    }
                     persistRoute();
                     refreshRoute();
+                    resetOperationStatus();
                 };
             }
+            applySavedRoute();
             refreshLabel();
             refreshRoute();
+            resetOperationStatus();
             if (!interactive)
             {
                 return;
@@ -281,6 +328,10 @@ namespace LlmFoundationInstaller
             }
             launch.Click += async delegate
             {
+                if (launching)
+                {
+                    return;
+                }
                 ListBoxItem selected =
                     targetList.SelectedItem as ListBoxItem;
                 string targetId = selected == null
@@ -291,85 +342,203 @@ namespace LlmFoundationInstaller
                     return;
                 }
                 string route = selectedRoute();
-                EditionProfile edition = EditionProfile.LoadEmbedded();
-                LaunchTargetResolution resolution =
-                    LaunchTargetResolver.Resolve(
-                        edition,
-                        bundleRoot,
-                        home,
-                        targetId
-                    );
-                ApplyResolutionFeedback(view, resolution);
-                if (resolution.status != "RESOLVED")
+                Button connectionTest = view.FindName(
+                    "TestConnection"
+                ) as Button;
+                if (connectionTest != null && Object.Equals(
+                        connectionTest.ReadLocalValue(
+                            UIElement.IsEnabledProperty
+                        ),
+                        false))
                 {
-                    if (evidenceStatus != null)
-                    {
-                        evidenceStatus.Text =
-                            resolution.action ?? resolution.reason;
-                        evidenceStatus.Foreground = new SolidColorBrush(
-                            Color.FromRgb(252, 122, 77)
-                        );
-                    }
+                    SetLaunchMessage(view,
+                        "Дождитесь завершения проверки подключения.", true);
                     return;
                 }
-                launch.IsEnabled = false;
-                if (stopRoute != null)
-                {
-                    stopRoute.IsEnabled = false;
-                }
-                if (routeStatus != null)
-                {
-                    routeStatus.Text = RouteLabel(route) +
-                        " · запуск";
-                }
-                Task<LauncherSessionResult> launchTask = Task.Run(
-                    () => ClientLauncher.StartAndWait(
-                        resolution,
-                        route,
-                        bundleRoot,
-                        home
-                    )
-                );
-                bool singBoxRoute =
-                    route == "SingBoxHttp" ||
-                    route == "SingBoxHttps";
-                if (singBoxRoute && stopRoute != null)
-                {
-                    while (!launchTask.IsCompleted &&
-                        !ClientLauncher.HasActiveRoute())
-                    {
-                        await Task.Delay(50);
-                    }
-                    stopRoute.IsEnabled =
-                        ClientLauncher.HasActiveRoute();
-                }
-                LauncherSessionResult result = await launchTask;
-                if (routeStatus != null)
-                {
-                    routeStatus.Text = RouteLabel(result.transport) +
-                        " · " + ResultLabel(result.status);
-                }
-                if (evidenceStatus != null)
-                {
-                    evidenceStatus.Text = LaunchResultMessage(result);
-                    evidenceStatus.Foreground = new SolidColorBrush(
-                        result.status == "PASS"
-                            ? Color.FromRgb(119, 203, 185)
-                            : Color.FromRgb(252, 122, 77)
-                    );
-                }
-                if (rollbackStatus != null)
-                {
-                    rollbackStatus.Text = result.cleanup_verified
-                        ? "Очистка подтверждена"
-                        : "Очистка не подтверждена";
-                }
-                if (stopRoute != null)
-                {
-                    stopRoute.IsEnabled = false;
-                }
+                launching = true;
+                activeSelection = selected;
+                Dictionary<Control, object> enabledState =
+                    SuspendLaunchControls(view);
+                bool launchStarted = false;
                 refreshLabel();
+                ApplyResolutionFeedback(view, null);
+                resetOperationStatus();
+                setHealth("ПРОВЕРКА", false);
+                try
+                {
+                    EditionProfile edition = EditionProfile.LoadEmbedded();
+                    LaunchTargetResolution resolution =
+                        LaunchTargetResolver.Resolve(
+                            edition,
+                            bundleRoot,
+                            home,
+                            targetId
+                        );
+                    ApplyResolutionFeedback(view, resolution);
+                    if (resolution.status != "RESOLVED")
+                    {
+                        SetLaunchMessage(view,
+                            resolution.action ?? resolution.reason, true);
+                        setHealth("НУЖНО ВНИМАНИЕ", true);
+                        if (routeStatus != null)
+                        {
+                            routeStatus.Text = RouteLabel(route) +
+                                " · запуск не выполнен";
+                        }
+                        return;
+                    }
+                    setHealth("ЗАПУСК", false);
+                    if (stopRoute != null)
+                    {
+                        stopRoute.IsEnabled = false;
+                    }
+                    if (routeStatus != null)
+                    {
+                        routeStatus.Text = RouteLabel(route) + " · запуск";
+                    }
+                    launchStarted = true;
+                    Task<LauncherSessionResult> launchTask = Task.Run(
+                        () => ClientLauncher.StartAndWait(
+                            resolution,
+                            route,
+                            bundleRoot,
+                            home
+                        )
+                    );
+                    bool singBoxRoute =
+                        route == "SingBoxHttp" ||
+                        route == "SingBoxHttps";
+                    if (singBoxRoute && stopRoute != null)
+                    {
+                        while (!launchTask.IsCompleted &&
+                            !ClientLauncher.HasActiveRoute())
+                        {
+                            await Task.Delay(50);
+                        }
+                        stopRoute.IsEnabled =
+                            ClientLauncher.HasActiveRoute();
+                    }
+                    LauncherSessionResult result = await launchTask;
+                    if (result == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Запуск не вернул результат."
+                        );
+                    }
+                    if (routeStatus != null)
+                    {
+                        routeStatus.Text = RouteLabel(result.transport) +
+                            " · " + ResultLabel(result.status);
+                    }
+                    bool warning = result.status != "PASS" ||
+                        !result.cleanup_verified;
+                    SetLaunchMessage(view, LaunchResultMessage(result), warning);
+                    setHealth(warning ? "ОШИБКА" : "ЗАПУСК ВЫПОЛНЕН", warning);
+                    if (rollbackStatus != null)
+                    {
+                        rollbackStatus.Text = result.cleanup_verified
+                            ? "Очистка подтверждена"
+                            : "Очистка не подтверждена";
+                    }
+                }
+                catch (Exception exception)
+                {
+                    if (routeStatus != null)
+                    {
+                        routeStatus.Text = RouteLabel(route) + " · ошибка";
+                    }
+                    SetLaunchMessage(view,
+                        "Запуск не выполнен: " + exception.Message, true);
+                    setHealth("ОШИБКА", true);
+                    if (rollbackStatus != null)
+                    {
+                        rollbackStatus.Text = launchStarted
+                            ? "Очистка не подтверждена"
+                            : "Запуск ещё не выполнялся";
+                    }
+                }
+                finally
+                {
+                    launching = false;
+                    activeSelection = null;
+                    RestoreLaunchControls(enabledState);
+                    if (stopRoute != null)
+                    {
+                        stopRoute.IsEnabled = ClientLauncher.HasActiveRoute();
+                    }
+                    refreshLabel();
+                }
             };
+        }
+
+        private static Dictionary<Control, object> SuspendLaunchControls(
+            UserControl view
+        )
+        {
+            Dictionary<Control, object> state =
+                new Dictionary<Control, object>();
+            foreach (string name in new[] {
+                "LaunchTargetList", "RouteDirect", "RouteHttp", "RouteHttps",
+                "ProxyMode", "ProxyType", "ProxyAuth", "ProxyHost",
+                "ProxyPort", "ProxyUsername", "ProxyPassword", "SaveConnection",
+                "TestConnection", "ResetRoute", "OpenChromeProxy"
+            })
+            {
+                Control control = view.FindName(name) as Control;
+                if (control != null)
+                {
+                    state[control] = control.ReadLocalValue(
+                        UIElement.IsEnabledProperty
+                    );
+                    control.IsEnabled = false;
+                }
+            }
+            return state;
+        }
+
+        private static void RestoreLaunchControls(
+            Dictionary<Control, object> state
+        )
+        {
+            foreach (KeyValuePair<Control, object> item in state)
+            {
+                if (item.Value == DependencyProperty.UnsetValue)
+                {
+                    item.Key.ClearValue(UIElement.IsEnabledProperty);
+                }
+                else
+                {
+                    item.Key.SetValue(UIElement.IsEnabledProperty, item.Value);
+                }
+                item.Key.CoerceValue(UIElement.IsEnabledProperty);
+            }
+        }
+
+        private static void SetLaunchMessage(
+            UserControl view,
+            string message,
+            bool warning
+        )
+        {
+            TextBlock evidence = view.FindName("EvidenceStatus") as TextBlock;
+            if (evidence != null)
+            {
+                evidence.Text = message;
+                evidence.ToolTip = message;
+                evidence.Foreground = new SolidColorBrush(
+                    warning
+                        ? Color.FromRgb(252, 122, 77)
+                        : Color.FromRgb(119, 203, 185)
+                );
+            }
+            TextBlock guidance = view.FindName("LaunchGuidance") as TextBlock;
+            if (guidance != null)
+            {
+                guidance.Text = warning ? message : "";
+                guidance.Visibility = warning
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
         }
 
         internal static string RouteScopeDescription(
@@ -396,9 +565,18 @@ namespace LlmFoundationInstaller
             LauncherSessionResult result
         )
         {
-            if (result == null || String.IsNullOrWhiteSpace(result.reason))
+            if (result == null)
             {
-                return "Точный клиент проверен";
+                return "Нет результата запуска.";
+            }
+            if (String.IsNullOrWhiteSpace(result.reason))
+            {
+                return result.status == "PASS"
+                    ? (result.cleanup_verified
+                        ? "Запуск выполнен."
+                        : "Запуск выполнен; очистка маршрута не подтверждена.")
+                    : "Запуск не выполнен (" +
+                        (result.status ?? "UNKNOWN") + ").";
             }
             if (String.Equals(
                     result.reason,
@@ -753,7 +931,7 @@ namespace LlmFoundationInstaller
                     "PASS",
                     StringComparison.OrdinalIgnoreCase
                 )
-                ? "готово"
+                ? "запуск выполнен"
                 : "ошибка";
         }
     }

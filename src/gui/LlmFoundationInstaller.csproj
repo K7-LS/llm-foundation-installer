@@ -68,6 +68,7 @@
     <Compile Include="ProductConfig.cs" />
     <Compile Include="RuntimeBootstrap.cs" />
     <Compile Include="RuntimePayload.cs" />
+    <Compile Include="TargetFoundationEngine.cs" />
     <Compile Include="SingBoxConfig.cs" />
     <Compile Include="StatusPalette.cs" />
     <Compile Include="SingBoxSession.cs" />

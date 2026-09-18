@@ -1102,6 +1102,8 @@ function Read-AcceptedPackages {
                 target = $Target
                 client_id = [string]$Internal.client.id
                 supported_version = [string]$Internal.client.supported_version
+                base_version = [string]$Release.version
+                foundation_engine_version = [string]$Release.foundation_engine_version
                 foundation_engine_manifest_sha256 = [string](
                     $Release.foundation_engine_manifest_sha256
                 )
@@ -1273,6 +1275,8 @@ function Read-AcceptedPackages {
             target = $Target
             client_id = [string]$Acceptance.client.id
             supported_version = [string]$Acceptance.client.supported_version
+            base_version = [string]$Release.version
+            foundation_engine_version = [string]$Release.foundation_engine_version
             foundation_engine_manifest_sha256 = [string](
                 $Release.foundation_engine_manifest_sha256
             )
@@ -2302,6 +2306,16 @@ $Manifest = [ordered]@{
         bytes = $RuntimeSourcesBytes
     }
     targets = $IncludedTargets
+    target_engines = @($AllPackages | ForEach-Object {
+        [ordered]@{
+            target = [string]$_.target
+            base_version = [string]$_.base_version
+            engine_version = [string]$_.foundation_engine_version
+            engine_manifest_sha256 = [string]$_.foundation_engine_manifest_sha256
+            source = 'embedded-target-package'
+            package_sha256 = [string]$_.asset.sha256
+        }
+    })
     artifacts = [ordered]@{
         'LLMFoundationInstaller.exe' = [ordered]@{
             sha256 = Get-Sha256 $Executable

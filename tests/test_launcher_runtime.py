@@ -965,6 +965,7 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         value = json.loads(result.stdout)
         assert result.returncode == 0
         assert value["status"] == "PASS"
+        assert value["http_status"] == 200
         assert value["uses_proxy"] is True
         assert value["cleanup_verified"] is True
         assert value["lifecycle"][-2:] == [
@@ -1036,9 +1037,13 @@ def test_singbox_route_probe_forwards_real_local_http_request(
         )
         assert non_success_status.stdout.strip(), non_success_status.stderr
         non_success_value = json.loads(non_success_status.stdout)
-        assert non_success_status.returncode == 0
-        assert non_success_value["status"] == "PASS"
+        assert non_success_status.returncode == 20
+        assert non_success_value["status"] == "FAILED"
+        assert non_success_value["http_status"] == 404
+        assert non_success_value["reason"] == "ROUTE_HTTP_STATUS_404"
         assert non_success_value["cleanup_verified"] is True
+        assert "ROUTE_PROBE_PASS" not in non_success_value["lifecycle"]
+        assert non_success_value["lifecycle"][-1] == "CLEANUP_VERIFIED"
         Upstream.status_code = 200
 
         broken_environment = dict(environment)

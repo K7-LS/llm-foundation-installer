@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
@@ -157,6 +156,17 @@ namespace LlmFoundationInstaller
         )
         {
             SourceContract source = GetSource(target);
+            TrustedPackage embeddedPackage;
+            if (!ProductCatalog.TryGetAcceptedPackage(
+                    bundleRoot, target, out embeddedPackage))
+            {
+                throw new InvalidOperationException(
+                    "Accepted target engine is unavailable"
+                );
+            }
+            TargetEngineBinding engine = TargetFoundationEngine.ReadContract(
+                embeddedPackage
+            );
             string endpoint = "https://api.github.com/repos/" +
                 source.repository + "/releases/latest";
             ClientSourceLock clientLock = ClientBootstrap.Load(bundleRoot);
@@ -239,7 +249,7 @@ namespace LlmFoundationInstaller
                 manifestBytes,
                 "Stable base manifest is invalid"
             );
-            ValidateManifest(source, release, manifest, packageAsset);
+            ValidateManifest(source, release, manifest, packageAsset, engine);
 
             string packagePath = Path.Combine(versionRoot, packageName);
             DownloadAndCache(
@@ -268,21 +278,18 @@ namespace LlmFoundationInstaller
             SourceContract source,
             GitHubLatestRelease release,
             StableBaseManifest manifest,
-            GitHubReleaseAsset packageAsset
+            GitHubReleaseAsset packageAsset,
+            TargetEngineBinding engine
         )
         {
             string expectedVersion = release.tag_name.Substring(
                 source.tagPrefix.Length
             );
-            string engineVersion = new UTF8Encoding(false, true).GetString(
-                ReadResourceBytes("FoundationEngine.VERSION")
-            ).Trim();
-            string engineManifestHash = Sha256(
-                ReadResourceBytes("FoundationEngine.engine-manifest.json")
-            );
             string expectedRepository = "https://github.com/" +
                 source.repository;
-            if (manifest == null || manifest.schema_version != 1 ||
+            if (engine == null ||
+                !String.Equals(engine.target, source.target, StringComparison.Ordinal) ||
+                manifest == null || manifest.schema_version != 1 ||
                 !String.Equals(manifest.target, source.target,
                     StringComparison.Ordinal) ||
                 !String.Equals(manifest.version, expectedVersion,
@@ -292,9 +299,9 @@ namespace LlmFoundationInstaller
                 !String.Equals(manifest.channel, "stable",
                     StringComparison.Ordinal) ||
                 !String.Equals(manifest.foundation_engine_version,
-                    engineVersion, StringComparison.Ordinal) ||
+                    engine.engine_version, StringComparison.Ordinal) ||
                 !String.Equals(manifest.foundation_engine_manifest_sha256,
-                    engineManifestHash, StringComparison.OrdinalIgnoreCase) ||
+                    engine.engine_manifest_sha256, StringComparison.OrdinalIgnoreCase) ||
                 manifest.source == null ||
                 !String.Equals(manifest.source.repository,
                     expectedRepository, StringComparison.Ordinal) ||
@@ -550,24 +557,6 @@ namespace LlmFoundationInstaller
                     StringComparison.OrdinalIgnoreCase) ||
                  String.Equals(uri.Host, "localhost",
                     StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static byte[] ReadResourceBytes(string name)
-        {
-            Stream resource = Assembly.GetExecutingAssembly()
-                .GetManifestResourceStream(name);
-            if (resource == null)
-            {
-                throw new InvalidOperationException(
-                    "Foundation engine resource is missing"
-                );
-            }
-            using (resource)
-            using (MemoryStream memory = new MemoryStream())
-            {
-                resource.CopyTo(memory);
-                return memory.ToArray();
-            }
         }
 
         private static string Sha256(byte[] payload)

@@ -403,7 +403,7 @@ def test_launch_center_selection_is_real_visible_and_target_specific(
         "client_display": client_display,
         "provider_display": provider_display,
         "route_display": "НАПРЯМУЮ",
-        "evidence_status": "Пакет проверен",
+        "evidence_status": "Проверка при запуске",
     }
 
 

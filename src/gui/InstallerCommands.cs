@@ -232,12 +232,32 @@ namespace LlmFoundationInstaller
         {
             int protocol;
             bool validated = BundleIntegrity.ValidateEngine(bundleRoot, out protocol);
+            List<Dictionary<string, object>> engines =
+                new List<Dictionary<string, object>>();
+            foreach (string target in ProductCatalog.TargetIds())
+            {
+                TrustedPackage package;
+                bool targetValid = ProductCatalog.TryGetAcceptedPackage(
+                    bundleRoot, target, out package
+                );
+                TargetEngineBinding binding = targetValid
+                    ? TargetFoundationEngine.ReadContract(package) : null;
+                engines.Add(new Dictionary<string, object>
+                {
+                    { "target", target },
+                    { "engine_validated", targetValid },
+                    { "engine_version", binding == null ? null : binding.engine_version },
+                    { "engine_manifest_sha256", binding == null ? null : binding.engine_manifest_sha256 }
+                });
+                validated = validated && targetValid;
+            }
             bool platformReady =
                 PlatformCompatibility.Inspect().status == "READY";
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["app_id"] = "llm-foundation-installer";
             payload["engine_validated"] = validated;
             payload["foundation_protocol"] = protocol;
+            payload["target_engines"] = engines;
             payload["network"] = "user-initiated-only";
             payload["automatic_network"] = false;
             payload["reverse_flow"] = false;
