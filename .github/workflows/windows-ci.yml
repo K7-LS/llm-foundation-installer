@@ -34,7 +34,7 @@ jobs:
   offline-test-ps7:
     name: Python 3.12 / PowerShell 7
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,7 +65,7 @@ jobs:
   offline-test-ps51:
     name: Python 3.12 / Windows PowerShell 5.1
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

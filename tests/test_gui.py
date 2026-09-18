@@ -1115,30 +1115,22 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
         timeout=30,
     )
     # Самопроверка подтверждает движок каждой цели по её встроенному
-    # пакету. Здесь встроен только Codex, поэтому комплект в целом не
-    # готов к установке остальных целей и самопроверка возвращает 30.
+    # пакету. gui_bundle собран без пакетов целей, поэтому ни один движок
+    # цели не подтверждён и самопроверка возвращает 30.
     assert result.returncode == 30, result.stdout + result.stderr
     payload = json.loads(result.stdout)
-    missing_engine = {
-        "engine_validated": False,
-        "engine_version": None,
-        "engine_manifest_sha256": None,
-    }
     assert payload == {
         "app_id": "llm-foundation-installer",
         "engine_validated": False,
         "foundation_protocol": 1,
         "target_engines": [
             {
-                "target": "codex",
-                "engine_validated": True,
-                "engine_version": FOUNDATION_VERSION,
-                "engine_manifest_sha256": _sha256(
-                    gui_bundle / "engine" / "engine-manifest.json"
-                ),
-            },
-            {"target": "claude", **missing_engine},
-            {"target": "opencode", **missing_engine},
+                "target": target,
+                "engine_validated": False,
+                "engine_version": None,
+                "engine_manifest_sha256": None,
+            }
+            for target in ("codex", "claude", "opencode")
         ],
         "network": "user-initiated-only",
         "automatic_network": False,
