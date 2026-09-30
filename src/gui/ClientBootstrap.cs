@@ -604,16 +604,7 @@ namespace LlmFoundationInstaller
                     "managed-desktop",
                     StringComparison.Ordinal)
                 ? DetectManagedDesktopVersion(home, source)
-                : (String.Equals(
-                        source.install_mode,
-                        "official-installer",
-                        StringComparison.Ordinal)
-                    ? DetectOfficialDesktopVersion(
-                        home,
-                        source,
-                        Load(bundleRoot).test_only
-                    )
-                    : DetectVersion(home, source));
+                : DetectVersion(home, source);
             if (String.IsNullOrWhiteSpace(detected))
             {
                 return new ClientPlanResult
@@ -825,18 +816,6 @@ namespace LlmFoundationInstaller
                     home,
                     source,
                     stagedPath
-                );
-            }
-            if (String.Equals(
-                    source.install_mode,
-                    "official-installer",
-                    StringComparison.Ordinal))
-            {
-                return InstallOfficialDesktop(
-                    home,
-                    source,
-                    stagedPath,
-                    Load(bundleRoot).test_only
                 );
             }
             if (!String.Equals(
@@ -1490,213 +1469,6 @@ namespace LlmFoundationInstaller
                 path_persisted = false,
                 authentication_touched = false
             };
-        }
-
-        private static ClientInstallResult InstallOfficialDesktop(
-            string home,
-            ClientSource source,
-            string stagedPath,
-            bool testOnly
-        )
-        {
-            if (!IsOfficialDesktopInstaller(source) ||
-                !String.Equals(
-                    source.artifact_kind,
-                    "installer-exe",
-                    StringComparison.Ordinal) ||
-                !String.Equals(
-                    Path.GetExtension(stagedPath),
-                    ".exe",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Official desktop installer contract is invalid"
-                );
-            }
-            ProcessStartInfo start = new ProcessStartInfo
-            {
-                FileName = Path.GetFullPath(stagedPath),
-                Arguments = "/S",
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            start.EnvironmentVariables["USERPROFILE"] =
-                Path.GetFullPath(home);
-            start.EnvironmentVariables["LOCALAPPDATA"] =
-                LocalApplicationDataForHome(home);
-            ConnectionStore.ConfigureProcessEnvironment(home, start);
-            using (Process process = Process.Start(start))
-            {
-                if (process == null)
-                {
-                    throw new InvalidOperationException(
-                        "Official desktop installer could not start"
-                    );
-                }
-                if (!process.WaitForExit(600000))
-                {
-                    try
-                    {
-                        process.Kill();
-                    }
-                    catch
-                    {
-                    }
-                    throw new InvalidOperationException(
-                        "Official desktop installer timed out"
-                    );
-                }
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        "Official desktop installer failed"
-                    );
-                }
-            }
-            string detected;
-            string executable = ResolveOfficialDesktopPath(
-                home,
-                source,
-                testOnly,
-                out detected
-            );
-            if (!String.Equals(
-                    detected,
-                    source.version,
-                    StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    "Official desktop version differs after installation"
-                );
-            }
-            string homeRoot = Path.GetFullPath(home)
-                .TrimEnd(Path.DirectorySeparatorChar) +
-                Path.DirectorySeparatorChar;
-            if (!executable.StartsWith(
-                    homeRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    "Official desktop application is outside the user profile"
-                );
-            }
-            return new ClientInstallResult
-            {
-                status = "INSTALLED",
-                client_id = source.id,
-                version = source.version,
-                relative_install_path = executable
-                    .Substring(homeRoot.Length)
-                    .Replace(Path.DirectorySeparatorChar, '/'),
-                path_persisted = false,
-                authentication_touched = false
-            };
-        }
-
-        private static bool IsOfficialDesktopInstaller(
-            ClientSource source
-        )
-        {
-            return source != null &&
-                String.Equals(
-                    source.id,
-                    "opencode-desktop",
-                    StringComparison.Ordinal) &&
-                String.Equals(
-                    source.install_mode,
-                    "official-installer",
-                    StringComparison.Ordinal);
-        }
-
-        private static string DetectOfficialDesktopVersion(
-            string home,
-            ClientSource source,
-            bool testOnly
-        )
-        {
-            string version;
-            try
-            {
-                ResolveOfficialDesktopPath(
-                    home,
-                    source,
-                    testOnly,
-                    out version
-                );
-                return version;
-            }
-            catch (FileNotFoundException)
-            {
-                return null;
-            }
-        }
-
-        internal static string ResolveOfficialDesktopPath(
-            string home,
-            ClientSource source,
-            bool testOnly,
-            out string version
-        )
-        {
-            if (!IsOfficialDesktopInstaller(source))
-            {
-                throw new InvalidOperationException(
-                    "Official desktop source is not supported"
-                );
-            }
-            string local = LocalApplicationDataForHome(home);
-            string executable = new[]
-            {
-                // Официальный установщик 1.18.x кладёт приложение в каталог
-                // с npm-именем пакета; прежние пути остались для сборок,
-                // которые ставились по старой схеме. Легитимность всё равно
-                // подтверждают подпись и версия ниже, а не сам путь.
-                Path.Combine(
-                    local,
-                    "Programs",
-                    "@opencode-aidesktop",
-                    "OpenCode.exe"
-                ),
-                Path.Combine(
-                    local,
-                    "Programs",
-                    "OpenCode",
-                    "OpenCode.exe"
-                ),
-                Path.Combine(local, "OpenCode", "OpenCode.exe")
-            }.FirstOrDefault(File.Exists);
-            if (executable == null)
-            {
-                throw new FileNotFoundException(
-                    "Official desktop application was not found"
-                );
-            }
-            executable = Path.GetFullPath(executable);
-            if ((File.GetAttributes(executable) &
-                    FileAttributes.ReparsePoint) != 0)
-            {
-                throw new InvalidOperationException(
-                    "Official desktop application path is unsafe"
-                );
-            }
-            if (source.signature_required && !testOnly)
-            {
-                VerifyAuthenticode(executable, source.publisher);
-            }
-            FileVersionInfo info = FileVersionInfo.GetVersionInfo(
-                executable
-            );
-            version = String.IsNullOrWhiteSpace(info.ProductVersion)
-                ? info.FileVersion
-                : info.ProductVersion;
-            if (String.IsNullOrWhiteSpace(version))
-            {
-                throw new InvalidOperationException(
-                    "Official desktop version is missing"
-                );
-            }
-            version = version.Trim();
-            return executable;
         }
 
         private static string DetectManagedDesktopVersion(
@@ -2715,17 +2487,6 @@ namespace LlmFoundationInstaller
         {
             if (String.Equals(
                     source.install_mode,
-                    "official-installer",
-                    StringComparison.Ordinal) &&
-                String.Equals(
-                    source.id,
-                    "opencode-desktop",
-                    StringComparison.Ordinal))
-            {
-                return "AppData/Local/Programs/OpenCode/OpenCode.exe";
-            }
-            if (String.Equals(
-                    source.install_mode,
                     "managed-desktop",
                     StringComparison.Ordinal))
             {
@@ -3153,10 +2914,6 @@ namespace LlmFoundationInstaller
             if (String.Equals(
                     source.install_mode,
                     "managed-desktop",
-                    StringComparison.Ordinal) ||
-                String.Equals(
-                    source.install_mode,
-                    "official-installer",
                     StringComparison.Ordinal))
             {
                 return false;
