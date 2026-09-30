@@ -81,12 +81,10 @@ namespace LlmFoundationInstaller
             CatalogResult catalog = ProductCatalog.Inspect(bundleRoot, true);
             List<TargetRow> selected = catalog.targets.Where(row =>
             {
-                string prefix = row.id == "codex"
-                    ? "Codex"
-                    : (row.id == "claude" ? "Claude" : "OpenCode");
-                CheckBox box = view.FindName(
-                    prefix + "Selected"
-                ) as CheckBox;
+                string prefix = InstallerView.ControlPrefix(row.id);
+                CheckBox box = prefix == null
+                    ? null
+                    : view.FindName(prefix + "Selected") as CheckBox;
                 return box != null && box.IsChecked == true &&
                     IsInstallableTarget(row, edition);
             }).ToList();
@@ -709,9 +707,7 @@ namespace LlmFoundationInstaller
                 "Базы установлены. Следующий шаг — интерактивная " +
                 "авторизация в выбранных клиентах.\n\n" +
                 "Codex: войдите через ChatGPT в приложении.\n" +
-                "Claude: выполните вход в окне Claude Code.\n" +
-                "OpenCode: запустите /connect → OpenAI → " +
-                "ChatGPT Plus/Pro.\n\n" +
+                "Claude: выполните вход в окне Claude Code.\n\n" +
                 "Установщик не читает и не переносит токены. " +
                 "Открыть клиенты сейчас?",
                 "Интерактивная авторизация",
@@ -723,7 +719,7 @@ namespace LlmFoundationInstaller
                 return;
             }
             // Ревью Codex: клиенты открывались через COMSPEC и голые имена
-            // из PATH (Claude/OpenCode) и зашитый AUMID (Codex) — тот же
+            // из PATH (Claude) и зашитый AUMID (Codex) — тот же
             // класс дефекта, что и поиск оболочки через PATH в .cmd.
             // Теперь цель разрешает тот же LaunchTargetResolver, что и
             // центр запуска: явный путь управляемой копии либо
@@ -770,8 +766,8 @@ namespace LlmFoundationInstaller
 
         private static string AuthorizationLaunchTargetId(string baseTarget)
         {
-            // Codex входит через приложение из Store, Claude и OpenCode —
-            // через вход в CLI: те же цели, что открывает центр запуска.
+            // Codex входит через приложение из Store, Claude — через вход
+            // в CLI: те же цели, что открывает центр запуска.
             if (baseTarget == "codex")
             {
                 return "codex-desktop";
@@ -780,7 +776,9 @@ namespace LlmFoundationInstaller
             {
                 return "claude-code";
             }
-            return "opencode-cli";
+            throw new InvalidOperationException(
+                "Authorization target is not supported"
+            );
         }
 
         private static ProcessStartInfo AuthorizationStartInfo(
@@ -1040,16 +1038,13 @@ namespace LlmFoundationInstaller
             return message.Trim();
         }
 
-        // Корни скиллов трёх клиентов (из managed_surface их пакетов):
-        // Claude — .claude/skills, Codex — .agents/skills,
-        // OpenCode — .config/opencode/skills. Без третьего корня коллизия
-        // скилла OpenCode оставалась тупиком (ревью Codex, 2026-09-02).
+        // Корни скиллов клиентов (из managed_surface их пакетов):
+        // Claude — .claude/skills, Codex — .agents/skills.
         // В этапе 3 список должен строиться от манифеста пакета.
         private static readonly string[] SessionToolRoots =
         {
             ".claude/skills",
             ".agents/skills",
-            ".config/opencode/skills",
         };
 
         private static bool ResolveSessionToolCollision(
@@ -1239,8 +1234,6 @@ namespace LlmFoundationInstaller
                 System.Text.RegularExpressions.Regex.IsMatch(
                     path,
                     @"^\.(?:codex|claude)/base/foundation/" +
-                        @"[0-9]+\.[0-9]+\.[0-9]+$|" +
-                        @"^\.config/opencode/base/foundation/" +
                         @"[0-9]+\.[0-9]+\.[0-9]+$",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant
                 );
@@ -1296,12 +1289,10 @@ namespace LlmFoundationInstaller
             }
             foreach (TargetRow row in catalog.targets)
             {
-                string prefix = row.id == "codex"
-                    ? "Codex"
-                    : (row.id == "claude" ? "Claude" : "OpenCode");
-                CheckBox box = view.FindName(
-                    prefix + "Selected"
-                ) as CheckBox;
+                string prefix = InstallerView.ControlPrefix(row.id);
+                CheckBox box = prefix == null
+                    ? null
+                    : view.FindName(prefix + "Selected") as CheckBox;
                 if (box != null)
                 {
                     box.IsEnabled = !busy &&
