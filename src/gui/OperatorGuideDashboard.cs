@@ -380,7 +380,6 @@ namespace LlmFoundationInstaller
                         line,
                         text,
                         accent,
-                        secondary,
                         owner
                     ));
                 }
@@ -599,7 +598,6 @@ namespace LlmFoundationInstaller
             Color line,
             Color text,
             Color accent,
-            Color secondary,
             bool owner
         )
         {
