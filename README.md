@@ -91,7 +91,8 @@ Center сам запускает и останавливает sing-box; отд�
 инструментов — их печатает `LLMFoundationInstaller.exe --commands-json`
 (`--catalog-json`, `--workflow-json`, `--resolve-launch-target-json`,
 `--self-test-json`, `--product-json`, `--launch-center-product-json`,
-`--ensure-runtime-json`, `--launch-center-ui`, `--system-proxy-watchdog`).
+`--ensure-runtime-json`, `--launch-center-ui`, `--system-proxy-watchdog`,
+`--appx-proxy-trampoline`).
 42 test-only точки живут в `src/gui/InstallerTestHost.cs` и компилируются
 только с флагом `tools/build-gui.ps1 -TestHooks` (define `K7_TEST_HOOKS`) —
 так собирают бандлы тесты. `build-edition.ps1` флага не имеет: релизный
@@ -116,6 +117,7 @@ Center сам запускает и останавливает sing-box; отд�
 | `--resolve-launch-target-json <home> <target>` | `worksite-diagnostics.ps1` | 2 | разрешить цель запуска: путь клиента и режим |
 | `--workflow-json <команда> <target> <home> <версия>` | `hub_canary.py`, `worksite-diagnostics.ps1` | 4 | команда движка foundation: plan, install, doctor и другие |
 | `--system-proxy-watchdog <pid> <state> [<subkey>]` | сам EXE (`SystemProxyLease`) | 2–3 | сторож системного прокси при аварии владельца маршрута |
+| `--appx-proxy-trampoline <клиент> <sha256> <порт> <маршрут>` | сам EXE (`ClientLauncher`) внутри контейнера пакета | 4 | запуск Store Codex через SingBox: identity пакета и proxy-env |
 
 Служебные команды автотестов (42) собираются только в тестовом хосте
 (`build-gui.ps1 -TestHooks`, см. «Режимы сборки»).

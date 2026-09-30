@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import time
 import uuid
 import winreg
 import xml.etree.ElementTree as ET
@@ -1327,3 +1328,108 @@ def test_signed_self_update_launches_instead_of_blocking() -> None:
     assert "BundleIntegrity.Sha256(executable)" in window
     # Неподписанная подмена по-прежнему блокируется
     assert "return null;" in window
+
+
+def _run_trampoline(
+    bundle: Path,
+    environment: dict[str, str],
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            str(bundle / "LLMFoundationInstaller.exe"),
+            "--appx-proxy-trampoline",
+            *arguments,
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+
+
+def test_appx_proxy_trampoline_starts_exact_client_with_proxy_environment(
+    tmp_path: Path,
+    employee_installer_bundle: Path,
+) -> None:
+    # Store Codex 26.924 требует identity пакета: в продукте трамплин
+    # запускает Invoke-CommandInDesktopPackage внутри контейнера пакета.
+    # Здесь проверяется контракт самого трамплина: точный клиент и env.
+    fixture = tmp_path / "environment-probe.exe"
+    _compile_environment_probe(fixture)
+    digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    output = tmp_path / "environment.txt"
+    environment = dict(os.environ)
+    environment["K7_TEST_OUTPUT"] = str(output)
+    environment["ALL_PROXY"] = "http://inherited.invalid:1"
+    result = _run_trampoline(
+        employee_installer_bundle,
+        environment,
+        str(fixture),
+        digest,
+        "43119",
+        "SingBoxHttp",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    deadline = time.monotonic() + 30
+    while not output.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert output.read_text(encoding="utf-8").splitlines() == [
+        "HTTP_PROXY=http://127.0.0.1:43119",
+        "HTTPS_PROXY=http://127.0.0.1:43119",
+        "ALL_PROXY=<null>",
+    ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["relative", "digest", "port-zero", "port-high", "port-sign", "route"],
+)
+def test_appx_proxy_trampoline_rejects_unverified_arguments(
+    tmp_path: Path,
+    employee_installer_bundle: Path,
+    case: str,
+) -> None:
+    fixture = tmp_path / "environment-probe.exe"
+    _compile_environment_probe(fixture)
+    digest = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    output = tmp_path / "environment.txt"
+    arguments = {
+        "relative": ["environment-probe.exe", digest, "43119", "SingBoxHttp"],
+        "digest": [str(fixture), "0" * 64, "43119", "SingBoxHttp"],
+        "port-zero": [str(fixture), digest, "0", "SingBoxHttp"],
+        "port-high": [str(fixture), digest, "65536", "SingBoxHttp"],
+        "port-sign": [str(fixture), digest, "+43119", "SingBoxHttp"],
+        "route": [str(fixture), digest, "43119", "Direct"],
+    }[case]
+    environment = dict(os.environ)
+    environment["K7_TEST_OUTPUT"] = str(output)
+    result = _run_trampoline(
+        employee_installer_bundle,
+        environment,
+        *arguments,
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    time.sleep(1)
+    assert not output.exists()
+
+
+def test_singbox_store_launch_uses_packaged_trampoline() -> None:
+    # Прямой Process.Start пакетного EXE даёт APPMODEL_ERROR_NO_PACKAGE:
+    # production-ветка appx обязана идти через контейнер пакета.
+    source = (REPOSITORY / "src" / "gui" / "ClientLauncher.cs").read_text(
+        encoding="utf-8"
+    )
+    trampoline = source.split(
+        "private static void StartPackagedTrampoline", 1
+    )[1].split("private static Process WaitForPackagedClient", 1)[0]
+    assert "Invoke-CommandInDesktopPackage" in trampoline
+    assert "-PreventBreakaway" in trampoline
+    assert "BundleIntegrity.Sha256(target.executable_path)" in trampoline
+    singbox = source.split(
+        "private static LauncherSessionResult StartThroughSingBox", 1
+    )[1].split("internal static LauncherSessionResult", 1)[0]
+    assert "else if (packagedTrampoline)" in singbox
+    assert "client = WaitForPackagedClient(target);" in singbox

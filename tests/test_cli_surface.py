@@ -19,6 +19,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 # (hub_canary.py, worksite-diagnostics.ps1, build-edition.ps1,
 # installer_release.py, ДИАГНОСТИКА).
 RELEASE_COMMANDS = {
+    "--appx-proxy-trampoline": "product",
     "--catalog-json": "tool",
     "--commands-json": "tool",
     "--ensure-runtime-json": "tool",
@@ -103,7 +104,9 @@ def test_classification_counts_match_the_report() -> None:
     # (тестовый хост фичи «установка центра запуска», решение владельца)
     # + `--launch-center-view-json` (путь ярлыка: --launch-center-ui → окно).
     assert len(TEST_ONLY_COMMANDS) == 44
-    assert len(RELEASE_COMMANDS) == 10
+    # + `--appx-proxy-trampoline` (2026-09-29): Store Codex 26.924 требует
+    # identity пакета, трамплин запускает его внутри контейнера пакета.
+    assert len(RELEASE_COMMANDS) == 11
     assert not TEST_ONLY_COMMANDS & set(RELEASE_COMMANDS)
 
 
@@ -119,6 +122,8 @@ def test_test_host_lists_every_command(employee_installer_bundle: Path) -> None:
     assert [row["name"] for row in table["commands"]] == sorted(commands)
     watchdog = commands["--system-proxy-watchdog"]
     assert (watchdog["min_args"], watchdog["max_args"]) == (2, 3)
+    trampoline = commands["--appx-proxy-trampoline"]
+    assert (trampoline["min_args"], trampoline["max_args"]) == (4, 4)
     assert (commands["--workflow-json"]["min_args"],
             commands["--workflow-json"]["max_args"]) == (4, 4)
 
