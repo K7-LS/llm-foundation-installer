@@ -6,8 +6,8 @@
 # ответе или расхождение хеша EXE с манифестом комплекта попадает в отчёт
 # как ERROR и даёт ненулевой код возврата. «Успех» печатается только когда
 # все вызовы отработали. Версии целей берутся из каталога комплекта, а не
-# зашиты в скрипт; план строится для каждой цели каталога (Claude, Codex,
-# OpenCode). Отчёт привязан к SHA-256 EXE и версии комплекта.
+# зашиты в скрипт; план строится для каждой цели каталога (Claude, Codex).
+# Отчёт привязан к SHA-256 EXE и версии комплекта.
 [CmdletBinding()]
 param(
     [string]$BundleRoot = $PSScriptRoot,
@@ -116,8 +116,8 @@ if ($null -ne $catalog -and $null -ne $catalog.targets) {
 
 # --- Цели запуска ------------------------------------------------------------
 $launchTargets = @(
-    'codex-cli', 'claude-code', 'codex-desktop', 'opencode-cli',
-    'opencode-desktop', 'chrome-browser', 'vscode-codex'
+    'codex-cli', 'claude-code', 'codex-desktop', 'chrome-browser',
+    'vscode-codex'
 )
 $resolutions = foreach ($id in $launchTargets) {
     $value = Invoke-BundleJson "resolve $id" @('--resolve-launch-target-json', $HOME, $id)
@@ -153,9 +153,9 @@ $plans = foreach ($t in $catalogTargets) {
     }
 }
 
-# --- Junction в каталогах скиллов трёх клиентов -----------------------------
+# --- Junction в каталогах скиллов клиентов -----------------------------------
 $junctions = @()
-foreach ($rel in @('.agents\skills', '.claude\skills', '.config\opencode\skills')) {
+foreach ($rel in @('.agents\skills', '.claude\skills')) {
     $root = Join-Path $HOME $rel
     if (-not (Test-Path -LiteralPath $root)) { continue }
     $junctions += @(

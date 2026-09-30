@@ -11,8 +11,8 @@
     "publication_allowed": {"type": "boolean"},
     "components": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 6,
+      "maxItems": 6,
       "items": {
         "type": "object",
         "required": ["id", "version", "path", "sha256", "bytes"]

@@ -15,8 +15,8 @@ VERSION = (
     Path(__file__).resolve().parents[1] / "APP_VERSION"
 ).read_text(encoding="utf-8").strip()
 TAG = f"employee-v{VERSION}"
-TARGETS = ("claude", "codex", "opencode")
-SELF_TEST_TARGETS = ("codex", "claude", "opencode")
+TARGETS = ("claude", "codex")
+SELF_TEST_TARGETS = ("codex", "claude")
 PRODUCT_FILES = {
     "installer": "K7-AI-Foundation-Employee-PublicUnsigned.exe",
 }
@@ -54,10 +54,9 @@ EXPECTED_RUNTIME_CANARY = {
 EXPECTED_BUNDLE_VERDICTS = {
     "FULL_RELEASE_CLAUDE": "PASS",
     "FULL_RELEASE_CODEX": "PASS",
-    "FULL_RELEASE_OPENCODE": "PASS",
     "TECHNICAL_READY": "PASS",
     "PROVIDER_LIVE": "PASS",
-    "PROGRAM_RELEASE": "3/3",
+    "PROGRAM_RELEASE": f"{len(TARGETS)}/{len(TARGETS)}",
     "INTERNAL_UNSIGNED_RELEASE": "NOT_PASS",
     "PUBLIC_UNSIGNED_RELEASE": "PASS",
     "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
@@ -82,7 +81,7 @@ INSTALL_GUIDE = f"""# K-7 для сотрудников, версия {VERSION}
 Перед запуском сверить каждый файл с `SHA256SUMS`. Публичный выпуск остаётся
 без цифровой подписи, поэтому Windows может показать «Неизвестный издатель»
 или SmartScreen. Администратор не требуется. Версия для сотрудников включает
-Codex, Claude Code и OpenCode. Авторизация Claude выполняется интерактивно в
+Codex и Claude Code. Авторизация Claude выполняется интерактивно в
 официальном клиенте; выбор proxy-маршрута не подменяет право доступа к
 провайдеру.
 """

@@ -22,7 +22,6 @@ import installer_release  # noqa: E402
 TARGET_CLIENT = {
     "claude": "2.1.218",
     "codex": "0.146.0-alpha.3.1",
-    "opencode": "1.18.13",
 }
 
 
@@ -150,8 +149,6 @@ def _verify_product(
             "codex-cli",
             "codex-desktop",
             "claude-code",
-            "opencode-cli",
-            "opencode-desktop",
             "vscode-codex",
         ]
     ):
@@ -229,14 +226,7 @@ def _sentinel_paths(home: Path, target: str) -> dict[Path, bytes]:
             ),
             home / ".claude" / "projects" / "session.json": b"session\n",
         }
-    return {
-        home / ".config" / "opencode" / "auth.json": (
-            b'{"auth":"preserve"}\n'
-        ),
-        home / ".local" / "share" / "opencode" / "session.json": (
-            b"session\n"
-        ),
-    }
+    raise ValueError(f"Unsupported target: {target}")
 
 
 def _run_target(

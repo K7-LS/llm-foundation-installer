@@ -179,7 +179,7 @@ jobs:
                 ConvertFrom-Json
             if ($manifest.distribution_mode -cne 'PublicUnsigned' -or
                 $manifest.verdicts.PUBLIC_UNSIGNED_RELEASE -cne 'PASS' -or
-                $manifest.verdicts.PROGRAM_RELEASE -cne '3/3') {
+                $manifest.verdicts.PROGRAM_RELEASE -cne '2/2') {
               throw "Release manifest is not PublicUnsigned-ready: $root"
             }
             if ($null -ne $manifest.products.launch_center) {
@@ -194,7 +194,7 @@ jobs:
               if ($selfTest.engine_validated -ne $true -or
                   $selfTest.version -cne $appVersion -or
                   (@($selfTest.targets | Sort-Object) -join ',') -cne
-                    'claude,codex,opencode') {
+                    'claude,codex') {
                 throw "Self-test failed: $product"
               }
               $catalog = Invoke-JsonProduct `

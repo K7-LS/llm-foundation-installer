@@ -12,7 +12,6 @@ from pathlib import Path
 REQUIRED = (
     "codex-base",
     "claude-base",
-    "opencode-base",
     "llm-foundation-installer",
     "officecli",
     "officecli-exporter",
