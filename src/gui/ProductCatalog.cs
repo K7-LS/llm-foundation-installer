@@ -21,9 +21,9 @@ namespace LlmFoundationInstaller
 {
     internal static class ProductCatalog
     {
-        // Позиционный string[][] молча путал два разных client id (у codex и
-        // claude они совпадают, у opencode — нет) и требовал спецкейсов по
-        // definition[0] == "codex". Типизированная запись убирает и то, и другое.
+        // Позиционный string[][] молча путал два разных client id (пакета и
+        // источника) и требовал спецкейсов по definition[0] == "codex".
+        // Типизированная запись убирает и то, и другое.
         private sealed class TargetDefinition
         {
             public TargetDefinition(
@@ -55,9 +55,6 @@ namespace LlmFoundationInstaller
             ),
             new TargetDefinition(
                 "claude", "Claude", "claude-code", "claude-code", false
-            ),
-            new TargetDefinition(
-                "opencode", "OpenCode", "opencode", "opencode-cli", false
             )
         };
 

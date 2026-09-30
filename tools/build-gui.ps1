@@ -1049,10 +1049,6 @@ function Read-AcceptedPackages {
             client = 'claude-code'
             verdict = 'FULL_RELEASE_CLAUDE'
         }
-        opencode = [ordered]@{
-            client = 'opencode'
-            verdict = 'FULL_RELEASE_OPENCODE'
-        }
     }
     $Rows = @()
     if ([string]::IsNullOrWhiteSpace($Root)) {
@@ -1531,8 +1527,8 @@ $ProviderEligibility = Read-ProviderEligibilityEvidence `
 $AcceptedTargets = @($AcceptedPackages.target | Sort-Object)
 $AllPackages = @($AcceptedPackages)
 $AvailableTargets = @($AllPackages.target | Sort-Object)
-$IncludedTargets = @('claude', 'codex', 'opencode')
-$RequiredTargets = @('claude', 'codex', 'opencode')
+$IncludedTargets = @('claude', 'codex')
+$RequiredTargets = @('claude', 'codex')
 $IsPackagedRelease = $DistributionMode -cne 'Preview'
 $NeedsAcceptedFoundation = $IsPackagedRelease -or (
     $AllowLocalTestSources -and $null -ne $AcceptedFoundation
@@ -1733,9 +1729,7 @@ if ($ClientSourcesOfficialOnly) {
         'claude-code',
         'codex-cli',
         'codex-desktop',
-        'officecli',
-        'opencode-cli',
-        'opencode-desktop'
+        'officecli'
     )
     $ActualClients = @($SeenClientIds.Keys | Sort-Object)
     if (($ActualClients -join ',') -cne ($ExpectedClients -join ',')) {
@@ -1788,8 +1782,8 @@ $EditionContract = if ($Edition -ceq 'Owner') {
         edition_id = 'Owner'
         display_name = 'K-7 AI Foundation Owner'
         distribution_allowed = [bool]$IsPublicUnsigned
-        included_target_ids = @('claude', 'codex', 'opencode')
-        required_target_ids = @('claude', 'codex', 'opencode')
+        included_target_ids = $IncludedTargets
+        required_target_ids = $RequiredTargets
         theme_id = 'SignalConsole'
         owner_controlled = $true
         product_role = $ProductRole
@@ -1800,8 +1794,8 @@ else {
         edition_id = 'Employee'
         display_name = 'K-7 AI Foundation Employee'
         distribution_allowed = $true
-        included_target_ids = @('claude', 'codex', 'opencode')
-        required_target_ids = @('claude', 'codex', 'opencode')
+        included_target_ids = $IncludedTargets
+        required_target_ids = $RequiredTargets
         theme_id = 'K7Signal'
         owner_controlled = $false
         product_role = $ProductRole
@@ -2215,16 +2209,18 @@ $Verdicts = [ordered]@{
     FULL_RELEASE_CODEX = if (
         $AcceptedTargets -ccontains 'codex'
     ) { 'PASS' } else { 'NOT_PASS' }
-    FULL_RELEASE_OPENCODE = if (
-        $AcceptedTargets -ccontains 'opencode'
-    ) { 'PASS' } else { 'NOT_PASS' }
     TECHNICAL_READY = if ($TechnicalReady) { 'PASS' } else { 'NOT_PASS' }
     PROVIDER_LIVE = if ($ProviderReady) {
         'PASS'
     } else {
         'BLOCKED_PROVIDER_ELIGIBILITY'
     }
-    PROGRAM_RELEASE = if ($TechnicalReady) { '3/3' } else { "$ReadyCount/3" }
+    # Знаменатель — число обязательных целей версии, а не вшитая константа.
+    PROGRAM_RELEASE = if ($TechnicalReady) {
+        "$($RequiredTargets.Count)/$($RequiredTargets.Count)"
+    } else {
+        "$ReadyCount/$($RequiredTargets.Count)"
+    }
     INTERNAL_UNSIGNED_RELEASE = if ($InternalReady) {
         'PASS'
     } else {

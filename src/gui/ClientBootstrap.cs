@@ -703,8 +703,7 @@ namespace LlmFoundationInstaller
         )
         {
             if (target != "codex" &&
-                target != "claude" &&
-                target != "opencode")
+                target != "claude")
             {
                 throw new InvalidOperationException(
                     "Client target is not supported"
