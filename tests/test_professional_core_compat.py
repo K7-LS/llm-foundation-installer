@@ -659,7 +659,7 @@ def test_current_session_tools_binding_is_exact(tmp_path, executable, change, er
 
 
 @pytest.mark.parametrize("executable", POWERSHELLS)
-@pytest.mark.parametrize("target", ["claude", "opencode"])
+@pytest.mark.parametrize("target", ["claude"])
 def test_other_historical_targets_keep_their_accepted_route(tmp_path, executable, target):
     directory = _accepted_package(tmp_path / "packages", target)
     _run(tmp_path, executable, "builder", directory.parent)

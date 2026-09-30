@@ -237,7 +237,7 @@ namespace LlmFoundationInstaller
                     ScrollViewer scroll = VisualChild<ScrollViewer>(list);
                     if (scroll == null) throw new InvalidOperationException("ListBox ScrollViewer is missing");
                     ListBoxItem last = list.Items.Cast<ListBoxItem>().First(item =>
-                        String.Equals(item.Tag as string, "opencode-cli", StringComparison.Ordinal));
+                        String.Equals(item.Tag as string, "claude-code", StringComparison.Ordinal));
                     result["extent_height"] = scroll.ExtentHeight;
                     result["viewport_height"] = scroll.ViewportHeight;
                     result["list_height"] = list.ActualHeight;

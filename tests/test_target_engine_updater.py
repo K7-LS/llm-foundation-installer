@@ -19,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "gui" / "BaseReleaseUpdater.cs"
-TARGETS = ("codex", "claude", "opencode")
+TARGETS = ("codex", "claude")
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Native .NET Framework test")
 
 
@@ -96,10 +96,9 @@ namespace LlmFoundationInstaller
             if (args.Length < 2 || args.Length > 3) return 2;
             string target = args[0];
             string mutation = args[1];
-            string version = target == "codex" ? "0.2.0" :
-                target == "claude" ? "0.1.25" : "0.1.14";
+            string version = target == "codex" ? "0.2.0" : "0.1.25";
             string repository = target == "codex" ? "K7-LS/codex-base" :
-                target == "claude" ? "K7-LS/claude-base-v2" : "K7-LS/opencode-base";
+                "K7-LS/claude-base-v2";
             string engineVersion = target == "codex" ? "0.5.12" : "0.5.10";
             string engineHash = target == "codex" ? NewEngineHash : OldEngineHash;
             string assetHash = new string('a', 64);
@@ -146,7 +145,7 @@ namespace LlmFoundationInstaller
                 case "compatible": break;
                 case "cross-target":
                     // Keep the matching version and hash: target identity alone
-                    // must reject the binding, including Claude/OpenCode 0.5.10.
+                    // must reject the binding.
                     if (args.Length != 3) return 2;
                     binding.target = args[2]; break;
                 case "engine-version":

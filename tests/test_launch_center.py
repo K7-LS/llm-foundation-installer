@@ -167,9 +167,9 @@ def _write_test_only_client_lock(path: Path) -> None:
                 },
                 "clients": [
                     {
-                        "id": "opencode-desktop",
-                        "target": "opencode",
-                        "display_name": "OpenCode Desktop",
+                        "id": "codex-desktop",
+                        "target": "codex",
+                        "display_name": "Codex Desktop",
                         "role": "desktop",
                         "required_for_base": False,
                         "required_for_employee": True,
@@ -177,7 +177,7 @@ def _write_test_only_client_lock(path: Path) -> None:
                         "source_kind": "download",
                         "url": (
                             "http://127.0.0.1:43117/"
-                            "opencode-desktop.exe"
+                            "codex-desktop.exe"
                         ),
                         "sha256": "0" * 64,
                         "artifact_kind": "portable-exe",
@@ -339,11 +339,9 @@ def _compile_environment_probe(path: Path) -> None:
             "Employee",
             [
                 "chrome-browser",
-                    "codex-cli",
-                    "codex-desktop",
-                    "claude-code",
-                    "opencode-cli",
-                "opencode-desktop",
+                "codex-cli",
+                "codex-desktop",
+                "claude-code",
                 "vscode-codex",
             ],
         ),
@@ -354,8 +352,6 @@ def _compile_environment_probe(path: Path) -> None:
                 "codex-cli",
                 "codex-desktop",
                 "claude-code",
-                "opencode-cli",
-                "opencode-desktop",
                 "vscode-codex",
             ],
         ),
@@ -393,8 +389,6 @@ def test_complete_target_catalog_matches_real_launch_center_cards(
         "codex-cli",
         "codex-desktop",
         "claude-code",
-        "opencode-cli",
-        "opencode-desktop",
         "vscode-codex",
     ]
 
@@ -445,9 +439,10 @@ def test_employee_installer_names_every_launch_center_component() -> None:
         "OpenAI Codex",
         "Codex CLI",
         "VS Code — Codex",
-        "OpenCode Desktop",
-        "OpenCode CLI",
+        "Claude Code",
     }.issubset(visible_text)
+    # Цель OpenCode удалена из продукта: карточек и подписей нет
+    assert not any("OpenCode" in value for value in visible_text)
 
 
 def test_employee_views_expose_exact_chrome_proxy_action() -> None:
@@ -823,7 +818,7 @@ def test_vscode_test_record_command_rejects_production_source_lock(
 def test_exact_managed_desktop_resolution_is_hash_bound(
     tmp_path: Path,
 ) -> None:
-    payload = b"managed-opencode-desktop-fixture\n"
+    payload = b"managed-codex-desktop-fixture\n"
     payload_hash = hashlib.sha256(payload).hexdigest()
     source_lock = tmp_path / "client-sources.lock.json"
     source_lock.write_text(
@@ -839,15 +834,15 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
                 },
                 "clients": [
                     {
-                        "id": "opencode-desktop",
-                        "target": "opencode",
-                        "display_name": "OpenCode Desktop",
+                        "id": "codex-desktop",
+                        "target": "codex",
+                        "display_name": "Codex Desktop",
                         "role": "desktop",
                         "required_for_base": False,
                         "required_for_employee": True,
                         "version": "1.0.0",
                         "source_kind": "download",
-                        "url": "http://127.0.0.1:43117/opencode-desktop.exe",
+                        "url": "http://127.0.0.1:43117/codex-desktop.exe",
                         "sha256": payload_hash,
                         "artifact_kind": "portable-exe",
                         "archive_entry": None,
@@ -874,9 +869,9 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         home
         / ".llm-foundation"
         / "apps"
-        / "opencode-desktop"
+        / "codex-desktop"
         / "1.0.0"
-        / "opencode-desktop.exe"
+        / "codex-desktop.exe"
     )
     executable.parent.mkdir(parents=True)
     executable.write_bytes(payload)
@@ -885,9 +880,9 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         json.dumps(
             {
                 "schema_version": 1,
-                "client_id": "opencode-desktop",
+                "client_id": "codex-desktop",
                 "version": "1.0.0",
-                "relative_path": "1.0.0/opencode-desktop.exe",
+                "relative_path": "1.0.0/codex-desktop.exe",
                 "sha256": payload_hash,
             }
         ),
@@ -898,14 +893,14 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         bundle,
         "--resolve-launch-target-json",
         str(home),
-        "opencode-desktop",
+        "codex-desktop",
     )
 
     assert returncode == 0
     assert value == {
         "status": "RESOLVED",
-        "target_id": "opencode-desktop",
-        "client_id": "opencode-desktop",
+        "target_id": "codex-desktop",
+        "client_id": "codex-desktop",
         "role": "desktop",
         "launch_mode": "executable",
         "executable_path": str(executable.resolve()),
@@ -923,7 +918,7 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
         bundle,
         "--resolve-launch-target-json",
         str(home),
-        "opencode-desktop",
+        "codex-desktop",
     )
     assert returncode == 20
     assert value["status"] == "BLOCKED"
@@ -933,7 +928,7 @@ def test_exact_managed_desktop_resolution_is_hash_bound(
 def test_exact_managed_cli_resolution_requires_install_record(
     tmp_path: Path,
 ) -> None:
-    payload = b"managed-opencode-cli-fixture\n"
+    payload = b"managed-claude-code-fixture\n"
     executable_hash = hashlib.sha256(payload).hexdigest()
     source_hash = "a" * 64
     source_lock = tmp_path / "client-sources.lock.json"
@@ -950,22 +945,22 @@ def test_exact_managed_cli_resolution_requires_install_record(
                 },
                 "clients": [
                     {
-                        "id": "opencode-cli",
-                        "target": "opencode",
-                        "display_name": "OpenCode CLI",
+                        "id": "claude-code",
+                        "target": "claude",
+                        "display_name": "Claude Code",
                         "role": "cli",
                         "required_for_base": True,
                         "required_for_employee": True,
                         "version": "1.0.0",
                         "source_kind": "download",
-                        "url": "http://127.0.0.1:43117/opencode.exe",
+                        "url": "http://127.0.0.1:43117/claude.exe",
                         "sha256": source_hash,
                         "artifact_kind": "portable-exe",
                         "archive_entry": None,
                         "publisher": None,
                         "signature_required": False,
                         "install_mode": "managed-bin",
-                        "detect_commands": ["opencode.exe"],
+                        "detect_commands": ["claude.exe"],
                         "version_arguments": ["--version"],
                     }
                 ],
@@ -981,7 +976,7 @@ def test_exact_managed_cli_resolution_requires_install_record(
         client_lock=source_lock,
     )
     home = tmp_path / "home"
-    executable = home / ".llm-foundation" / "bin" / "opencode.exe"
+    executable = home / ".llm-foundation" / "bin" / "claude.exe"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(payload)
 
@@ -989,7 +984,7 @@ def test_exact_managed_cli_resolution_requires_install_record(
         bundle,
         "--resolve-launch-target-json",
         str(home),
-        "opencode-cli",
+        "claude-code",
     )
     assert returncode == 20
     assert value["reason"] == "MANAGED_COMMAND_NOT_FOUND"
@@ -998,7 +993,7 @@ def test_exact_managed_cli_resolution_requires_install_record(
         home
         / ".llm-foundation"
         / "clients"
-        / "opencode-cli"
+        / "claude-code"
         / "current.json"
     )
     record.parent.mkdir(parents=True)
@@ -1006,9 +1001,9 @@ def test_exact_managed_cli_resolution_requires_install_record(
         json.dumps(
             {
                 "schema_version": 1,
-                "client_id": "opencode-cli",
+                "client_id": "claude-code",
                 "version": "1.0.0",
-                "relative_path": ".llm-foundation/bin/opencode.exe",
+                "relative_path": ".llm-foundation/bin/claude.exe",
                 "sha256": executable_hash,
                 "source_sha256": source_hash,
             }
@@ -1020,13 +1015,13 @@ def test_exact_managed_cli_resolution_requires_install_record(
         bundle,
         "--resolve-launch-target-json",
         str(home),
-        "opencode-cli",
+        "claude-code",
     )
     assert returncode == 0
     assert value == {
         "status": "RESOLVED",
-        "target_id": "opencode-cli",
-        "client_id": "opencode-cli",
+        "target_id": "claude-code",
+        "client_id": "claude-code",
         "role": "cli",
         "launch_mode": "executable",
         "executable_path": str(executable.resolve()),
@@ -1044,7 +1039,7 @@ def test_exact_managed_cli_resolution_requires_install_record(
         bundle,
         "--resolve-launch-target-json",
         str(home),
-        "opencode-cli",
+        "claude-code",
     )
     assert returncode == 20
     assert value["reason"] == "MANAGED_COMMAND_INTEGRITY_FAILED"
@@ -1174,9 +1169,9 @@ def test_direct_launch_exact_process_without_proxy_environment(
                 },
                 "clients": [
                     {
-                        "id": "opencode-desktop",
-                        "target": "opencode",
-                        "display_name": "OpenCode Desktop",
+                        "id": "codex-desktop",
+                        "target": "codex",
+                        "display_name": "Codex Desktop",
                         "role": "desktop",
                         "required_for_base": False,
                         "required_for_employee": True,
@@ -1209,7 +1204,7 @@ def test_direct_launch_exact_process_without_proxy_environment(
         home
         / ".llm-foundation"
         / "apps"
-        / "opencode-desktop"
+        / "codex-desktop"
         / "1.0.0"
         / "environment-probe.exe"
     )
@@ -1219,7 +1214,7 @@ def test_direct_launch_exact_process_without_proxy_environment(
         json.dumps(
             {
                 "schema_version": 1,
-                "client_id": "opencode-desktop",
+                "client_id": "codex-desktop",
                 "version": "1.0.0",
                 "relative_path": "1.0.0/environment-probe.exe",
                 "sha256": payload_hash,
@@ -1247,7 +1242,7 @@ def test_direct_launch_exact_process_without_proxy_environment(
             str(bundle / "LLMFoundationInstaller.exe"),
             "--launch-target-json",
             str(home),
-            "opencode-desktop",
+            "codex-desktop",
             route,
         ],
         cwd=bundle,
@@ -1306,18 +1301,6 @@ def test_extension_identity_comparison_ignores_publisher_case() -> None:
                         'StringComparison.OrdinalIgnoreCase') >= 1
     assert source.count('"OpenAI",\n                            '
                         'StringComparison.OrdinalIgnoreCase') >= 1
-
-
-def test_official_desktop_lookup_covers_the_current_install_directory() -> None:
-    # Установщик OpenCode 1.18.x кладёт приложение в каталог с npm-именем
-    # пакета; прежний список путей знал только «Programs\OpenCode».
-    source = (REPOSITORY / "src" / "gui" / "ClientBootstrap.cs").read_text(
-        encoding="utf-8"
-    )
-    window = source.split("ResolveOfficialDesktopPath", 2)[2]
-    window = window.split("FirstOrDefault(File.Exists)", 1)[0]
-    assert '"@opencode-aidesktop"' in window
-    assert '"OpenCode"' in window        # прежние пути сохранены
 
 
 def test_signed_self_update_launches_instead_of_blocking() -> None:

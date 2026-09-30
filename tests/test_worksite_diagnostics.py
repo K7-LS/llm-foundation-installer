@@ -1,7 +1,7 @@
 """Диагностика рабочей станции: fail-closed, привязка к комплекту, обе оболочки.
 
 Ревью Codex 2026-09-02: прежняя версия подавляла ошибки и всегда заканчивалась
-успехом, версии Codex/Claude были зашиты, плана OpenCode не было, EXE
+успехом, версии Codex/Claude были зашиты, план строился не по каталогу, EXE
 искался по одному имени, отчёт не был привязан к хешам комплекта.
 """
 from __future__ import annotations
@@ -88,4 +88,5 @@ def test_script_has_no_hardcoded_client_versions() -> None:
     assert "0.146.0" not in text
     assert "2.1.218" not in text
     assert "supported_version" in text
-    assert ".config\\opencode\\skills" in text
+    # корни скиллов — ровно два клиента комплекта
+    assert "@('.agents\\skills', '.claude\\skills')" in text

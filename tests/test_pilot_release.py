@@ -106,7 +106,7 @@ def test_pilot_finalization_preserves_both_products_and_runtime(
     )
     assert manifest["tag"] == f"employee-v{APP_VERSION}"
     assert manifest["channel"] == "stable"
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
     assert manifest["verdicts"]["HOME_PC_CANARY"] == "PASS"
     assert manifest["verdicts"]["RELEASE_INTEGRITY"] == (

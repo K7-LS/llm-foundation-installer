@@ -158,7 +158,6 @@ def test_release_build_still_serves_tool_commands(release_bundle: Path) -> None:
     assert [row["engine_validated"] for row in value["target_engines"]] == [
         False,
         False,
-        False,
     ]
 
 

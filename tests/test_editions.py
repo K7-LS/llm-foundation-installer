@@ -145,8 +145,8 @@ def _render_guide_preview(
         (
             "Employee",
             "Installer",
-            ["claude", "codex", "opencode"],
-            ["claude", "codex", "opencode"],
+            ["claude", "codex"],
+            ["claude", "codex"],
             True,
             "K7Signal",
             False,
@@ -154,8 +154,8 @@ def _render_guide_preview(
         (
             "Owner",
             "LaunchCenter",
-            ["claude", "codex", "opencode"],
-            ["claude", "codex", "opencode"],
+            ["claude", "codex"],
+            ["claude", "codex"],
             False,
             "SignalConsole",
             True,
@@ -307,7 +307,7 @@ def test_all_products_expose_embedded_interactive_operator_dashboard() -> None:
         "03 / БЕЗОПАСНОСТЬ",
         "04 / ВОССТАНОВЛЕНИЕ",
         "distribution_allowed=false",
-        "Codex + Claude + OpenCode",
+        "Codex + Claude.",
     ):
         assert marker in source
 
@@ -353,9 +353,9 @@ def test_launch_center_selection_does_not_paint_default_listbox_chrome() -> None
         (
             "Employee",
             "--ui-selection-json",
-            "opencode-cli",
-            "Запустить OpenCode →",
-            "OPENCODE CLI",
+            "codex-cli",
+            "Запустить Codex →",
+            "CODEX",
             None,
         ),
         (
@@ -444,7 +444,7 @@ def test_user_facing_views_are_russian_and_expose_selected_state() -> None:
         )
         assert 'x:Name="SelectionFrame"' in xaml
         assert '<Trigger Property="IsSelected" Value="True">' in xaml
-        assert 'Tag="opencode-cli"' in xaml
+        assert 'Tag="claude-code"' in xaml
 
 
 def test_operator_dashboard_can_return_a_real_llm_selection() -> None:
@@ -455,7 +455,6 @@ def test_operator_dashboard_can_return_a_real_llm_selection() -> None:
         "ApplyHostSelection",
         "Выбрать Codex",
         "Выбрать Claude",
-        "Выбрать OpenCode",
         "Вернуться к выбору",
     ):
         assert marker in source
@@ -492,7 +491,7 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
 
     for marker in (
         "Codex",
-        "OpenCode",
+        "четыре режима запуска",
         "Напрямую",
         "SingBox HTTP",
         "SingBox HTTPS",
@@ -504,6 +503,8 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
     ):
         assert marker in employee
     assert "Claude" in employee
+    # Цель OpenCode удалена из обеих версий
+    assert "OpenCode" not in employee
     assert (
         "транспорт не подтверждает право использования сервиса"
         in employee_normalized
@@ -512,7 +513,7 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
     for marker in (
         "Codex",
         "Claude",
-        "OpenCode",
+        "Claude Code",
         "distribution_allowed=false",
         "TECHNICAL_READY",
         "PROVIDER_LIVE",
@@ -522,6 +523,7 @@ def test_role_specific_operator_guides_match_edition_boundaries() -> None:
         "Интерактивная инструкция",
     ):
         assert marker in owner
+    assert "OpenCode" not in owner
 
 
 def _build_edition(
@@ -595,7 +597,7 @@ def test_deterministic_edition_bundle_ships_single_installer_exe(
     assert manifest["theme_id"] == "K7Signal"
     assert manifest["distribution_mode"] == "Preview"
     assert manifest["version"] == APP_VERSION
-    assert manifest["targets"] == ["claude", "codex", "opencode"]
+    assert manifest["targets"] == ["claude", "codex"]
     assert {
         role: value["file"]
         for role, value in manifest["products"].items()
@@ -638,7 +640,7 @@ def test_deterministic_edition_bundle_ships_single_installer_exe(
     assert self_test_value["version"] == APP_VERSION
     assert [
         row["engine_validated"] for row in self_test_value["target_engines"]
-    ] == [False, False, False]
+    ] == [False, False]
     assert (first / "bundle-manifest.json").read_bytes() == (
         second / "bundle-manifest.json"
     ).read_bytes()

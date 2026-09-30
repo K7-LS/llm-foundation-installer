@@ -661,7 +661,7 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
         bundle,
         "--write-singbox-config-test-json",
         str(home),
-        "opencode-desktop",
+        "codex-desktop",
         "SingBoxHttps",
         "18082",
         str(config_path),
@@ -687,17 +687,22 @@ def test_singbox_https_config_is_targeted_and_secret_redacted(
         if "process_name" in rule
     )
     assert process_rule == {
-        "process_name": ["OpenCode.exe", "opencode.exe"],
+        "process_name": [
+            "ChatGPT.exe",
+            "OpenAI.exe",
+            "codex.exe",
+            "codex-code-mode-host.exe",
+        ],
         "action": "route",
         "outbound": "upstream",
     }
     serialized_rules = json.dumps(config["route"]["rules"])
-    assert "opencode.ai" in serialized_rules
+    assert "chatgpt.com" in serialized_rules
     assert "openai.com" in serialized_rules
     assert "example.com" not in serialized_rules
     assert summary == {
         "status": "CONFIG_WRITTEN",
-        "target_id": "opencode-desktop",
+        "target_id": "codex-desktop",
         "route": "SingBoxHttps",
         "listen_port": 18082,
         "uses_tls": True,
@@ -769,7 +774,7 @@ def test_singbox_session_owns_runtime_and_removes_secret_config(
             str(bundle / "LLMFoundationInstaller.exe"),
             "--test-singbox-session-json",
             str(home),
-            "opencode-desktop",
+            "claude-code",
             "SingBoxHttp",
         ],
         cwd=bundle,
@@ -1188,15 +1193,15 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
                 },
                 "clients": [
                     {
-                        "id": "opencode-desktop",
-                        "target": "opencode",
-                        "display_name": "OpenCode Desktop",
+                        "id": "codex-desktop",
+                        "target": "codex",
+                        "display_name": "Codex Desktop",
                         "role": "desktop",
                         "required_for_base": False,
                         "required_for_employee": True,
                         "version": "1.0.0",
                         "source_kind": "download",
-                        "url": "http://127.0.0.1:43119/opencode.exe",
+                        "url": "http://127.0.0.1:43119/codex-desktop.exe",
                         "sha256": fake_hash,
                         "artifact_kind": "portable-exe",
                         "archive_entry": None,
@@ -1260,9 +1265,9 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
         home
         / ".llm-foundation"
         / "apps"
-        / "opencode-desktop"
+        / "codex-desktop"
         / "1.0.0"
-        / "opencode.exe"
+        / "codex-desktop.exe"
     )
     client.parent.mkdir(parents=True)
     client.write_bytes(fake.read_bytes())
@@ -1270,9 +1275,9 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
         json.dumps(
             {
                 "schema_version": 1,
-                "client_id": "opencode-desktop",
+                "client_id": "codex-desktop",
                 "version": "1.0.0",
-                "relative_path": "1.0.0/opencode.exe",
+                "relative_path": "1.0.0/codex-desktop.exe",
                 "sha256": fake_hash,
             }
         ),
@@ -1288,7 +1293,7 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
             str(bundle / "LLMFoundationInstaller.exe"),
             "--launch-target-json",
             str(home),
-            "opencode-desktop",
+            "codex-desktop",
             "SingBoxHttp",
         ],
         cwd=bundle,
@@ -1399,7 +1404,7 @@ def test_singbox_route_launches_exact_client_with_local_proxy_only(
             str(bundle / "LLMFoundationInstaller.exe"),
             "--test-singbox-session-json",
             str(home),
-            "opencode-desktop",
+            "codex-desktop",
             "SingBoxHttp",
         ],
         cwd=bundle,
