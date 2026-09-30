@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -16,13 +17,16 @@ def _app() -> str:
 
 def test_latest_base_sources_are_exact_and_native() -> None:
     source = SOURCE.read_text(encoding="utf-8")
-    assert "K7-LS/codex-base" in source
-    assert "K7-LS/claude-base-v2" in source
-    assert "K7-LS/opencode-base" in source
+    # Ровно два источника баз: Codex и Claude
+    assert set(re.findall(r'repository = "([^"]+)"', source)) == {
+        "K7-LS/codex-base",
+        "K7-LS/claude-base-v2",
+    }
     assert "/releases/latest" in source
-    assert '"codex-v"' in source
-    assert '"claude-v"' in source
-    assert '"opencode-v"' in source
+    assert set(re.findall(r'tagPrefix = "([^"]+)"', source)) == {
+        "codex-v",
+        "claude-v",
+    }
 
 
 def test_latest_base_is_fail_closed_before_cache_activation() -> None:
@@ -125,10 +129,9 @@ def test_session_tool_collision_offers_backup_instead_of_dead_end() -> None:
 
     # Каталог не угадывается, а ищется фактический, и только внутри профиля
     finder = app.split("private static string FindSessionToolDirectory", 1)[1]
-    # все три клиента: без корня OpenCode его коллизия оставалась тупиком
+    # Корни скиллов обоих клиентов — ровно Claude и Codex
     roots = app.split("SessionToolRoots =", 1)[1].split("};", 1)[0]
-    for root in (".claude/skills", ".agents/skills", ".config/opencode/skills"):
-        assert root in roots, root
+    assert re.findall(r'"([^"]+)"', roots) == [".claude/skills", ".agents/skills"]
     finder = finder.split("private static bool IsUnknownDecisionRequired", 1)[0]
     assert "Directory.Exists" in finder
     assert "StartsWith" in finder

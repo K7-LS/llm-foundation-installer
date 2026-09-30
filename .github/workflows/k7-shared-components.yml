@@ -11,10 +11,6 @@ on:
         description: Exact claude-base-v2 ref
         required: true
         type: string
-      opencode_ref:
-        description: Exact opencode-base ref
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -34,11 +30,6 @@ jobs:
           repository: K7-LS/claude-base-v2
           ref: ${{ inputs.claude_ref }}
           path: repos/claude-base-v2
-      - uses: actions/checkout@v4
-        with:
-          repository: K7-LS/opencode-base
-          ref: ${{ inputs.opencode_ref }}
-          path: repos/opencode-base
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,4 +37,4 @@ jobs:
         shell: pwsh
         run: >-
           python repos/codex-base/tools/verify_shared_components.py
-          repos/codex-base repos/claude-base-v2 repos/opencode-base
+          repos/codex-base repos/claude-base-v2

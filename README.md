@@ -3,10 +3,10 @@
 Локальный установщик Windows 10/11 и ежедневный центр запуска в двух строго
 разделённых версиях:
 
-- **для сотрудников** — Claude Code, Codex Desktop, Codex CLI, OpenCode Desktop,
-  OpenCode CLI и VS Code + Codex; стабильная выдача разрешается только после
-  пилота на чистом ПК и неизменяемой публикации;
-- **для владельца** — Claude Code, Codex и OpenCode с расширенной диагностикой.
+- **для сотрудников** — Claude Code, Codex Desktop, Codex CLI и VS Code + Codex;
+  стабильная выдача разрешается только после пилота на чистом ПК и
+  неизменяемой публикации;
+- **для владельца** — Claude Code и Codex с расширенной диагностикой.
 
 Техническая готовность Claude и допустимый live-доступ провайдера разделены:
 `TECHNICAL_READY` отвечает за официальный бинарник и пакет, а
@@ -150,7 +150,7 @@ pwsh -NoProfile -File .\tools\build-edition.ps1 `
   -OutputRoot .\dist\для-сотрудников `
   -Edition Employee `
   -DistributionMode InternalUnsigned `
-  -PackageRoot <принятые-пакеты-codex-opencode> `
+  -PackageRoot <принятые-пакеты-claude-codex> `
   -FoundationPackageRoot <принятый-пакет-foundation> `
   -ClientSourcesLock .\client-sources.lock.json `
   -RuntimeSourcesLock .\runtime-sources.lock.json `

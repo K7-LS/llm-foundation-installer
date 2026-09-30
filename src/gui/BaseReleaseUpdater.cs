@@ -109,16 +109,6 @@ namespace LlmFoundationInstaller
                         tagPrefix = "claude-v",
                         assetPrefix = "claude-base-"
                     }
-                },
-                {
-                    "opencode",
-                    new SourceContract
-                    {
-                        target = "opencode",
-                        repository = "K7-LS/opencode-base",
-                        tagPrefix = "opencode-v",
-                        assetPrefix = "opencode-base-"
-                    }
                 }
             };
 

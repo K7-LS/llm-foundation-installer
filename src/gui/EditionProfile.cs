@@ -73,8 +73,8 @@ namespace LlmFoundationInstaller
                 ValidateExact(
                     "K-7 AI Foundation Employee",
                     true,
-                    new[] { "claude", "codex", "opencode" },
-                    new[] { "claude", "codex", "opencode" },
+                    new[] { "claude", "codex" },
+                    new[] { "claude", "codex" },
                     "K7Signal",
                     false
                 );
@@ -90,8 +90,8 @@ namespace LlmFoundationInstaller
 #else
                     false,
 #endif
-                    new[] { "claude", "codex", "opencode" },
-                    new[] { "claude", "codex", "opencode" },
+                    new[] { "claude", "codex" },
+                    new[] { "claude", "codex" },
                     "SignalConsole",
                     true
                 );

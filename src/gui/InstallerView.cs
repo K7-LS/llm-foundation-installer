@@ -101,6 +101,21 @@ namespace LlmFoundationInstaller
             }
         }
 
+        // Префикс имён элементов карточки цели в разметке установщика.
+        // Для цели без карточки — null: вызывающий код её пропускает.
+        internal static string ControlPrefix(string targetId)
+        {
+            if (targetId == "codex")
+            {
+                return "Codex";
+            }
+            if (targetId == "claude")
+            {
+                return "Claude";
+            }
+            return null;
+        }
+
         internal static void ApplyCatalog(
             UserControl view,
             CatalogResult catalog
@@ -108,9 +123,11 @@ namespace LlmFoundationInstaller
         {
             foreach (TargetRow row in catalog.targets)
             {
-                string prefix = row.id == "codex"
-                    ? "Codex"
-                    : (row.id == "claude" ? "Claude" : "OpenCode");
+                string prefix = ControlPrefix(row.id);
+                if (prefix == null)
+                {
+                    continue;
+                }
                 TextBlock status = view.FindName(prefix + "Status") as TextBlock;
                 Border badge = view.FindName(
                     prefix + "StatusBadge"

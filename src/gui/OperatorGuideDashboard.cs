@@ -380,7 +380,6 @@ namespace LlmFoundationInstaller
                         line,
                         text,
                         accent,
-                        secondary,
                         owner
                     ));
                 }
@@ -479,7 +478,7 @@ namespace LlmFoundationInstaller
                     title = product == "установщик"
                         ? "Установить среду без лишних шагов"
                         : "Запустить нужный клиент и маршрут",
-                    summary = "Codex + Claude + OpenCode. Техническая готовность Claude отделена от допуска провайдера.",
+                    summary = "Codex + Claude. Техническая готовность Claude отделена от допуска провайдера.",
                     steps = product == "установщик"
                         ? new[]
                         {
@@ -489,8 +488,8 @@ namespace LlmFoundationInstaller
                         }
                         : new[]
                         {
-                            "Выберите Codex или OpenCode" +
-                                "; Claude, Codex и OpenCode входят в технический комплект.",
+                            "Выберите клиент в списке" +
+                                "; Claude и Codex входят в технический комплект.",
                             "Укажите прямое подключение, SingBox HTTP или SingBox HTTPS.",
                             "Нажмите «Запустить». Центр запускает только проверенную точную цель."
                         },
@@ -516,7 +515,7 @@ namespace LlmFoundationInstaller
                     title = "Проверяем байты, не собираем секреты",
                     summary = owner
                         ? "Версия владельца: распространение запрещено (distribution_allowed=false)."
-                        : "Версия для сотрудников содержит принятые пакеты Claude, Codex и OpenCode.",
+                        : "Версия для сотрудников содержит принятые пакеты Claude и Codex.",
                     steps = new[]
                     {
                         "Каждый пакет и среда выполнения сверяются со встроенным манифестом и SHA-256.",
@@ -580,12 +579,7 @@ namespace LlmFoundationInstaller
                         StringComparison.Ordinal
                     )
                     ? "Claude"
-                    : (targetId.StartsWith(
-                            "opencode",
-                            StringComparison.Ordinal
-                        )
-                        ? "OpenCode"
-                        : null));
+                    : null);
             CheckBox selected = String.IsNullOrEmpty(prefix)
                 ? null
                 : host.FindName(prefix + "Selected") as CheckBox;
@@ -604,7 +598,6 @@ namespace LlmFoundationInstaller
             Color line,
             Color text,
             Color accent,
-            Color secondary,
             bool owner
         )
         {
@@ -643,15 +636,6 @@ namespace LlmFoundationInstaller
                     owner
                 );
             }
-            AddTargetButton(
-                actions,
-                "Выбрать OpenCode",
-                "opencode-cli",
-                selectTarget,
-                text,
-                secondary,
-                owner
-            );
             body.Children.Add(actions);
             chooser.Child = body;
             return chooser;

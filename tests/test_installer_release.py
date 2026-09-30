@@ -82,7 +82,7 @@ def test_draft_release_is_deterministic_and_binds_full_employee_edition(
     assert manifest["launch_center_fallback"] == record(
         bundle / FALLBACK_FILE
     )
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
     assert manifest["verdicts"]["HOME_PC_CANARY"] == "PENDING"
     assert manifest["requires"]["owner_attested_home_pc_canary"] is True

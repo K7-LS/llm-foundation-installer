@@ -825,13 +825,6 @@ namespace LlmFoundationInstaller
             {
                 return "Запустить Claude →";
             }
-            if (targetId.StartsWith(
-                    "opencode",
-                    StringComparison.Ordinal
-                ))
-            {
-                return "Запустить OpenCode →";
-            }
             return "Запустить выбранный клиент →";
         }
 
@@ -869,7 +862,7 @@ namespace LlmFoundationInstaller
             {
                 return "CLAUDE";
             }
-            return "OPENCODE CLI";
+            return "ВЫБРАННЫЙ КЛИЕНТ";
         }
 
         private static string TargetProviderName(string targetId)

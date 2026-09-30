@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import http.server
@@ -100,108 +99,6 @@ def _compile_versioned_codex(path: Path, version: str) -> None:
                 public static int Main(string[] args)
                 {{
                     Console.WriteLine("codex {version}");
-                    return 0;
-                }}
-            }}
-            """
-        ),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [
-            str(compiler),
-            "/nologo",
-            "/target:exe",
-            f"/out:{path}",
-            str(source),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def _compile_versioned_desktop(path: Path, version: str) -> None:
-    compiler = _find_csharp_compiler()
-    if compiler is None:
-        pytest.skip("C# compiler is unavailable")
-    source = path.with_suffix(".cs")
-    source.write_text(
-        textwrap.dedent(
-            f"""
-            using System;
-            using System.IO;
-            using System.Reflection;
-            [assembly: AssemblyFileVersion("{version}.0")]
-            [assembly: AssemblyInformationalVersion("{version}")]
-            public static class FixtureDesktop
-            {{
-                public static int Main(string[] args)
-                {{
-                    string output = Environment.GetEnvironmentVariable(
-                        "K7_TEST_OUTPUT"
-                    );
-                    if (!String.IsNullOrWhiteSpace(output))
-                    {{
-                        File.WriteAllText(output, String.Join("\\n", args));
-                    }}
-                    return 0;
-                }}
-            }}
-            """
-        ),
-        encoding="utf-8",
-    )
-    result = subprocess.run(
-        [
-            str(compiler),
-            "/nologo",
-            "/target:exe",
-            f"/out:{path}",
-            str(source),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def _compile_opencode_installer(path: Path, payload: bytes) -> None:
-    compiler = _find_csharp_compiler()
-    if compiler is None:
-        pytest.skip("C# compiler is unavailable")
-    encoded = base64.b64encode(payload).decode("ascii")
-    source = path.with_suffix(".cs")
-    source.write_text(
-        textwrap.dedent(
-            f"""
-            using System;
-            using System.IO;
-            public static class FixtureInstaller
-            {{
-                public static int Main(string[] args)
-                {{
-                    string home = Environment.GetEnvironmentVariable(
-                        "USERPROFILE"
-                    );
-                    string root = Path.Combine(
-                        home,
-                        "AppData",
-                        "Local",
-                        "Programs",
-                        "OpenCode"
-                    );
-                    Directory.CreateDirectory(root);
-                    File.WriteAllBytes(
-                        Path.Combine(root, "OpenCode.exe"),
-                        Convert.FromBase64String("{encoded}")
-                    );
                     return 0;
                 }}
             }}
@@ -693,23 +590,19 @@ def _accepted_package(
     client_ids = {
         "codex": "codex-cli",
         "claude": "claude-code",
-        "opencode": "opencode",
     }
     verdict_ids = {
         "codex": "FULL_RELEASE_CODEX",
         "claude": "FULL_RELEASE_CLAUDE",
-        "opencode": "FULL_RELEASE_OPENCODE",
     }
     asset = package_root / f"{target}-base-1.0.0.zip"
     install_roots = {
         "codex": ".codex",
         "claude": ".claude",
-        "opencode": ".config/opencode",
     }
     hot_paths = {
         "codex": ".codex/AGENTS.md",
         "claude": ".claude/CLAUDE.md",
-        "opencode": ".config/opencode/AGENTS.md",
     }
     install_root = install_roots[target]
     hot_path = hot_paths[target]
@@ -1130,12 +1023,12 @@ def test_gui_build_is_hash_bound_and_self_describing(gui_bundle: Path):
                 "engine_version": None,
                 "engine_manifest_sha256": None,
             }
-            for target in ("codex", "claude", "opencode")
+            for target in ("codex", "claude")
         ],
         "network": "user-initiated-only",
         "automatic_network": False,
         "reverse_flow": False,
-        "targets": ["codex", "claude", "opencode"],
+        "targets": ["codex", "claude"],
         "telemetry": False,
         "version": manifest["version"],
     }
@@ -1190,57 +1083,8 @@ def test_gui_embeds_and_validates_client_source_lock(gui_bundle: Path):
         ("codex-cli", "0.153.1", "download"),
         ("codex-desktop", "store-current", "store"),
         ("claude-code", "2.1.218", "download"),
-        ("opencode-cli", "1.18.13", "download"),
-        ("opencode-desktop", "1.18.13", "download"),
         ("officecli", "1.0.143", "download"),
     ]
-
-
-def test_opencode_sources_use_current_cli_and_real_desktop_installer() -> None:
-    source_lock = json.loads(
-        (REPOSITORY_ROOT / "client-sources.lock.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    by_id = {entry["id"]: entry for entry in source_lock["clients"]}
-
-    cli = by_id["opencode-cli"]
-    assert cli["version"] == "1.18.13"
-    assert cli["url"] == (
-        "https://github.com/anomalyco/opencode/releases/download/"
-        "v1.18.13/opencode-windows-x64.zip"
-    )
-    assert cli["sha256"] == (
-        "4cc2bd079255db237def148aa0771d5117e0791b96da2b281891a45a2a7d15e2"
-    )
-    desktop = by_id["opencode-desktop"]
-    assert desktop["version"] == "1.18.13"
-    assert desktop["url"] == (
-        "https://github.com/anomalyco/opencode/releases/download/"
-        "v1.18.13/opencode-desktop-win-x64.exe"
-    )
-    assert desktop["sha256"] == (
-        "3d1796daa0762ec49cdb27f8418b8e0d2dafb37d89dd4ea766b42bdd7cd6d260"
-    )
-    assert desktop["artifact_kind"] == "installer-exe"
-    assert desktop["install_mode"] == "official-installer"
-
-
-def test_opencode_catalog_uses_cli_as_primary_client(gui_bundle: Path) -> None:
-    result = subprocess.run(
-        [str(gui_bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
-        cwd=gui_bundle,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    catalog = json.loads(result.stdout)
-    opencode = next(row for row in catalog["targets"] if row["id"] == "opencode")
-    assert opencode["client_id"] == "opencode-cli"
-    assert opencode["supported_version"] == "1.18.13"
 
 
 def test_codex_desktop_source_uses_exact_store_product_and_identity(
@@ -1474,7 +1318,7 @@ def test_internal_unsigned_rejects_local_test_client_source_lock(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
     evidence = _provider_eligibility_evidence(
         tmp_path / "provider-eligibility-evidence.json"
@@ -3264,158 +3108,6 @@ def test_managed_desktop_newer_version_blocks_downgrade_before_download(
         thread.join(timeout=5)
 
 
-def test_opencode_desktop_installer_installs_then_resolves_real_app(
-    tmp_path: Path,
-) -> None:
-    installed_fixture = tmp_path / "OpenCode.exe"
-    _compile_versioned_desktop(installed_fixture, "1.0.0")
-    installer = tmp_path / "opencode-desktop-win-x64.exe"
-    _compile_opencode_installer(installer, installed_fixture.read_bytes())
-    content = installer.read_bytes()
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        requests = 0
-
-        def do_GET(self):
-            type(self).requests += 1
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-
-        def log_message(self, *args):
-            return
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        source_lock = _local_client_source_lock(
-            tmp_path / "client-sources.test.json",
-            url=(
-                f"http://127.0.0.1:{server.server_port}/"
-                "opencode-desktop-win-x64.exe"
-            ),
-            sha256=hashlib.sha256(content).hexdigest(),
-            artifact_kind="installer-exe",
-            install_mode="official-installer",
-            detect_commands=[],
-            client_id="opencode-desktop",
-            target="opencode",
-            role="desktop",
-            required_for_employee=True,
-        )
-        bundle = _build_gui_bundle(
-            tmp_path / "bundle",
-            client_sources_lock=source_lock,
-            allow_local_test_sources=True,
-            edition="Employee",
-            product_role="LaunchCenter",
-        )
-        executable = bundle / "LLMFoundationInstaller.exe"
-        home = tmp_path / "employee-home"
-        home.mkdir()
-        staging = tmp_path / "client-staging"
-
-        missing = subprocess.run(
-            [
-                str(executable),
-                "--client-plan-json",
-                str(home),
-                "opencode-desktop",
-            ],
-            cwd=bundle,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-            timeout=30,
-        )
-        assert missing.returncode == 0, missing.stdout + missing.stderr
-        assert json.loads(missing.stdout)["status"] == "INSTALL_AVAILABLE"
-
-        installed = subprocess.run(
-            [
-                str(executable),
-                "--install-client-json",
-                str(home),
-                "opencode-desktop",
-                str(staging),
-            ],
-            cwd=bundle,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-            timeout=30,
-        )
-        assert installed.returncode == 0, installed.stdout + installed.stderr
-        assert json.loads(installed.stdout) == {
-            "status": "INSTALLED",
-            "client_id": "opencode-desktop",
-            "version": "1.0.0",
-            "relative_install_path": (
-                "AppData/Local/Programs/OpenCode/OpenCode.exe"
-            ),
-            "path_persisted": False,
-            "authentication_touched": False,
-        }
-        installed_app = (
-            home
-            / "AppData"
-            / "Local"
-            / "Programs"
-            / "OpenCode"
-            / "OpenCode.exe"
-        )
-        assert installed_app.read_bytes() == installed_fixture.read_bytes()
-        assert not (home / ".llm-foundation" / "apps").exists()
-
-        ready = subprocess.run(
-            [
-                str(executable),
-                "--client-plan-json",
-                str(home),
-                "opencode-desktop",
-            ],
-            cwd=bundle,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-            timeout=30,
-        )
-        assert ready.returncode == 0, ready.stdout + ready.stderr
-        assert json.loads(ready.stdout)["status"] == "READY"
-
-        resolved = subprocess.run(
-            [
-                str(executable),
-                "--resolve-launch-target-json",
-                str(home),
-                "opencode-desktop",
-            ],
-            cwd=bundle,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-            timeout=30,
-        )
-        assert resolved.returncode == 0, resolved.stdout + resolved.stderr
-        resolution = json.loads(resolved.stdout)
-        assert resolution["status"] == "RESOLVED"
-        assert resolution["executable_path"] == str(installed_app.resolve())
-        assert resolution["sha256"] == hashlib.sha256(
-            installed_fixture.read_bytes()
-        ).hexdigest()
-        assert Handler.requests == 1
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
 def test_codex_newer_version_is_ready_without_download(
     tmp_path: Path,
 ):
@@ -4109,7 +3801,7 @@ def test_launch_center_persists_independent_routes_per_client(
     for target, route in (
         ("codex-desktop", "SingBoxHttps"),
         ("claude-code", "Direct"),
-        ("opencode-cli", "Direct"),
+        ("codex-cli", "Direct"),
     ):
         saved = subprocess.run(
             [
@@ -4144,8 +3836,8 @@ def test_launch_center_persists_independent_routes_per_client(
     routes = json.loads(loaded.stdout)["target_routes"]
     assert routes == {
         "claude-code": "Direct",
+        "codex-cli": "Direct",
         "codex-desktop": "SingBoxHttps",
-        "opencode-cli": "Direct",
     }
 
     selected = subprocess.run(
@@ -4207,7 +3899,6 @@ def test_every_installer_has_large_labeled_component_checkboxes() -> None:
         for technical_name in (
             "CodexSelected",
             "ClaudeSelected",
-            "OpenCodeSelected",
         ):
             control = xaml.split(f'x:Name="{technical_name}"', 1)[1].split(
                 "/>", 1
@@ -4268,7 +3959,7 @@ def test_launch_center_connection_state(
     assert value["fields"] == ["server", "port", "login", "password"]
 
 
-def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: Path):
+def test_gui_catalog_has_two_native_targets_and_no_fake_readiness(gui_bundle: Path):
     executable = gui_bundle / "LLMFoundationInstaller.exe"
     result = subprocess.run(
         [str(executable), "--catalog-json"],
@@ -4285,12 +3976,10 @@ def test_gui_catalog_has_three_native_targets_and_no_fake_readiness(gui_bundle: 
     assert [row["id"] for row in payload["targets"]] == [
         "codex",
         "claude",
-        "opencode",
     ]
     assert [row["client_id"] for row in payload["targets"]] == [
         "codex-cli",
         "claude-code",
-        "opencode-cli",
     ]
     assert all(row["package_state"] == "missing" for row in payload["targets"])
     assert payload["install_enabled"] is False
@@ -4613,7 +4302,6 @@ def test_gui_accepts_only_build_verified_hash_bound_package(tmp_path: Path):
     assert states == {
         "codex": "accepted",
         "claude": "missing",
-        "opencode": "missing",
     }
     assert payload["install_enabled"] is False
     assert payload["reason"] == (
@@ -4898,11 +4586,11 @@ def test_owner_distribution_requires_all_targets(
     ).lower()
 
 
-def test_employee_edition_has_exact_three_target_contract(
+def test_employee_edition_has_exact_two_target_contract(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("claude", "codex", "opencode"):
+    for target in ("claude", "codex"):
         _accepted_package(package_source, target)
 
     bundle = _build_gui_bundle(
@@ -4918,10 +4606,10 @@ def test_employee_edition_has_exact_three_target_contract(
         (bundle / "client-sources.lock.json").read_text(encoding="utf-8")
     )
     assert manifest["edition_id"] == "Employee"
-    assert manifest["targets"] == ["claude", "codex", "opencode"]
+    assert manifest["targets"] == ["claude", "codex"]
     assert manifest["employee_distribution_allowed"] is True
     assert manifest["owner_controlled"] is False
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert manifest["verdicts"]["TECHNICAL_READY"] == "PASS"
     assert manifest["verdicts"]["PROVIDER_LIVE"] == (
         "BLOCKED_PROVIDER_ELIGIBILITY"
@@ -4941,7 +4629,6 @@ def test_employee_edition_has_exact_three_target_contract(
     assert [row["id"] for row in catalog_value["targets"]] == [
         "codex",
         "claude",
-        "opencode",
     ]
     assert catalog_value["install_enabled"] is True
 
@@ -4950,8 +4637,7 @@ def test_employee_edition_rejects_missing_claude_target(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("codex", "opencode"):
-        _accepted_package(package_source, target)
+    _accepted_package(package_source, "codex")
     result = subprocess.run(
         [
             POWERSHELL,
@@ -4986,7 +4672,7 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
 
     bundle = _build_gui_bundle(
@@ -4999,7 +4685,7 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
         (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["edition_id"] == "Owner"
-    assert manifest["targets"] == ["claude", "codex", "opencode"]
+    assert manifest["targets"] == ["claude", "codex"]
     assert manifest["employee_distribution_allowed"] is False
     assert manifest["internal_distribution_allowed"] is True
     assert manifest["owner_controlled"] is True
@@ -5009,7 +4695,7 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
     assert manifest["verdicts"]["PROVIDER_LIVE"] == (
         "BLOCKED_PROVIDER_ELIGIBILITY"
     )
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
 
     catalog = subprocess.run(
         [str(bundle / "LLMFoundationInstaller.exe"), "--catalog-json"],
@@ -5027,7 +4713,6 @@ def test_owner_edition_keeps_claude_provider_gate_visible(
     assert states == {
         "codex": "accepted",
         "claude": "accepted",
-        "opencode": "accepted",
     }
     assert catalog_value["install_enabled"] is True
     assert catalog_value["provider_eligibility"] == "NOT_PROVIDED"
@@ -5037,7 +4722,7 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
 
     candidate = _build_gui_bundle(
@@ -5090,10 +4775,9 @@ def test_owner_provider_evidence_promotes_claude_without_distribution(
     assert manifest["verdicts"] == {
         "FULL_RELEASE_CLAUDE": "PASS",
         "FULL_RELEASE_CODEX": "PASS",
-        "FULL_RELEASE_OPENCODE": "PASS",
         "TECHNICAL_READY": "PASS",
         "PROVIDER_LIVE": "PASS",
-        "PROGRAM_RELEASE": "3/3",
+        "PROGRAM_RELEASE": "2/2",
         "INTERNAL_UNSIGNED_RELEASE": "PASS",
         "PUBLIC_UNSIGNED_RELEASE": "NOT_PASS",
         "PUBLIC_SIGNED_RELEASE": "DEFERRED_UNSIGNED",
@@ -5154,7 +4838,7 @@ def test_owner_public_unsigned_embedded_contract_self_test_passes(
     tmp_path: Path,
 ) -> None:
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
 
     evidence = _provider_eligibility_evidence(
@@ -5186,7 +4870,7 @@ def test_employee_distribution_requires_immutable_foundation_package(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
     foundation = package_source / "foundation"
     detached = tmp_path / "detached-foundation"
@@ -5276,7 +4960,7 @@ def test_non_public_distribution_rejects_signing_certificate(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
     evidence = _provider_eligibility_evidence(
         tmp_path / "provider-eligibility-evidence.json"
@@ -5318,11 +5002,11 @@ def test_employee_distribution_rejects_unverified_release_record(
     tmp_path: Path,
 ):
     package_source = tmp_path / "package-source"
-    for target in ("codex", "claude", "opencode"):
+    for target in ("codex", "claude"):
         _accepted_package(package_source, target)
     verification = (
         package_source
-        / "opencode"
+        / "codex"
         / "release-verification.json"
     )
     payload = json.loads(verification.read_text(encoding="utf-8"))
@@ -5331,7 +5015,7 @@ def test_employee_distribution_rejects_unverified_release_record(
     _write_json(verification, payload)
     acceptance = (
         package_source
-        / "opencode"
+        / "codex"
         / "package-acceptance.json"
     )
     acceptance_payload = json.loads(
@@ -5744,7 +5428,7 @@ def test_gui_executable_is_a_standalone_installer_payload(
     assert {
         row["target"]: row["engine_validated"]
         for row in json.loads(self_test.stdout)["target_engines"]
-    } == {"codex": True, "claude": False, "opencode": False}
+    } == {"codex": True, "claude": False}
 
     catalog = subprocess.run(
         [str(executable), "--catalog-json"],
@@ -6354,7 +6038,7 @@ def test_gui_install_workflow_is_non_blocking_and_locally_reported():
 
 
 def test_post_install_authorization_launch_uses_launch_target_resolver():
-    # Ревью Codex: post-install запуск Claude/OpenCode шёл через COMSPEC и
+    # Ревью Codex: post-install запуск Claude шёл через COMSPEC и
     # голые имена из PATH, Codex — через зашитый AUMID. Открывать клиенты
     # обязан тот же LaunchTargetResolver.Resolve (explicit executable_path
     # управляемой копии, activation_id из каталога), что и центр запуска.
@@ -6425,7 +6109,6 @@ def test_owner_internal_build_carries_accepted_claude_package(
     package_source = tmp_path / "package-source"
     _accepted_package(package_source, "codex")
     _accepted_package(package_source, "claude")
-    _accepted_package(package_source, "opencode")
 
     bundle = _build_gui_bundle(
         tmp_path / "owner-bundle",
@@ -6436,12 +6119,12 @@ def test_owner_internal_build_carries_accepted_claude_package(
     manifest = json.loads(
         (bundle / "bundle-manifest.json").read_text(encoding="utf-8")
     )
-    assert manifest["embedded_target_count"] == 3
+    assert manifest["embedded_target_count"] == 2
     assert "owner_claude_state" not in manifest
     assert manifest["distribution_allowed"] is False
     assert manifest["employee_distribution_allowed"] is False
     assert manifest["verdicts"]["FULL_RELEASE_CLAUDE"] == "PASS"
-    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "3/3"
+    assert manifest["verdicts"]["PROGRAM_RELEASE"] == "2/2"
     assert manifest["verdicts"]["TECHNICAL_READY"] == "PASS"
     assert manifest["verdicts"]["PROVIDER_LIVE"] == (
         "BLOCKED_PROVIDER_ELIGIBILITY"
@@ -6467,7 +6150,6 @@ def test_owner_internal_build_carries_accepted_claude_package(
     assert states == {
         "codex": "accepted",
         "claude": "accepted",
-        "opencode": "accepted",
     }
 
 
@@ -6649,7 +6331,9 @@ def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: 
             "schema_version": 1,
             "target_routes": {
                 "claude-code": "Direct",
+                "codex-cli": "VPN",
                 "codex-desktop": "SingBoxHttps",
+                # цель удалённого OpenCode из сборок 0.4.5: файл не отвергается
                 "opencode-cli": "VPN",
             },
         },
@@ -6666,12 +6350,13 @@ def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: 
     assert loaded.returncode == 0, loaded.stdout + loaded.stderr
     assert json.loads(loaded.stdout)["target_routes"] == {
         "claude-code": "Direct",
+        "codex-cli": "Direct",
         "codex-desktop": "SingBoxHttps",
         "opencode-cli": "Direct",
     }
     # Save поверх мигрированного файла не должен споткнуться о старое значение
     saved = subprocess.run(
-        [str(executable), "--save-launch-route-json", str(home), "opencode-cli", "SingBoxHttp"],
+        [str(executable), "--save-launch-route-json", str(home), "codex-cli", "SingBoxHttp"],
         cwd=gui_bundle,
         capture_output=True,
         text=True,

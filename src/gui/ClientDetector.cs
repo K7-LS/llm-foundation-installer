@@ -25,8 +25,7 @@ namespace LlmFoundationInstaller
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 { "codex-cli", "codex.exe" },
-                { "claude-code", "claude.exe" },
-                { "opencode", "opencode.exe" }
+                { "claude-code", "claude.exe" }
             };
         private static readonly System.Text.RegularExpressions.Regex Version =
             new System.Text.RegularExpressions.Regex(

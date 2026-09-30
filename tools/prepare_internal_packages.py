@@ -8,7 +8,7 @@ import json
 import shutil
 from pathlib import Path
 
-TARGETS = {"codex": "codex-cli", "claude": "claude-code", "opencode": "opencode"}
+TARGETS = {"codex": "codex-cli", "claude": "claude-code"}
 
 
 def digest(path: Path) -> str:

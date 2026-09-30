@@ -211,7 +211,6 @@ namespace LlmFoundationInstaller
             {
                 case "codex": return ".codex/base/foundation/";
                 case "claude": return ".claude/base/foundation/";
-                case "opencode": return ".config/opencode/base/foundation/";
                 default: throw Invalid("Unsupported target engine");
             }
         }

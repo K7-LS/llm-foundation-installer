@@ -34,7 +34,7 @@ def test_internal_package_set_is_atomic_and_hash_bound(tmp_path):
     ]
     output = tmp_path / "out"
     MODULE.prepare(output, sources)
-    assert sorted(path.name for path in output.iterdir()) == ["claude", "codex", "opencode"]
+    assert sorted(path.name for path in output.iterdir()) == ["claude", "codex"]
     for target in MODULE.TARGETS:
         acceptance = json.loads((output / target / "internal-acceptance.json").read_text())
         assert acceptance["channel"] == "InternalUnsigned"

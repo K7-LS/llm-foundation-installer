@@ -24,8 +24,6 @@ REQUIRED_PILOT_CHECKS = (
     "installer_to_launch_center_handoff",
     "codex_desktop",
     "codex_cli",
-    "opencode_cli",
-    "opencode_oauth",
     "claude_code",
     "claude_live_login",
     "provider_eligibility",

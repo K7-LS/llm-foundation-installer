@@ -174,18 +174,6 @@ namespace LlmFoundationInstaller
             {
                 return ResolveManagedCommand(home, source, target);
             }
-            if (String.Equals(
-                    source.install_mode,
-                    "official-installer",
-                    StringComparison.Ordinal))
-            {
-                return ResolveOfficialDesktop(
-                    bundleRoot,
-                    home,
-                    source,
-                    target
-                );
-            }
             if (!String.Equals(
                     source.install_mode,
                     "managed-desktop",
@@ -199,76 +187,6 @@ namespace LlmFoundationInstaller
                 );
             }
             return ResolveManagedDesktop(home, source, target);
-        }
-
-        private static LaunchTargetResolution ResolveOfficialDesktop(
-            string bundleRoot,
-            string home,
-            ClientSource source,
-            LaunchTarget target
-        )
-        {
-            try
-            {
-                string version;
-                string executable =
-                    ClientBootstrap.ResolveOfficialDesktopPath(
-                        home,
-                        source,
-                        ClientBootstrap.Load(bundleRoot).test_only,
-                        out version
-                    );
-                int comparison;
-                if (!String.Equals(
-                        version,
-                        source.version,
-                        StringComparison.Ordinal) &&
-                    (!TryCompareVersions(
-                        version,
-                        source.version,
-                        out comparison) || comparison < 0))
-                {
-                    throw new InvalidOperationException();
-                }
-                return new LaunchTargetResolution
-                {
-                    status = "RESOLVED",
-                    target_id = target.target_id,
-                    client_id = target.client_id,
-                    role = target.role,
-                    launch_mode = "executable",
-                    executable_path = executable,
-                    sha256 = BundleIntegrity.Sha256(executable),
-                    reason = null
-                };
-            }
-            catch
-            {
-                return Blocked(
-                    target.target_id,
-                    target.client_id,
-                    target.role,
-                    "OFFICIAL_DESKTOP_INTEGRITY_FAILED"
-                );
-            }
-        }
-
-        private static bool TryCompareVersions(
-            string left,
-            string right,
-            out int comparison
-        )
-        {
-            comparison = 0;
-            Version leftValue;
-            Version rightValue;
-            if (!Version.TryParse(left, out leftValue) ||
-                !Version.TryParse(right, out rightValue))
-            {
-                return false;
-            }
-            comparison = leftValue.CompareTo(rightValue);
-            return true;
         }
 
         public static LaunchTargetResolution ResolveStoreRecord(

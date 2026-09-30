@@ -107,54 +107,6 @@
       "store_signature_kind": null
     },
     {
-      "id": "opencode-cli",
-      "target": "opencode",
-      "display_name": "OpenCode CLI",
-      "role": "cli",
-      "required_for_base": true,
-      "required_for_employee": true,
-      "version": "1.18.13",
-      "source_kind": "download",
-      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.13/opencode-windows-x64.zip",
-      "sha256": "4cc2bd079255db237def148aa0771d5117e0791b96da2b281891a45a2a7d15e2",
-      "artifact_kind": "zip",
-      "archive_entry": "opencode.exe",
-      "publisher": "Anomaly Innovations, Inc https://anoma.ly/",
-      "signature_required": true,
-      "install_mode": "managed-bin",
-      "detect_commands": [
-        "opencode.exe"
-      ],
-      "version_arguments": [
-        "--version"
-      ],
-      "store_identity": null,
-      "store_publisher": null,
-      "store_signature_kind": null
-    },
-    {
-      "id": "opencode-desktop",
-      "target": "opencode",
-      "display_name": "OpenCode Desktop",
-      "role": "desktop",
-      "required_for_base": false,
-      "required_for_employee": true,
-      "version": "1.18.13",
-      "source_kind": "download",
-      "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.13/opencode-desktop-win-x64.exe",
-      "sha256": "3d1796daa0762ec49cdb27f8418b8e0d2dafb37d89dd4ea766b42bdd7cd6d260",
-      "artifact_kind": "installer-exe",
-      "archive_entry": null,
-      "publisher": "Anomaly Innovations, Inc https://anoma.ly/",
-      "signature_required": true,
-      "install_mode": "official-installer",
-      "detect_commands": [],
-      "version_arguments": [],
-      "store_identity": null,
-      "store_publisher": null,
-      "store_signature_kind": null
-    },
-    {
       "id": "officecli",
       "target": "shared",
       "display_name": "OfficeCLI",

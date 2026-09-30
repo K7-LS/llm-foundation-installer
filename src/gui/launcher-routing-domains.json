@@ -31,14 +31,6 @@
     "claude-code": [
       "claude.exe",
       "node.exe"
-    ],
-    "opencode-cli": [
-      "opencode.exe",
-      "node.exe"
-    ],
-    "opencode-desktop": [
-      "OpenCode.exe",
-      "opencode.exe"
     ]
   },
   "targets": {
@@ -64,28 +56,6 @@
       "claude.com",
       "anthropic.com",
       "claudeusercontent.com"
-    ],
-    "opencode-cli": [
-      "opencode.ai",
-      "models.dev",
-      "github.com",
-      "githubusercontent.com",
-      "npmjs.org",
-      "openai.com",
-      "oaiusercontent.com",
-      "claude.ai",
-      "anthropic.com"
-    ],
-    "opencode-desktop": [
-      "opencode.ai",
-      "models.dev",
-      "github.com",
-      "githubusercontent.com",
-      "npmjs.org",
-      "openai.com",
-      "oaiusercontent.com",
-      "claude.ai",
-      "anthropic.com"
     ]
   }
 }

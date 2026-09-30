@@ -46,9 +46,9 @@ def _write_test_only_client_lock(path: Path) -> None:
                 },
                 "clients": [
                     {
-                        "id": "opencode-desktop",
-                        "target": "opencode",
-                        "display_name": "OpenCode Desktop",
+                        "id": "codex-desktop",
+                        "target": "codex",
+                        "display_name": "Codex Desktop",
                         "role": "desktop",
                         "required_for_base": False,
                         "required_for_employee": True,
@@ -56,7 +56,7 @@ def _write_test_only_client_lock(path: Path) -> None:
                         "source_kind": "download",
                         "url": (
                             "http://127.0.0.1:43117/"
-                            "opencode-desktop.exe"
+                            "codex-desktop.exe"
                         ),
                         "sha256": "0" * 64,
                         "artifact_kind": "portable-exe",

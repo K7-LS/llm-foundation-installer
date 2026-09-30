@@ -24,7 +24,7 @@ COMMON = [
     "shared-tools/officecli/officecli_csv_batch.py",
 ]
 NEW = ["foundation-toml.ps1", "vendor/tomlyn/LICENSE.txt", "vendor/tomlyn/Tomlyn.dll", "vendor/tomlyn/provenance.json"]
-PREFIXES = {"codex": ".codex", "claude": ".claude", "opencode": ".config/opencode"}
+PREFIXES = {"codex": ".codex", "claude": ".claude"}
 BAD_CASES = [
     "resource_hash", "resource_size", "release_hash", "release_size", "release_missing",
     "release_invalid_json", "target_mismatch", "unknown_engine", "release_asset_mismatch",
@@ -202,7 +202,7 @@ def _run(engine_harness: tuple[Path, dict[str, Path]], name: str, mode: str = "v
     return subprocess.run([str(executable), str(metadata[name]), mode, str(root or "")], capture_output=True, text=True, timeout=30)
 
 
-@pytest.mark.parametrize("target,version,count", [("codex", "0.5.12", 13), ("claude", "0.5.10", 9), ("opencode", "0.5.10", 9)])
+@pytest.mark.parametrize("target,version,count", [("codex", "0.5.12", 13), ("claude", "0.5.10", 9)])
 def test_target_engine_selection_and_complete_extraction(engine_harness, tmp_path, target, version, count):
     result = _run(engine_harness, target, "extract", tmp_path / "engine")
     assert result.returncode == 0, result.stdout + result.stderr
