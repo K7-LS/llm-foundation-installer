@@ -6333,6 +6333,8 @@ def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: 
                 "claude-code": "Direct",
                 "codex-cli": "VPN",
                 "codex-desktop": "SingBoxHttps",
+                # цель удалённого OpenCode из сборок 0.4.5: файл не отвергается
+                "opencode-cli": "VPN",
             },
         },
     )
@@ -6350,6 +6352,7 @@ def test_legacy_vpn_launch_routes_migrate_to_direct(gui_bundle: Path, tmp_path: 
         "claude-code": "Direct",
         "codex-cli": "Direct",
         "codex-desktop": "SingBoxHttps",
+        "opencode-cli": "Direct",
     }
     # Save поверх мигрированного файла не должен споткнуться о старое значение
     saved = subprocess.run(

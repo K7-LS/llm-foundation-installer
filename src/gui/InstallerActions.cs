@@ -727,12 +727,22 @@ namespace LlmFoundationInstaller
             List<string> problems = new List<string>();
             foreach (TargetRow row in targets)
             {
+                string launchTargetId =
+                    AuthorizationLaunchTargetId(row.id);
+                if (launchTargetId == null)
+                {
+                    problems.Add(
+                        row.display_name +
+                            ": вход из установщика не поддерживается"
+                    );
+                    continue;
+                }
                 LaunchTargetResolution resolution =
                     LaunchTargetResolver.Resolve(
                         edition,
                         bundleRoot,
                         home,
-                        AuthorizationLaunchTargetId(row.id)
+                        launchTargetId
                     );
                 if (resolution.status != "RESOLVED")
                 {
@@ -776,9 +786,7 @@ namespace LlmFoundationInstaller
             {
                 return "claude-code";
             }
-            throw new InvalidOperationException(
-                "Authorization target is not supported"
-            );
+            return null;
         }
 
         private static ProcessStartInfo AuthorizationStartInfo(
