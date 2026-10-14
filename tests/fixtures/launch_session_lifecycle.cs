@@ -127,7 +127,9 @@ namespace LlmFoundationInstaller
             {
                 var server=new TcpListener(IPAddress.Loopback,0);server.Start();
                 File.WriteAllText(Path.Combine(Root,"runtime.pid"),Process.GetCurrentProcess().Id.ToString());
-                File.WriteAllText(Path.Combine(Root,"runtime.port"),((IPEndPoint)server.LocalEndpoint).Port.ToString());
+                string portMarker=Path.Combine(Root,"runtime.port");
+                File.WriteAllText(portMarker+".tmp",((IPEndPoint)server.LocalEndpoint).Port.ToString());
+                File.Move(portMarker+".tmp",portMarker);
                 while(true){using(var c=server.AcceptTcpClient())using(var s=c.GetStream()){byte[] b=System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");s.Write(b,0,b.Length);}}
             }
             if(args[0]=="--fixture-client"){WaitFile("client-exit");return 0;}
