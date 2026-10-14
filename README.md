@@ -64,6 +64,11 @@
 Center сам запускает и останавливает sing-box; отдельный пользовательский
 скрипт не нужен. Кнопка **«Остановить маршрут»** не завершает клиент.
 
+Начиная с 0.4.6, после запуска настольного клиента окно Launch Center можно
+закрыть. Маршрутом владеет отдельный скрытый процесс: он удерживает соединение
+до выхода клиента, затем останавливает runtime и восстанавливает прежний proxy.
+Кнопки остановки и сброса маршрута работают и при открытом Launch Center.
+
 Маршрут не подтверждает право использования сервиса и не предназначен для
 обхода региона, блокировки аккаунта или защитных ограничений провайдера.
 
@@ -116,6 +121,7 @@ Center сам запускает и останавливает sing-box; отд�
 | `--ensure-runtime-json <home>` | `hub_canary.py` | 1 | установить или проверить runtime sing-box в профиле |
 | `--resolve-launch-target-json <home> <target>` | `worksite-diagnostics.ps1` | 2 | разрешить цель запуска: путь клиента и режим |
 | `--workflow-json <команда> <target> <home> <версия>` | `hub_canary.py`, `worksite-diagnostics.ps1` | 4 | команда движка foundation: plan, install, doctor и другие |
+| `--launch-session <target> <route> <token>` | сам EXE (`LaunchSessionHost`) | 3 | удерживать маршрут до выхода клиента независимо от окна Launcher |
 | `--system-proxy-watchdog <pid> <state> [<subkey>]` | сам EXE (`SystemProxyLease`) | 2–3 | сторож системного прокси при аварии владельца маршрута |
 | `--appx-proxy-trampoline <клиент> <sha256> <порт> <маршрут>` | сам EXE (`ClientLauncher`) внутри контейнера пакета | 4 | запуск Store Codex через SingBox: identity пакета и proxy-env |
 

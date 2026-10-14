@@ -241,7 +241,7 @@ namespace LlmFoundationInstaller
                     SingBoxSessionResult stopped = await Task.Run(
                         delegate
                         {
-                            return ClientLauncher.StopActiveRoute();
+                            return LaunchSessionHost.StopActiveRoute();
                         }
                     );
                     ApplyStatus(
@@ -270,7 +270,7 @@ namespace LlmFoundationInstaller
                         SingBoxSessionResult reset = await Task.Run(
                             delegate
                             {
-                                return ClientLauncher.ResetManagedRoute(
+                                return LaunchSessionHost.ResetManagedRoute(
                                     UserHome()
                                 );
                             }

@@ -90,7 +90,7 @@ namespace LlmFoundationInstaller
             return new LaunchTargetResolution { target_id = target, status = "RESOLVED" };
         }
     }
-    internal static class ClientLauncher
+    internal static class LaunchSessionHost
     {
         public static readonly ManualResetEventSlim Started = new ManualResetEventSlim(false);
         public static readonly ManualResetEventSlim Release = new ManualResetEventSlim(false);
@@ -118,7 +118,7 @@ namespace LlmFoundationInstaller
                 reason = "TEST_LAUNCH_FAILED", cleanup_verified = false
             };
         }
-        public static bool HasActiveRoute()
+        public static bool IsActive()
         {
             return ActiveWhileRunning && Started.IsSet && !Release.IsSet;
         }
@@ -177,9 +177,9 @@ namespace LlmFoundationInstaller
                          scenario == "active-route")
                 {
                     LaunchCenterActions.SelectTarget(view, "codex-desktop");
-                    ClientLauncher.ThrowOnFinish = scenario == "async-exception";
-                    ClientLauncher.ReturnRunning = scenario == "async-running";
-                    ClientLauncher.ActiveWhileRunning = scenario == "active-route";
+                    LaunchSessionHost.ThrowOnFinish = scenario == "async-exception";
+                    LaunchSessionHost.ReturnRunning = scenario == "async-running";
+                    LaunchSessionHost.ActiveWhileRunning = scenario == "active-route";
                     if (scenario == "active-route") ConnectionUi.ApplyRoute(view, "SingBoxHttps");
                     UIElement settings = (UIElement)view.FindName("ProxySettings");
                     TextBox host = (TextBox)view.FindName("ProxyHost");
@@ -194,7 +194,7 @@ namespace LlmFoundationInstaller
                     }
                     Button launch = (Button)view.FindName("LaunchSelected");
                     launch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                    result["started"] = PumpUntil(delegate { return ClientLauncher.Started.IsSet; }, 3000);
+                    result["started"] = PumpUntil(delegate { return LaunchSessionHost.Started.IsSet; }, 3000);
                     if (scenario == "active-route")
                     {
                         Button stop = (Button)view.FindName("StopRoute");
@@ -202,12 +202,12 @@ namespace LlmFoundationInstaller
                     }
                     result["busy"] = Snapshot(view);
                     result["controls_during_launch"] = Controls(view);
-                    ClientLauncher.Release.Set();
+                    LaunchSessionHost.Release.Set();
                     result["reenabled"] = PumpUntil(delegate { return launch.IsEnabled; }, 1500);
                     Drain();
                     result["after"] = Snapshot(view);
                     result["controls_after_launch"] = Controls(view);
-                    result["launcher_calls"] = ClientLauncher.Calls;
+                    result["launcher_calls"] = LaunchSessionHost.Calls;
                     if (scenario == "inherited-disabled")
                     {
                         result["settings_after_launch_enabled"] = settings.IsEnabled;
@@ -227,7 +227,7 @@ namespace LlmFoundationInstaller
                     Drain();
                     result["after"] = Snapshot(view);
                     result["controls_after_launch"] = Controls(view);
-                    result["launcher_calls"] = ClientLauncher.Calls;
+                    result["launcher_calls"] = LaunchSessionHost.Calls;
                 }
                 else if (scenario == "scroll")
                 {
@@ -303,7 +303,7 @@ namespace LlmFoundationInstaller
             }
             finally
             {
-                ClientLauncher.Release.Set();
+                LaunchSessionHost.Release.Set();
                 app.Shutdown();
             }
         }

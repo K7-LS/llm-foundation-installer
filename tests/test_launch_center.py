@@ -1138,11 +1138,11 @@ def test_store_launcher_uses_appx_activation_manager_and_exact_pid() -> None:
     assert "SystemProxyLease.Acquire" in source
     assert "public static SingBoxSessionResult StopActiveRoute()" in source
     assert "contract.Stop.Click +=" in installer_source
-    assert "ClientLauncher.StopActiveRoute()" in installer_source
-    assert "ClientLauncher.HasActiveRoute()" in installer_source
+    assert "LaunchSessionHost.StopActiveRoute()" in installer_source
+    assert "LaunchSessionHost.IsActive()" in installer_source
     assert installer_source.index(
         "Task<LauncherSessionResult> launchTask"
-    ) < installer_source.index("ClientLauncher.HasActiveRoute()")
+    ) < installer_source.index("LaunchSessionHost.IsActive()")
     assert "InternetSetOption" in proxy_source
 
 

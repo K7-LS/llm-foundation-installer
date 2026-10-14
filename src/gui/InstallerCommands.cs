@@ -57,6 +57,7 @@ namespace LlmFoundationInstaller
             Register("--product-json", "tool", 0, 0, ProductJson);
             Register("--resolve-launch-target-json", "tool", 2, 2, ResolveLaunchTargetJson);
             Register("--self-test-json", "tool", 0, 0, SelfTestJson);
+            Register("--launch-session", "product", 3, 3, LaunchSessionHost.Run);
             Register("--system-proxy-watchdog", "product", 2, 3, SystemProxyWatchdog);
             Register("--workflow-json", "tool", 4, 4, WorkflowJson);
             RegisterTestHost();

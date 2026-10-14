@@ -99,7 +99,7 @@ namespace LlmFoundationInstaller
         public static SingBoxSessionResult TestRoute(string bundle, string home, string route, string endpoint)
         { throw Forbidden.Call("SingBoxSession.TestRoute"); }
     }
-    internal static class ClientLauncher
+    internal static class LaunchSessionHost
     {
         public static SingBoxSessionResult StopActiveRoute()
         { throw Forbidden.Call("ClientLauncher.StopActiveRoute"); }

@@ -28,6 +28,7 @@ RELEASE_COMMANDS = {
     "--product-json": "tool",
     "--resolve-launch-target-json": "tool",
     "--self-test-json": "tool",
+    "--launch-session": "product",
     "--system-proxy-watchdog": "product",
     "--workflow-json": "tool",
 }
@@ -106,7 +107,7 @@ def test_classification_counts_match_the_report() -> None:
     assert len(TEST_ONLY_COMMANDS) == 44
     # + `--appx-proxy-trampoline` (2026-09-29): Store Codex 26.924 требует
     # identity пакета, трамплин запускает его внутри контейнера пакета.
-    assert len(RELEASE_COMMANDS) == 11
+    assert len(RELEASE_COMMANDS) == 12
     assert not TEST_ONLY_COMMANDS & set(RELEASE_COMMANDS)
 
 
