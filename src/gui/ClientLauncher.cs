@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 
@@ -409,10 +411,6 @@ namespace LlmFoundationInstaller
                     UseShellExecute = false,
                     CreateNoWindow = target.role == "cli"
                 };
-                foreach (string variable in ProxyVariables)
-                {
-                    start.EnvironmentVariables.Remove(variable);
-                }
                 string localProxy = "http://127.0.0.1:" +
                     session.listen_port.ToString();
                 if (String.Equals(
@@ -435,16 +433,14 @@ namespace LlmFoundationInstaller
                             "--user-data-dir=" + profile
                         );
                 }
-                start.EnvironmentVariables["HTTP_PROXY"] = localProxy;
-                start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
-                start.EnvironmentVariables["http_proxy"] = localProxy;
-                start.EnvironmentVariables["https_proxy"] = localProxy;
-                const string noProxy = "localhost,127.0.0.1,::1";
-                start.EnvironmentVariables["NO_PROXY"] = noProxy;
-                start.EnvironmentVariables["no_proxy"] = noProxy;
-                start.EnvironmentVariables[
-                    "LLM_FOUNDATION_CONNECTION_MODE"
-                ] = route;
+                ApplyProxyEnvironment(start, localProxy, route);
+                // Store-пакет (кроме тестового стенда) стартует трамплином
+                // внутри своего контейнера: см. StartPackagedTrampoline.
+                bool packagedTrampoline = testRegistrySubkey == null &&
+                    String.Equals(
+                        target.launch_mode,
+                        "appx",
+                        StringComparison.Ordinal);
                 lock (RouteSync)
                 {
                     if (!Object.ReferenceEquals(
@@ -469,6 +465,14 @@ namespace LlmFoundationInstaller
                             testFixtureArguments
                         );
                     }
+                    else if (packagedTrampoline)
+                    {
+                        StartPackagedTrampoline(
+                            target,
+                            session.listen_port,
+                            route
+                        );
+                    }
                     else
                     {
                         client = StartExactProcessTarget(
@@ -476,6 +480,12 @@ namespace LlmFoundationInstaller
                             start
                         );
                     }
+                }
+                if (packagedTrampoline)
+                {
+                    // Под RouteSync — только запуск трамплина (секунды);
+                    // ожидание появления клиента (до минуты) — вне lock.
+                    client = WaitForPackagedClient(target);
                 }
                 if (client == null)
                 {
@@ -978,6 +988,265 @@ namespace LlmFoundationInstaller
                 );
             }
             return Process.Start(start);
+        }
+
+        private static void ApplyProxyEnvironment(
+            ProcessStartInfo start,
+            string localProxy,
+            string route
+        )
+        {
+            foreach (string variable in ProxyVariables)
+            {
+                start.EnvironmentVariables.Remove(variable);
+            }
+            start.EnvironmentVariables["HTTP_PROXY"] = localProxy;
+            start.EnvironmentVariables["HTTPS_PROXY"] = localProxy;
+            start.EnvironmentVariables["http_proxy"] = localProxy;
+            start.EnvironmentVariables["https_proxy"] = localProxy;
+            const string noProxy = "localhost,127.0.0.1,::1";
+            start.EnvironmentVariables["NO_PROXY"] = noProxy;
+            start.EnvironmentVariables["no_proxy"] = noProxy;
+            start.EnvironmentVariables[
+                "LLM_FOUNDATION_CONNECTION_MODE"
+            ] = route;
+        }
+
+        internal const string PackagedTrampolineCommand =
+            "--appx-proxy-trampoline";
+
+        private static readonly Regex PackageFamilyPattern = new Regex(
+            "^[A-Za-z0-9][A-Za-z0-9.-]{0,49}_[a-z0-9]{13}$",
+            RegexOptions.CultureInvariant
+        );
+
+        private static readonly Regex PackageApplicationPattern = new Regex(
+            "^[A-Za-z][A-Za-z0-9.]{0,63}$",
+            RegexOptions.CultureInvariant
+        );
+
+        private const int PackagedClientWaitSeconds = 60;
+
+        // Store Codex (с 26.924) не стартует без identity пакета: прямой
+        // Process.Start даёт APPMODEL_ERROR_NO_PACKAGE. ActivateApplication
+        // identity даёт, но proxy-env не передаёт, как и
+        // Invoke-CommandInDesktopPackage. Поэтому EXE запускает сам себя
+        // трамплином внутри контейнера пакета (-PreventBreakaway оставляет
+        // там и потомков), а трамплин выставляет env и стартует клиент.
+        private static void StartPackagedTrampoline(
+            LaunchTargetResolution target,
+            int listenPort,
+            string route
+        )
+        {
+            if (target == null ||
+                String.IsNullOrWhiteSpace(target.executable_path) ||
+                !File.Exists(target.executable_path) ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(target.executable_path),
+                    target.sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "TARGET_INTEGRITY_CHANGED"
+                );
+            }
+            string[] activation = (target.activation_id ?? "").Split('!');
+            if (activation.Length != 2 ||
+                !PackageFamilyPattern.IsMatch(activation[0]) ||
+                !PackageApplicationPattern.IsMatch(activation[1]))
+            {
+                throw new InvalidOperationException(
+                    "APPX_ACTIVATION_FAILED"
+                );
+            }
+            // Значения идут через env, а не в текст команды: без экранирования.
+            const string command =
+                "$ErrorActionPreference='Stop';" +
+                "Import-Module Appx -ErrorAction Stop;" +
+                "Invoke-CommandInDesktopPackage" +
+                " -PackageFamilyName $env:K7_APPX_FAMILY" +
+                " -AppId $env:K7_APPX_APPLICATION" +
+                " -PreventBreakaway" +
+                " -Command $env:K7_APPX_TRAMPOLINE" +
+                " -Args $env:K7_APPX_TRAMPOLINE_ARGS";
+            string system = Environment.GetFolderPath(
+                Environment.SpecialFolder.System
+            );
+            string powershell = Path.Combine(
+                system,
+                "WindowsPowerShell",
+                "v1.0",
+                "powershell.exe"
+            );
+            if (!File.Exists(powershell))
+            {
+                throw new InvalidOperationException(
+                    "APPX_ACTIVATION_FAILED"
+                );
+            }
+            // Команда — константа без кавычек, путь клиента — файл без
+            // кавычек и завершающего «\»: QuoteLaunchArgument здесь точен.
+            ProcessStartInfo start = new ProcessStartInfo
+            {
+                FileName = powershell,
+                Arguments =
+                    "-NoLogo -NoProfile -NonInteractive " +
+                    "-ExecutionPolicy Bypass -Command " +
+                    QuoteLaunchArgument(command),
+                WorkingDirectory = system,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            start.EnvironmentVariables["K7_APPX_FAMILY"] = activation[0];
+            start.EnvironmentVariables["K7_APPX_APPLICATION"] = activation[1];
+            start.EnvironmentVariables["K7_APPX_TRAMPOLINE"] =
+                Process.GetCurrentProcess().MainModule.FileName;
+            start.EnvironmentVariables["K7_APPX_TRAMPOLINE_ARGS"] =
+                PackagedTrampolineCommand + " " +
+                QuoteLaunchArgument(target.executable_path) + " " +
+                target.sha256 + " " +
+                listenPort.ToString(CultureInfo.InvariantCulture) + " " +
+                route;
+            string moduleRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "WindowsPowerShell",
+                "v1.0",
+                "Modules"
+            );
+            string inheritedModules = Environment.GetEnvironmentVariable(
+                "PSModulePath"
+            ) ?? "";
+            start.EnvironmentVariables["PSModulePath"] = moduleRoot +
+                (String.IsNullOrWhiteSpace(inheritedModules)
+                    ? ""
+                    : ";" + inheritedModules);
+            BoundedProcessResult result = BoundedProcess.Run(start, 60000);
+            if (!result.Succeeded)
+            {
+                throw new InvalidOperationException(
+                    "APPX_ACTIVATION_FAILED"
+                );
+            }
+        }
+
+        // Корневой процесс клиента — самый ранний с точным путём: перед
+        // запуском APPX_ALREADY_RUNNING исключил уже открытый Codex.
+        private static Process WaitForPackagedClient(
+            LaunchTargetResolution target
+        )
+        {
+            string expected = Path.GetFullPath(target.executable_path);
+            string processName = Path.GetFileNameWithoutExtension(expected);
+            DateTime deadline = DateTime.UtcNow.AddSeconds(
+                PackagedClientWaitSeconds
+            );
+            while (true)
+            {
+                Process root = null;
+                foreach (Process process in Process.GetProcessesByName(
+                    processName
+                ))
+                {
+                    bool keep = false;
+                    try
+                    {
+                        if (String.Equals(
+                                Path.GetFullPath(
+                                    process.MainModule.FileName
+                                ),
+                                expected,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            (root == null ||
+                                process.StartTime < root.StartTime))
+                        {
+                            if (root != null)
+                            {
+                                root.Dispose();
+                            }
+                            root = process;
+                            keep = true;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    if (!keep)
+                    {
+                        process.Dispose();
+                    }
+                }
+                if (root != null)
+                {
+                    // Дескриптор открывается, пока клиент жив: без него
+                    // ExitCode найденного (не запущенного нами) Process
+                    // бросает InvalidOperationException после выхода.
+                    try
+                    {
+                        if (root.Handle != IntPtr.Zero)
+                        {
+                            return root;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    root.Dispose();
+                }
+                if (DateTime.UtcNow >= deadline)
+                {
+                    throw new InvalidOperationException(
+                        "APPX_ACTIVATION_FAILED"
+                    );
+                }
+                Thread.Sleep(200);
+            }
+        }
+
+        // Трамплин (--appx-proxy-trampoline) уже внутри контейнера пакета:
+        // клиент унаследует его identity и выставленный здесь proxy-env.
+        internal static int RunPackagedTrampoline(
+            string executable,
+            string sha256,
+            string port,
+            string route
+        )
+        {
+            int listenPort;
+            if (String.IsNullOrWhiteSpace(executable) ||
+                !Path.IsPathRooted(executable) ||
+                !File.Exists(executable) ||
+                !Int32.TryParse(
+                    port,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out listenPort) ||
+                listenPort < 1 ||
+                listenPort > 65535 ||
+                (route != "SingBoxHttp" && route != "SingBoxHttps") ||
+                !String.Equals(
+                    BundleIntegrity.Sha256(executable),
+                    sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
+            ProcessStartInfo start = new ProcessStartInfo
+            {
+                FileName = executable,
+                WorkingDirectory = Path.GetDirectoryName(executable),
+                UseShellExecute = false
+            };
+            ApplyProxyEnvironment(
+                start,
+                "http://127.0.0.1:" +
+                    listenPort.ToString(CultureInfo.InvariantCulture),
+                route
+            );
+            using (Process client = Process.Start(start))
+            {
+                return client == null ? 20 : 0;
+            }
         }
 
         private static string StableSingBoxReason(Exception exception)

@@ -151,10 +151,44 @@ namespace LlmFoundationInstaller
         public static string Sha256(string path)
         { throw new Exception("Nonexistent client must be rejected before hashing or launch"); }
     }
+    internal sealed class BoundedProcessResult
+    {
+        public bool Succeeded { get { return false; } }
+    }
+    internal static class BoundedProcess
+    {
+        public static BoundedProcessResult Run(ProcessStartInfo start, int timeout)
+        { throw new Exception("Nonexistent client must be rejected before package activation"); }
+    }
     internal static class ClientCleanupHarness
     {
         private static int Main(string[] args)
         {
+            if (args[0] == "sleeper")
+            {
+                System.Threading.Thread.Sleep(1500);
+                return 7;
+            }
+            if (args[0] == "packaged_wait")
+            {
+                // Клиент — копия стенда под уникальным именем: WaitForPackagedClient
+                // находит её по точному пути, как корень Store Codex.
+                string copy = Path.Combine(Path.GetFullPath(args[1]),
+                    "packaged-client-" + Guid.NewGuid().ToString("N") + ".exe");
+                File.Copy(typeof(ClientCleanupHarness).Assembly.Location, copy);
+                using (Process.Start(new ProcessStartInfo {
+                    FileName = copy, Arguments = "sleeper", UseShellExecute = false, CreateNoWindow = true }))
+                {
+                }
+                System.Reflection.MethodInfo wait = typeof(ClientLauncher).GetMethod("WaitForPackagedClient",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                Process root = (Process)wait.Invoke(null, new object[] {
+                    new LaunchTargetResolution { executable_path = copy } });
+                root.WaitForExit();
+                Console.WriteLine(new JavaScriptSerializer().Serialize(
+                    new Dictionary<string, object> { { "exit_code", root.ExitCode } }));
+                return 0;
+            }
             Fixture.Scenario = args[0]; Fixture.Home = Path.GetFullPath(args[1]);
             string client = Path.Combine(Fixture.Home, "never-launch-" + Guid.NewGuid().ToString("N") + ".exe");
             if (File.Exists(client)) throw new Exception("Fixture executable unexpectedly exists");
@@ -252,3 +286,16 @@ def test_client_cleanup_is_propagated(
     assert value["fake_client_exists"] is False
     assert value["home_entries"] == 0
     assert list(home.iterdir()) == []
+
+
+def test_packaged_client_wait_keeps_exit_code_of_found_root(
+    client_cleanup_harness: tuple[Path, str], tmp_path: Path,
+) -> None:
+    # Корень Store Codex найден по пути, а не запущен этим объектом Process:
+    # без удержания дескриптора ExitCode бросает InvalidOperationException,
+    # и StartThroughSingBox уходил бы в ветку ошибки после закрытия клиента.
+    executable, _ = client_cleanup_harness
+    run = subprocess.run([str(executable), "packaged_wait", str(tmp_path)], cwd=tmp_path,
+                         capture_output=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert run.returncode == 0, (run.stdout + run.stderr).decode("utf-8", "replace")
+    assert json.loads(run.stdout) == {"exit_code": 7}

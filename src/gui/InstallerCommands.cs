@@ -48,6 +48,7 @@ namespace LlmFoundationInstaller
 
         static InstallerCommands()
         {
+            Register(ClientLauncher.PackagedTrampolineCommand, "product", 4, 4, AppxProxyTrampoline);
             Register("--catalog-json", "tool", 0, 0, CatalogJson);
             Register("--commands-json", "tool", 0, 0, CommandsJson);
             Register("--ensure-runtime-json", "tool", 1, 1, EnsureRuntimeJson);
@@ -56,6 +57,7 @@ namespace LlmFoundationInstaller
             Register("--product-json", "tool", 0, 0, ProductJson);
             Register("--resolve-launch-target-json", "tool", 2, 2, ResolveLaunchTargetJson);
             Register("--self-test-json", "tool", 0, 0, SelfTestJson);
+            Register("--launch-session", "product", 3, 3, LaunchSessionHost.Run);
             Register("--system-proxy-watchdog", "product", 2, 3, SystemProxyWatchdog);
             Register("--workflow-json", "tool", 4, 4, WorkflowJson);
             RegisterTestHost();
@@ -116,6 +118,20 @@ namespace LlmFoundationInstaller
             }
             exitCode = entry.handler(edition, bundleRoot, args);
             return true;
+        }
+
+        // Трамплин Store-клиента внутри контейнера пакета (ClientLauncher).
+        private static int AppxProxyTrampoline(
+            EditionProfile edition,
+            string bundleRoot,
+            string[] args)
+        {
+            return ClientLauncher.RunPackagedTrampoline(
+                args[1],
+                args[2],
+                args[3],
+                args[4]
+            );
         }
 
         private static int CatalogJson(

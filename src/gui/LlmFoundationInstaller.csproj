@@ -44,6 +44,7 @@
     <Compile Include="ClientBootstrap.cs" />
     <Compile Include="ClientDetector.cs" />
     <Compile Include="ClientLauncher.cs" />
+    <Compile Include="LaunchSessionHost.cs" />
     <Compile Include="ConnectionProbe.cs" />
     <Compile Include="ConnectionProfile.cs" />
     <Compile Include="ConnectionStatusModel.cs" />

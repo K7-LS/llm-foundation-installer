@@ -398,7 +398,7 @@ namespace LlmFoundationInstaller
                     }
                     launchStarted = true;
                     Task<LauncherSessionResult> launchTask = Task.Run(
-                        () => ClientLauncher.StartAndWait(
+                        () => LaunchSessionHost.StartAndWait(
                             resolution,
                             route,
                             bundleRoot,
@@ -411,12 +411,12 @@ namespace LlmFoundationInstaller
                     if (singBoxRoute && stopRoute != null)
                     {
                         while (!launchTask.IsCompleted &&
-                            !ClientLauncher.HasActiveRoute())
+                            !LaunchSessionHost.IsActive())
                         {
                             await Task.Delay(50);
                         }
                         stopRoute.IsEnabled =
-                            ClientLauncher.HasActiveRoute();
+                            LaunchSessionHost.IsActive();
                     }
                     LauncherSessionResult result = await launchTask;
                     if (result == null)
@@ -464,7 +464,7 @@ namespace LlmFoundationInstaller
                     RestoreLaunchControls(enabledState);
                     if (stopRoute != null)
                     {
-                        stopRoute.IsEnabled = ClientLauncher.HasActiveRoute();
+                        stopRoute.IsEnabled = LaunchSessionHost.IsActive();
                     }
                     refreshLabel();
                 }
@@ -556,7 +556,8 @@ namespace LlmFoundationInstaller
                     StringComparison.Ordinal))
             {
                 return "Store Codex требует временный системный proxy; " +
-                    "на время сеанса он может затронуть другие приложения";
+                    "на время сеанса он может затронуть другие приложения. " +
+                    "После запуска окно Launcher можно закрыть";
             }
             return "Proxy передаётся только процессу выбранного клиента";
         }
